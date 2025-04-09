@@ -1,0 +1,331 @@
+<html>
+<head>
+    <title>3D Map Viewer</title>
+    <script src="https://unpkg.com/three@latest/build/three.module.js"></script>
+    <script src="https://unpkg.com/three@latest/examples/jsm/controls/OrbitControls.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+</head>    
+<body>
+<div id="map-container"
+     style="width: 100%; height: 600px; background-color: #111;"
+     data-map-width="20"  data-map-height="10" data-min-height="-5"  data-max-height="15"  data-diffuse-url="/path/to/your/diffuse.jpg"  data-heightmap-url="/path/to/your/heightmap.png" data-metalmap-url="/path/to/your/metalmap.png" data-envmap-url="https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/hdr/clarens_midday_1k.hdr" >
+    <div id="map-loading-notice" style="color: white; text-align: center; padding: 20px;">Loading Map...</div>
+</div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@latest/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@latest/examples/jsm/"
+        }
+    }
+</script>
+
+<script type="module">
+    // =======================================================================
+    // Imports
+    // =======================================================================
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+    import { TextureLoader } from 'three'; // Correct for v0.159.0
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+    import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+    import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+
+    // =======================================================================
+    // Configuration Constants - CORRECTED TYPO
+    // =======================================================================
+    const MAP_SCALE_FACTOR = 64.0;
+    const MAX_TESSELLATION = 1000;
+    const WATER_LEVEL = 0.0;
+    const WATER_COLOR = 0x204080;
+    const WATER_OPACITY = 0.8;
+    const METAL_COLOR = new THREE.Color(0xFFFFAA);
+    const METAL_INTENSITY = 10.0;
+    const METAL_PULSE_MAX = 1.4;
+    const ENV_MAP_INTENSITY = 0.5;
+    const DEFAULT_ROUGHNESS = 0.8;
+    const DEFAULT_METALNESS = 0.1;
+    const NORMAL_MAP_SCALE = new THREE.Vector2(1, 1);
+    const SHADOW_MAP_SIZE = 2048;
+    const SHADOW_BIAS = -0.001;
+    const DEFAULT_MIN_HEIGHT = -50.0; // Using Updated Default
+    const DEFAULT_MAX_HEIGHT = 275.0; // Using Updated Default
+    const AXES_HELPER_SIZE_FACTOR = 0.25;
+    // *** CORRECTED TYPO HERE ***
+    const DEFAULT_ENV_MAP_URL = 'https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/hdr/clarens_midday_1k.hdr';
+
+    // =======================================================================
+    // SHARPEN SHADER DEFINITION (Not used yet)
+    // =======================================================================
+    const SharpenShader = { /* ... shader definition ... */ };
+
+    // =======================================================================
+    // Webflow Compatibility / DOM Ready Execution
+    // =======================================================================
+    if (typeof Webflow === 'undefined') { /* ... mock webflow ... */ }
+
+    Webflow.push(function() {
+        console.log("DEBUG: Step 7 - Correcting Syntax Error...");
+        const container = document.getElementById('map-container');
+        const loadingNotice = document.getElementById('map-loading-notice');
+        if (!container) { console.error("Container #map-container not found!"); return; }
+        if(loadingNotice) { loadingNotice.textContent = "Loading map data..."; loadingNotice.style.display = 'block'; }
+
+        // =======================================================================
+        // 1. Get Map Data & Apply Scale
+        // =======================================================================
+        let mapPhysicalWidth = parseFloat(container.dataset.mapWidth) || 10;
+        let mapPhysicalHeight = parseFloat(container.dataset.mapHeight) || 10;
+        let minHeight = parseFloat(container.dataset.minHeight);
+        let maxHeight = parseFloat(container.dataset.maxHeight);
+        if (isNaN(minHeight)) { minHeight = DEFAULT_MIN_HEIGHT; console.log(`minHeight missing/invalid. Using default: ${minHeight}`); }
+        if (isNaN(maxHeight)) { maxHeight = DEFAULT_MAX_HEIGHT; console.log(`maxHeight missing/invalid. Using default: ${maxHeight}`); }
+        if (minHeight >= maxHeight) { console.warn(`Corrected invalid height range.`); minHeight = maxHeight - 1.0; }
+        const scaledWidth = mapPhysicalWidth * MAP_SCALE_FACTOR;
+        const scaledHeight = mapPhysicalHeight * MAP_SCALE_FACTOR;
+        console.log(`DEBUG: SCALED Map Size used=${scaledWidth}x${scaledHeight}`);
+        console.log(`DEBUG: Height range used=${minHeight} to ${maxHeight}`);
+
+        // Use data attribute OR the specific GitHub link as fallback (Uses corrected const name now)
+        const envmapURL = container.dataset.envmapUrl || DEFAULT_ENV_MAP_URL;
+        console.log(`DEBUG: Environment Map URL Attempting to Load: ${envmapURL}`);
+
+        const getImageUrlFromImg = (id) => {
+            const imgElement = document.getElementById(id);
+            if (imgElement && imgElement.src && imgElement.src !== window.location.href && !imgElement.src.endsWith('#')) {
+                 console.log(`DEBUG: Retrieved URL for ${id}: ${imgElement.src}`);
+                 return imgElement.src;
+            }
+            console.warn(`Texture image element with ID '${id}' not found or has invalid/missing src.`); return null;
+        };
+        // Retrieve URLs AND Log them immediately
+        const diffuseURL = getImageUrlFromImg('diffuse-map-img');
+        const heightmapURL = getImageUrlFromImg('height-map-img');
+        const metalmapURL = getImageUrlFromImg('metal-map-img');
+        const normalmapURL = getImageUrlFromImg('normal-map-img');
+
+        if (!diffuseURL || !heightmapURL || !metalmapURL) {
+             console.error("CRITICAL: Failed to retrieve one or more essential image URLs from the <img> tags *before* loading. Check HTML IDs and src attributes.");
+             if (loadingNotice) loadingNotice.textContent = "Error: Cannot find map image sources in HTML.";
+             return;
+        }
+        console.log("DEBUG: All essential image URLs retrieved from HTML. Attempting to load...");
+
+        // =======================================================================
+        // 2. Calculate Plane Geometry Parameters (Tessellation)
+        // =======================================================================
+        const aspectRatio = mapPhysicalWidth / mapPhysicalHeight;
+        let planeWidthSegments, planeHeightSegments;
+        if (aspectRatio >= 1) { planeWidthSegments = Math.floor(MAX_TESSELLATION); planeHeightSegments = Math.floor(MAX_TESSELLATION / aspectRatio); } else { planeWidthSegments = Math.floor(MAX_TESSELLATION * aspectRatio); planeHeightSegments = Math.floor(MAX_TESSELLATION); }
+        planeWidthSegments = Math.max(1, planeWidthSegments); planeHeightSegments = Math.max(1, planeHeightSegments);
+        console.log(`DEBUG: Plane Segments: ${planeWidthSegments}x${planeHeightSegments}`);
+
+
+        // =======================================================================
+        // 3. Basic Scene Setup (Scene, Camera, Renderer)
+        // =======================================================================
+        const scene = new THREE.Scene();
+        const cameraFarPlane = Math.max(scaledWidth, scaledHeight, Math.abs(minHeight), Math.abs(maxHeight)) * 10;
+        const cameraNearPlane = 0.1;
+        const camera = new THREE.PerspectiveCamera(40, 1, cameraNearPlane, cameraFarPlane);
+        const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(container.offsetWidth || 100, container.offsetHeight || 100);
+        renderer.setClearColor(0x111133, 1);
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.8;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        try { container.appendChild(renderer.domElement); console.log("DEBUG: Renderer DOM element appended."); }
+        catch (e) { /* ... */ return; }
+
+        // =======================================================================
+        // 4. Controls (OrbitControls) - Using Reverted Target
+        // =======================================================================
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05;
+        controls.minDistance = 1.0;
+        controls.maxDistance = cameraFarPlane * 0.9;
+        const targetY = (minHeight + maxHeight) / 2.0; // Reverted target
+        controls.target.set(0, targetY, 0);
+        console.log(`DEBUG: OrbitControls ENABLED. Target REVERTED to vertical center (0, ${targetY.toFixed(1)}, 0).`);
+
+        // =======================================================================
+        // 5. Lights - Position Updated (NW)
+        // =======================================================================
+        const lightGroup = new THREE.Group(); scene.add(lightGroup);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3);
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        directionalLight.position.set(-scaledWidth * 0.3, maxHeight * 2.5, -scaledHeight * 0.5); // NW position
+        directionalLight.castShadow = true;
+        /* ... shadow config ... */
+        directionalLight.shadow.camera.updateProjectionMatrix();
+        lightGroup.add(directionalLight);
+        console.log("DEBUG: Lights ENABLED. Directional light at NW.");
+
+        // =======================================================================
+        // DEBUG: Add Axes Helper (Keep for reference)
+        // =======================================================================
+        const axesSize = Math.max(scaledWidth, scaledHeight) * AXES_HELPER_SIZE_FACTOR;
+        const axesHelper = new THREE.AxesHelper(axesSize);
+        scene.add(axesHelper);
+        console.log(`DEBUG: Added AxesHelper.`);
+
+        // =======================================================================
+        // 6. Loaders and Clock
+        // =======================================================================
+        let textureLoader;
+        try { textureLoader = new THREE.TextureLoader(); /*...*/ console.log("DEBUG: TextureLoader instance created."); }
+        catch (e) { /*...*/ return; }
+        const rgbeLoader = new RGBELoader();
+        const clock = new THREE.Clock();
+        const timeUniform = { value: 0.0 };
+
+        // =======================================================================
+        // 7. Define Post-Processing Pass Variables (Not used yet)
+        // =======================================================================
+        let composer = null, ssaoPass = null, fxaaPass = null, sharpenPass = null;
+
+        // =======================================================================
+        // 8. Resource Loading - Enabled
+        // =======================================================================
+        console.log("DEBUG: Starting resource loading...");
+        if(loadingNotice) loadingNotice.textContent = "Loading textures...";
+        Promise.all([
+            envmapURL ? rgbeLoader.loadAsync(envmapURL).catch(e => { console.warn(`HDR Load Failed: ${envmapURL}`, e); return null; }) : Promise.resolve(null),
+            diffuseURL ? textureLoader.loadAsync(diffuseURL).catch(e => { console.error(`Diffuse Load Failed: ${diffuseURL}`, e); return null; }) : Promise.resolve(null),
+            heightmapURL ? textureLoader.loadAsync(heightmapURL).catch(e => { console.error(`Heightmap Load Failed: ${heightmapURL}`, e); return null; }) : Promise.resolve(null),
+            metalmapURL ? textureLoader.loadAsync(metalmapURL).catch(e => { console.error(`Metalmap Load Failed: ${metalmapURL}`, e); return null; }) : Promise.resolve(null),
+            normalmapURL ? textureLoader.loadAsync(normalmapURL).catch(e => { console.warn(`Normal Map Load Failed: ${normalmapURL}`, e); return null; }) : Promise.resolve(null)
+        ]).then(([envMap, diffuseMap, heightMap, metalMap, normalMap]) => {
+
+            // --- Validation after loading ---
+             console.log("DEBUG: Promise.all finished. Checking loaded textures...");
+            if (!diffuseMap || !heightMap || !metalMap) {
+                 console.error("CRITICAL: Essential map textures (diffuse, height, metal) failed to load AFTER Promise.all. Cannot proceed.");
+                 if (!diffuseMap && diffuseURL) console.error(`- Diffuse map failed. URL attempted: ${diffuseURL}`);
+                 if (!heightMap && heightmapURL) console.error(`- Height map failed. URL attempted: ${heightmapURL}`);
+                 if (!metalMap && metalmapURL) console.error(`- Metal map failed. URL attempted: ${metalmapURL}`);
+                 if(loadingNotice) loadingNotice.textContent = "Error: Could not load essential map textures. Check Console & Network tab (Status Code? CORS? Format?). Try PNG format for height/metal maps.";
+                 if (heightmapURL?.toLowerCase().includes('.avif') || metalmapURL?.toLowerCase().includes('.avif')) {
+                     console.warn("AVIF format detected for height or metal map. This is often problematic for data textures. Please try using lossless PNG format instead.");
+                 }
+                 return; // Stop execution here
+            }
+
+            // --- If we reach here, essential textures *should* have loaded ---
+            console.log("Assets loaded OK. Setting up scene with standard material...");
+            if (loadingNotice) loadingNotice.style.display = 'none';
+
+            // =======================================================================
+            // 9. Texture Configuration (Inside .then())
+            // =======================================================================
+            if (envMap) { envMap.mapping = THREE.EquirectangularReflectionMapping; scene.environment = envMap; console.log("Environment map assigned."); }
+            else { console.log("No environment map loaded/assigned."); }
+            diffuseMap.colorSpace = THREE.SRGBColorSpace; diffuseMap.flipY = true;
+            heightMap.colorSpace = THREE.LinearSRGBColorSpace; heightMap.flipY = true;
+            metalMap.colorSpace = THREE.LinearSRGBColorSpace; metalMap.flipY = true;
+            if (normalMap) { normalMap.colorSpace = THREE.LinearSRGBColorSpace; normalMap.flipY = true; console.log("Normal map loaded and configured."); }
+            else if (normalmapURL) { console.log("Normal map URL provided but failed to load or was empty."); }
+            const maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+            diffuseMap.anisotropy = maxAnisotropy;
+            if (normalMap) normalMap.anisotropy = maxAnisotropy;
+            console.log("DEBUG: Texture properties set.");
+
+            // =======================================================================
+            // 10. Geometry Setup
+            // =======================================================================
+            const geometry = new THREE.PlaneGeometry( scaledWidth, scaledHeight, planeWidthSegments, planeHeightSegments );
+            const displacementScaleValue = maxHeight - minHeight;
+            const meshBaseY = minHeight;
+            console.log(`DEBUG: Calculated: displacementScale=${displacementScaleValue}, meshBaseY=${meshBaseY}`);
+
+            // =======================================================================
+            // 10/11. Material Setup (MeshStandardMaterial) & Skip onBeforeCompile
+            // =======================================================================
+            console.log("DEBUG: Using MeshStandardMaterial for terrain.");
+            const materialProperties = {
+                map: diffuseMap, displacementMap: heightMap, displacementScale: displacementScaleValue,
+                roughness: DEFAULT_ROUGHNESS, metalness: DEFAULT_METALNESS,
+                envMap: scene.environment, envMapIntensity: ENV_MAP_INTENSITY,
+                side: THREE.FrontSide
+            };
+            if (normalMap) { materialProperties.normalMap = normalMap; materialProperties.normalScale = NORMAL_MAP_SCALE; }
+            const material = new THREE.MeshStandardMaterial(materialProperties);
+            console.log("DEBUG: Skipping onBeforeCompile for now.");
+            /* // << DEBUG: Keep onBeforeCompile commented out */
+
+            // =======================================================================
+            // 12. Create Mesh and Position in Scene
+            // =======================================================================
+            const terrainMesh = new THREE.Mesh(geometry, material);
+            terrainMesh.rotation.x = -Math.PI / 2; terrainMesh.position.y = meshBaseY;
+            terrainMesh.castShadow = true; terrainMesh.receiveShadow = true;
+            scene.add(terrainMesh);
+            console.log("DEBUG: Terrain mesh ADDED with standard material. Position:", terrainMesh.position);
+
+            // =======================================================================
+            // 13. Add Water Plane (MeshStandardMaterial)
+            // =======================================================================
+            let waterMesh = null;
+            if (minHeight < WATER_LEVEL) { /* ... add water mesh ... */ }
+
+            // =======================================================================
+            // 14. Camera Positioning
+            // =======================================================================
+            const distanceFactor = 1.5;
+            const camZ = Math.max(scaledWidth, scaledHeight) * distanceFactor;
+            const camY = maxHeight + (camZ / distanceFactor) * 0.6;
+            camera.position.set(0, camY, camZ);
+            console.log("DEBUG: Using calculated camera POSITION:", camera.position, "Controls target is (0,", targetY.toFixed(1), ",0).");
+            controls.update();
+
+            // =======================================================================
+            // 15. Setup Post-Processing Effects - Still Disabled
+            // =======================================================================
+            console.log("DEBUG: Post-processing is still disabled.");
+
+            // =======================================================================
+            // 16. Animation Loop (Render Function)
+            // =======================================================================
+            const animate = () => {
+                requestAnimationFrame(animate);
+                controls.update();
+                try {
+                    renderer.render(scene, camera); // DEBUG: Direct rendering
+                } catch(e) { console.error("ERROR during renderer.render:", e); }
+            };
+
+            // =======================================================================
+            // 17. Resize Handler
+            // =======================================================================
+            const handleResize = () => { /* ... Keep resize handler ... */ };
+            const resizeObserver = new ResizeObserver(handleResize);
+            try { resizeObserver.observe(container); } catch(e) { window.addEventListener('resize', handleResize); }
+            setTimeout(()=>requestAnimationFrame(handleResize), 50);
+
+            // =======================================================================
+            // 18. Start the Animation Loop!
+            // =======================================================================
+            console.log("DEBUG: Starting animation loop (Standard Material, Fixed Syntax/HDR Fallback)...");
+            try { animate(); } catch(e) { /* ... */ }
+
+        // --- Error Handling for Promise ---
+        }).catch(error => {
+            console.error("Error AFTER resource loading promise (or during setup):", error);
+             if(loadingNotice) { loadingNotice.textContent = `Fatal Error: ${error.message || error}`; /*...*/ }
+        });
+
+    }); // End of Webflow.push
+</script>
+</body>
