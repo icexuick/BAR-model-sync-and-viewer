@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>3D Map Viewer</title>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://esm.sh/three@0.159.0",
+                "three/addons/": "https://esm.sh/three@0.159.0/examples/jsm/"
+            }
+        }
+    </script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: black; }
+        #map-container { width: 100vw; height: 100vh; background-color: #111; }
+        .three-map-texture { display: none; }
+    </style>
+</head>
+<body style="background-color: black;">
+
+<div id="map-container"
+     data-map-width="24"  data-map-height="20" data-min-height="-29"  data-max-height="150">
+    <div id="map-loading-notice" style="color: white; text-align: center; padding: 20px; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);">Loading Map...</div>
+</div>
+
+<img src="https://cdn.prod.website-files.com/5c69241780da2a1dfc6caa4e/679e482bd2c92282c3e328b4_texture.avif" loading="lazy" id="diffuse-map-img" alt="" class="three-map-texture">
+<img src="https://cdn.prod.website-files.com/5c69241780da2a1dfc6caa4e/679e482bd2c92282c3e328cc_height.avif" loading="lazy" id="height-map-img" alt="" class="three-map-texture"> <img src="https://cdn.prod.website-files.com/5c69241780da2a1dfc6caa4e/679e482ad2c92282c3e3276f_metal.avif" loading="lazy" id="metal-map-img" alt="" class="three-map-texture">
+<img id="normal-map-img" src="" alt="Optional terrain normal map" class="three-map-texture">
+
+
+<script type="module">
+    // =======================================================================
+    // Imports
+    // =======================================================================
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+    import { TextureLoader } from 'three'; // Correct for v0.159.0
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+    import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+    import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+
+    // =======================================================================
+    // Configuration Constants - User Adjusted + Box specific
+    // =======================================================================
+    const MAP_SCALE_FACTOR = 64.0;
+    const MAX_TESSELLATION = 1000; // Segments for the TOP face width/depth
+    const BOX_SIDE_SEGMENTS = 1; // Segments for the vertical sides (usually low)
+    const WATER_LEVEL = 0.0;
+    const WATER_COLOR = 0x45647D; // User Adjusted Color
+    const WATER_OPACITY = 0.6;   // User Adjusted Opacity
+    const METAL_COLOR = new THREE.Color(0xFFFFAA);
+    const METAL_INTENSITY = 10.0;
+    const METAL_PULSE_MAX = 1.4;
+    const ENV_MAP_INTENSITY = 0.3;      // User Adjusted
+    const DEFAULT_ROUGHNESS = 0.9;      // User Adjusted
+    const DEFAULT_METALNESS = 0.1;
+    const NORMAL_MAP_SCALE = new THREE.Vector2(1, 1);
+    const SHADOW_MAP_SIZE = 2048;
+    const SHADOW_BIAS = -0.001;
+    const DEFAULT_MIN_HEIGHT = -100.0;  // User Reverted Default
+    const DEFAULT_MAX_HEIGHT = 600.0;   // User Reverted Default
+    const SKIRT_DEPTH_BELOW_MIN = 20.0; // How far the box extends below minHeight
+    const DEFAULT_ENV_MAP_URL = 'https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/hdr/clarens_midday_1k.hdr';
+
+    // =======================================================================
+    // SHARPEN SHADER DEFINITION (Not used yet)
+    // =======================================================================
+    // const SharpenShader = { /* ... */ };
+
+    // =======================================================================
+    // Helper Function to get height from canvas data
+    // =======================================================================
+    function getHeightData(img, width, height) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        context.drawImage(img, 0, 0, width, height);
+        console.log(`DEBUG: Created canvas ${width}x${height} for heightmap sampling.`);
+        return { data: context.getImageData(0, 0, width, height).data, width: width, height: height };
+    }
+    function getPixelHeightFactor(imageDataObj, u, v) {
+        const { data, width, height } = imageDataObj;
+        const x = Math.max(0, Math.min(width - 1, Math.floor(u * width)));
+        const y = Math.max(0, Math.min(height - 1, Math.floor((1.0 - v) * height))); // Adjust for flipY=true texture coords
+        const position = (x + width * y) * 4;
+        if (position >= data.length) return 0;
+        return data[position] / 255.0; // Assume height in Red channel
+    }
+
+    // =======================================================================
+    // Execute when DOM is ready
+    // =======================================================================
+    document.addEventListener('DOMContentLoaded', function() {
+
+        console.log("DEBUG: Step 15 - BoxGeometry with Multi-Material Sides...");
+        const container = document.getElementById('map-container');
+        const loadingNotice = document.getElementById('map-loading-notice');
+        if (!container) { /* ... */ return; }
+        if(loadingNotice) { /* ... */ }
+
+        // =======================================================================
+        // 1. Get Map Data & Apply Scale
+        // =======================================================================
+        let mapPhysicalWidth = parseFloat(container.dataset.mapWidth) || 10;
+        let mapPhysicalHeight = parseFloat(container.dataset.mapHeight) || 10;
+        let minHeight = parseFloat(container.dataset.minHeight);
+        let maxHeight = parseFloat(container.dataset.maxHeight);
+        if (isNaN(minHeight)) { minHeight = DEFAULT_MIN_HEIGHT; /*...*/ }
+        if (isNaN(maxHeight)) { maxHeight = DEFAULT_MAX_HEIGHT; /*...*/ }
+        if (minHeight >= maxHeight) { minHeight = maxHeight - 1.0; /*...*/ }
+        const scaledWidth = mapPhysicalWidth * MAP_SCALE_FACTOR;
+        const scaledHeight = mapPhysicalHeight * MAP_SCALE_FACTOR;
+        console.log(`DEBUG: SCALED Map Size used=${scaledWidth}x${scaledHeight}`);
+        console.log(`DEBUG: Height range used=${minHeight} to ${maxHeight}`);
+        const envmapURL = container.dataset.envmapUrl || DEFAULT_ENV_MAP_URL;
+        console.log(`DEBUG: Environment Map URL Attempting to Load: ${envmapURL}`);
+        const getImageUrlFromImg = (id) => { /* Assume defined */ return document.getElementById(id)?.src || null; };
+        const diffuseURL = getImageUrlFromImg('diffuse-map-img');
+        const heightmapURL = getImageUrlFromImg('height-map-img');
+        const metalmapURL = getImageUrlFromImg('metal-map-img');
+        const normalmapURL = getImageUrlFromImg('normal-map-img');
+
+        if (!diffuseURL || !heightmapURL || !metalmapURL) { /* ... Error Handling ... */ return; }
+        console.log("DEBUG: All essential image URLs retrieved from HTML.");
+
+        // =======================================================================
+        // 2. Calculate Tessellation for Box Top Face
+        // =======================================================================
+        const aspectRatio = mapPhysicalWidth / mapPhysicalHeight;
+        let topWidthSegments, topDepthSegments;
+        if (aspectRatio >= 1) { topWidthSegments = Math.floor(MAX_TESSELLATION); topDepthSegments = Math.floor(MAX_TESSELLATION / aspectRatio); } else { topWidthSegments = Math.floor(MAX_TESSELLATION * aspectRatio); topDepthSegments = Math.floor(MAX_TESSELLATION); }
+        topWidthSegments = Math.max(1, topWidthSegments); topDepthSegments = Math.max(1, topDepthSegments);
+        console.log(`DEBUG: Box Top Face Segments: ${topWidthSegments}x${topDepthSegments}`);
+
+
+        // =======================================================================
+        // 3. Basic Scene Setup (Scene, Camera, Renderer) - User Adjusted Camera
+        // =======================================================================
+        const scene = new THREE.Scene();
+        const cameraFarPlane = Math.max(scaledWidth, scaledHeight, Math.abs(minHeight), Math.abs(maxHeight)) * 4;
+        const cameraNearPlane = 2.0;
+        const camera = new THREE.PerspectiveCamera(30, 1, cameraNearPlane, cameraFarPlane);
+        const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(container.offsetWidth || 100, container.offsetHeight || 100);
+        renderer.setClearColor(0x000000, 0); // Transparent Background
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 0.8;
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        try { container.appendChild(renderer.domElement); console.log("DEBUG: Renderer DOM element appended."); }
+        catch (e) { console.error("FATAL: Cannot append canvas", e); return; }
+
+        // =======================================================================
+        // 4. Controls (OrbitControls) - Using original targetY
+        // =======================================================================
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05;
+        controls.minDistance = 1.0;
+        controls.maxDistance = cameraFarPlane * 0.9;
+        const targetY = (minHeight + maxHeight) / 2.0; // Original target
+        controls.target.set(0, targetY, 0);
+        console.log(`DEBUG: OrbitControls ENABLED. Target set to original vertical center (0, ${targetY.toFixed(1)}, 0).`);
+
+        // =======================================================================
+        // 5. Lights - User Adjusted Intensity / NE Position
+        // =======================================================================
+        const lightGroup = new THREE.Group(); scene.add(lightGroup);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.1); // User Adjusted
+        scene.add(ambientLight);
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 2.0); // User Adjusted Intensity
+        const lightY = maxHeight * 2.5;
+        directionalLight.position.set(scaledWidth * 0.3, lightY, -scaledHeight * 0.5); // User Set NE Position
+        directionalLight.castShadow = true;
+        /* ... shadow config ... */
+        lightGroup.add(directionalLight);
+        console.log(`DEBUG: Lights ENABLED. Directional light at NE. Shadows ON.`);
+
+        // =======================================================================
+        // 6. Loaders and Clock
+        // =======================================================================
+        let textureLoader;
+        try { textureLoader = new THREE.TextureLoader(); console.log("DEBUG: TextureLoader instance created."); }
+        catch (e) { /*...*/ return; }
+        const rgbeLoader = new RGBELoader();
+        const clock = new THREE.Clock();
+        const timeUniform = { value: 0.0 };
+
+        // =======================================================================
+        // 7. Post-Processing (Disabled)
+        // =======================================================================
+        console.log("DEBUG: Post-processing is still disabled.");
+        let composer = null, ssaoPass = null, fxaaPass = null, sharpenPass = null;
+
+        // =======================================================================
+        // 8. Resource Loading (Textures)
+        // =======================================================================
+        console.log("DEBUG: Starting resource loading...");
+        if(loadingNotice) loadingNotice.textContent = "Loading textures...";
+        Promise.all([ /* ... texture loading promises ... */ ])
+        .then(([envMap, diffuseMap, heightMap, metalMap, normalMap]) => {
+
+            console.log("DEBUG: Promise.all finished. Checking loaded textures...");
+            if (!diffuseMap || !heightMap || !metalMap) { /* ... validation ... */ return; }
+            console.log("Assets loaded OK. Setting up scene...");
+            if (loadingNotice) loadingNotice.style.display = 'none';
+
+            // =======================================================================
+            // 9. Texture Configuration
+            // =======================================================================
+            if (envMap) { /* ... */ }
+             /* ... Texture property settings (flipY = true) ... */
+             console.log("DEBUG: Texture properties set.");
+
+             // --- Get Heightmap Data ---
+             let heightmapPixelDataObj = null;
+             if (heightMap.image && heightMap.image.naturalWidth > 0 && heightMap.image.naturalHeight > 0) {
+                 try { heightmapPixelDataObj = getHeightData(heightMap.image, heightMap.image.naturalWidth, heightMap.image.naturalHeight); /*...*/ }
+                 catch(e) { console.error("Error getting heightmap data:", e); }
+             } else { console.error("Heightmap image invalid."); }
+
+            // =======================================================================
+            // 10. Geometry Setup - BOX GEOMETRY
+            // =======================================================================
+            const boxDepth = (maxHeight - minHeight) + (SKIRT_DEPTH_BELOW_MIN);
+            const boxBottomY = minHeight - SKIRT_DEPTH_BELOW_MIN;
+            console.log(`DEBUG: Creating BoxGeometry: W=${scaledWidth}, H=${boxDepth}, D=${scaledHeight}`);
+            const geometry = new THREE.BoxGeometry( scaledWidth, boxDepth, scaledHeight, topWidthSegments, BOX_SIDE_SEGMENTS, topDepthSegments );
+            geometry.computeBoundingBox();
+            const boxTopSurfaceY = geometry.boundingBox.max.y;
+            const boxBottomSurfaceY = geometry.boundingBox.min.y;
+
+            // --- MANUAL VERTEX DISPLACEMENT ---
+            if (heightmapPixelDataObj) {
+                console.log("DEBUG: Applying manual displacement to BoxGeometry top vertices...");
+                const positionAttribute = geometry.attributes.position;
+                const uvAttribute = geometry.attributes.uv;
+                const vertex = new THREE.Vector3();
+                const uv = new THREE.Vector2();
+                const displacementRange = maxHeight - minHeight;
+                for (let i = 0; i < positionAttribute.count; i++) { /* ... displace top, clamp bottom ... */ }
+                positionAttribute.needsUpdate = true;
+                geometry.computeVertexNormals();
+                console.log("DEBUG: Manual displacement applied.");
+            } else { console.error("Cannot apply displacement - heightmap pixel data missing."); }
+
+            // =======================================================================
+            // 10/11. Material Setup - MULTI-MATERIAL BOX
+            // =======================================================================
+            console.log("DEBUG: Creating materials for terrain block (Top + Sides/Bottom).");
+            // --- Material for TOP surface ---
+            const topMaterialProperties = {
+                map: diffuseMap,
+                roughness: DEFAULT_ROUGHNESS, metalness: DEFAULT_METALNESS,
+                envMap: envMap, envMapIntensity: ENV_MAP_INTENSITY,
+            };
+            if (normalMap) { topMaterialProperties.normalMap = normalMap; topMaterialProperties.normalScale = NORMAL_MAP_SCALE; }
+            const topMaterial = new THREE.MeshStandardMaterial(topMaterialProperties);
+
+            // --- Material for SIDES and BOTTOM ---
+            const skirtMaterial = new THREE.MeshStandardMaterial({
+                color: 0x4a4239, // Darker, less saturated brown/grey
+                roughness: 0.95,
+                metalness: 0.05,
+            });
+
+            // Array order: [Right(+X), Left(-X), Top(+Y), Bottom(-Y), Front(+Z), Back(-Z)]
+            const materialsArray = [
+                skirtMaterial, // Right (+X) side
+                skirtMaterial, // Left (-X) side
+                topMaterial,   // Top (+Y) surface - Use textured material
+                skirtMaterial, // Bottom (-Y) surface
+                skirtMaterial, // Front (+Z) side
+                skirtMaterial  // Back (-Z) side
+            ];
+            console.log("DEBUG: Skipping onBeforeCompile for now.");
+
+            // =======================================================================
+            // 12. Create Mesh and Position in Scene
+            // =======================================================================
+            const terrainMesh = new THREE.Mesh(geometry, materialsArray); // <<< USE MULTI-MATERIAL ARRAY
+            // Position the box so its bottom face is at the calculated skirtBottomY level
+            terrainMesh.position.y = boxBottomY + boxDepth / 2.0;
+
+            terrainMesh.castShadow = true;
+            terrainMesh.receiveShadow = true;
+            scene.add(terrainMesh);
+            console.log("DEBUG: Terrain BOX mesh ADDED with multi-materials. Position:", terrainMesh.position);
+
+            // =======================================================================
+            // 12b. Add Terrain Skirts - NO LONGER NEEDED
+            // =======================================================================
+            // console.log("DEBUG: Terrain skirts not needed with BoxGeometry.");
+
+            // =======================================================================
+            // 13. Add Water Plane (MeshStandardMaterial)
+            // =======================================================================
+            let waterMesh = null;
+            if (minHeight < WATER_LEVEL) {
+                const waterGeometry = new THREE.PlaneGeometry(scaledWidth, scaledHeight); // Match box footprint
+                console.log("DEBUG: Using MeshStandardMaterial for water.");
+                const waterMaterial = new THREE.MeshStandardMaterial({ /* ... water props ... */ });
+                waterMesh = new THREE.Mesh(waterGeometry, waterMaterial);
+                waterMesh.rotation.x = -Math.PI / 2;
+                waterMesh.position.y = WATER_LEVEL;
+                waterMesh.receiveShadow = true;
+                scene.add(waterMesh);
+                console.log("DEBUG: Added water plane with standard material at y =", WATER_LEVEL);
+            } else { console.log("DEBUG: Water plane not added because minHeight >= WATER_LEVEL."); }
+
+
+            // =======================================================================
+            // 14. Camera Positioning
+            // =======================================================================
+            const distanceFactor = 1.5;
+            const camZ = Math.max(scaledWidth, scaledHeight) * distanceFactor;
+            const camY = maxHeight + (camZ / distanceFactor) * 0.6;
+            camera.position.set(0, camY, camZ);
+            console.log("DEBUG: Using calculated camera POSITION:", camera.position, "Controls target is (0,", targetY.toFixed(1), ",0).");
+            controls.update();
+
+            // =======================================================================
+            // 15. Setup Post-Processing Effects - Still Disabled
+            // =======================================================================
+            console.log("DEBUG: Post-processing is still disabled.");
+
+            // =======================================================================
+            // 16. Animation Loop (Render Function)
+            // =======================================================================
+            const animate = () => {
+                requestAnimationFrame(animate);
+                // timeUniform.value = clock.getElapsedTime(); // Not used currently
+                controls.update();
+                try {
+                    renderer.render(scene, camera);
+                } catch(e) { console.error("ERROR during renderer.render:", e); }
+            };
+
+            // =======================================================================
+            // 17. Resize Handler
+            // =======================================================================
+            const handleResize = () => { /* ... */ };
+            const resizeObserver = new ResizeObserver(handleResize);
+            try { resizeObserver.observe(container); } catch(e) { window.addEventListener('resize', handleResize); }
+            setTimeout(()=>requestAnimationFrame(handleResize), 50);
+
+            // =======================================================================
+            // 18. Start the Animation Loop!
+            // =======================================================================
+            console.log("DEBUG: Starting animation loop (Box Multi-Material)...");
+            try { animate(); } catch(e) { console.error("Error starting animation loop:", e);}
+
+        // --- Error Handling for Promise ---
+        }).catch(error => { /* ... error handling ... */ });
+
+    }); // End of DOMContentLoaded wrapper
+</script>
+</body>
+</html>
