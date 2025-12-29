@@ -1,2 +1,2 @@
 # BAR-modelviewer
-online model viewer
+online model viewer for website 3D models
