@@ -341,7 +341,8 @@ def _find_unit_lua_path(unit_name: str) -> Optional[str]:
 
 
 def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
-                            info_only: bool = False) -> Optional[str]:
+                            info_only: bool = False,
+                            push: bool = False) -> Optional[str]:
     """
     Look up a BAR unit by name in the GitHub repo, download its S3O and script,
     and convert to GLB.
@@ -420,6 +421,8 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
             output_path = os.path.join(tmpdir, s3o_name.replace(".s3o", ".glb"))
 
         glb_path = convert_single(s3o_local, script_local, output_path, info_only)
+        if glb_path and push and not info_only:
+            push_glb_to_repo(glb_path)
         return glb_path
 
 
@@ -512,9 +515,10 @@ def main():
             if args.output is None:
                 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 args.output = os.path.join(repo_root, f"{args.unit}.glb")
-        glb_path = fetch_unit_from_github(args.unit, args.output, args.info_only)
-        if glb_path and not args.local and not args.info_only:
-            push_glb_to_repo(glb_path)
+        fetch_unit_from_github(
+            args.unit, args.output, args.info_only,
+            push=not args.local and not args.info_only,
+        )
     elif args.bar_dir:
         batch_convert(args.bar_dir, args.output_dir, args.filter)
     elif args.s3o:

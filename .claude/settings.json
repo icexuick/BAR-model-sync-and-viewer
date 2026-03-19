@@ -2,7 +2,19 @@
   "permissions": {
     "allow": [
       "Bash(curl -s \"https://github.com/beyond-all-reason/Beyond-All-Reason/raw/refs/heads/master/units/Legion/leggob.lua\")",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(python -X utf8 tools/convert.py --unit legkark)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/beyond-all-reason/Beyond-All-Reason/refs/heads/master/scripts/Units/leggob.bos\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/beyond-all-reason/Beyond-All-Reason/refs/heads/master/scripts/Units/corcan.bos\")",
+      "Bash(python -X utf8 tools/convert.py --unit leggob --local)",
+      "Bash(python -X utf8 tools/convert.py --unit legkark --local)",
+      "Bash(python -X utf8 tools/convert.py --unit corcan --local)",
+      "Bash(python -X utf8 tools/convert.py --unit leggob)",
+      "Bash(python -X utf8 tools/convert.py --unit corcan)",
+      "Bash(python -X utf8 tools/convert.py --unit leglob)",
+      "Bash(python -X utf8 tools/convert.py --unit legck)",
+      "Bash(python -X utf8 tools/convert.py --unit legaabot)",
+      "Bash(python -X utf8 tools/convert.py --unit legaabot --local)"
     ]
   }
 }

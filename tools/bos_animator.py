@@ -175,28 +175,77 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
         if not body:
             continue
 
-        _, while_body = _extract_while_body(body)
+        pre_body, while_body = _extract_while_body(body)
         if not while_body:
             # No while loop — fall back to treating the whole body as the cycle
             while_body = body
+            pre_body = ''
+
+        # Parse pre-loop frames (e.g. Frame 0) — these are the "start of cycle"
+        # poses played once before the while-loop. We include them as the first
+        # keyframe (t=0) so the full cycle is: Frame0 → loop frames → Frame0 again.
+        pre_blocks = _parse_frame_blocks(pre_body)
+        pre_cmds: Dict[Tuple, float] = {}
+        for _, cmds in pre_blocks:
+            pre_cmds.update(cmds)
 
         loop_blocks = _parse_frame_blocks(while_body)
         if not loop_blocks:
             continue
 
-        # Remap: first frame in the loop becomes t=0
-        first_frame = loop_blocks[0][0]
-        last_frame  = loop_blocks[-1][0]
-        duration    = (last_frame - first_frame) / FPS
+        # Determine step_size from most common diff between consecutive frame numbers.
+        # Frame numbers may wrap (e.g. 10,15,20,25,30,5), so use modulo.
+        frame_nums = [fn for fn, _ in loop_blocks]
+        diffs = [(frame_nums[i + 1] - frame_nums[i]) % 300
+                 for i in range(len(frame_nums) - 1)]
+        if diffs:
+            from collections import Counter
+            step_size = Counter(diffs).most_common(1)[0][0]
+        else:
+            step_size = 5  # fallback
 
-        # Accumulate keyframes per (piece, axis, is_rotation)
-        track_dict: Dict[Tuple, List[BosKeyframe]] = {}
-        for frame_num, commands in loop_blocks:
-            t = (frame_num - first_frame) / FPS
-            for key, value in commands.items():
-                if key not in track_dict:
-                    track_dict[key] = []
-                track_dict[key].append(BosKeyframe(time=t, value=value))
+        # If we have a pre-loop frame (e.g. Frame 0), use it as t=0 and as the
+        # closing keyframe at t=duration. Drop any loop frame that is a duplicate
+        # of the pre-loop frame (e.g. Frame 30 == Frame 0) to avoid a stilstand.
+        if pre_cmds:
+            # Detect if the last loop frame duplicates the pre-loop frame
+            last_cmds = loop_blocks[-1][1]
+            shared_keys = set(pre_cmds) & set(last_cmds)
+            if shared_keys and all(
+                abs(pre_cmds[k] - last_cmds[k]) < 0.01 for k in shared_keys
+            ) and len(shared_keys) >= len(pre_cmds) * 0.6:
+                # Last loop frame is a duplicate of Frame 0 — drop it
+                active_loop = loop_blocks[:-1]
+                print(f"  Dropping duplicate closing frame (Frame {loop_blocks[-1][0]} == Frame 0)")
+            else:
+                active_loop = loop_blocks
+
+            n_loop   = len(active_loop)
+            duration = (n_loop + 1) * step_size / FPS
+
+            track_dict: Dict[Tuple, List[BosKeyframe]] = {}
+
+            # t=0 → pre-loop (Frame 0)
+            for key, value in pre_cmds.items():
+                track_dict.setdefault(key, []).append(BosKeyframe(time=0.0, value=value))
+
+            # t=step, 2*step, ... → loop frames
+            for loop_idx, (frame_num, commands) in enumerate(active_loop):
+                t = (loop_idx + 1) * step_size / FPS
+                for key, value in commands.items():
+                    track_dict.setdefault(key, []).append(BosKeyframe(time=t, value=value))
+
+            n_blocks = n_loop + 1  # for the print
+        else:
+            # No pre-loop frame — use loop frames directly, t=0 is first loop frame
+            n_blocks = len(loop_blocks)
+            duration = n_blocks * step_size / FPS
+
+            track_dict = {}
+            for loop_idx, (frame_num, commands) in enumerate(loop_blocks):
+                t = loop_idx * step_size / FPS
+                for key, value in commands.items():
+                    track_dict.setdefault(key, []).append(BosKeyframe(time=t, value=value))
 
         if not track_dict:
             continue
@@ -217,12 +266,13 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
             if len(deduped) < 1:
                 continue
 
-            # Add closing keyframe at t=duration matching t=0 → seamless loop.
-            # If the last keyframe is already at t=duration, update its value.
-            closing_value = deduped[0].value
+            # Closing keyframe at t=duration = pre-loop value (if available)
+            # or first loop frame value. This makes the loop seamless.
+            key = (piece, axis, is_rot)
             if abs(deduped[-1].time - duration) < 1e-5:
-                deduped[-1].value = closing_value
+                pass  # already at t=duration
             else:
+                closing_value = pre_cmds.get(key, deduped[0].value)
                 deduped.append(BosKeyframe(time=duration, value=closing_value))
 
             if len(deduped) >= 2:
@@ -231,7 +281,7 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
 
         if tracks:
             print(f"  Animation '{func_name}': {len(tracks)} tracks, "
-                  f"frames {first_frame}–{last_frame} → duration {duration:.2f}s")
+                  f"{n_blocks} keyframes (step={step_size}) → duration {duration:.2f}s")
             return func_name, tracks
 
     return None
