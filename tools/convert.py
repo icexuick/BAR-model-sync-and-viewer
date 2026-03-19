@@ -305,6 +305,7 @@ def _github_get(url: str) -> dict:
 
 def _download(url: str, dest: str):
     """Download a URL to dest, raising on HTTP errors."""
+    url = url.replace(" ", "%20")
     req = urllib.request.Request(url, headers={"User-Agent": "BAR-modelviewer"})
     with urllib.request.urlopen(req) as resp:
         with open(dest, 'wb') as f:
@@ -364,7 +365,7 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
     print(f"  Found unit def: {unit_lua_path}")
 
     # 2. Download and parse the unit lua file
-    lua_url = f"{BAR_RAW}/{unit_lua_path}"
+    lua_url = f"{BAR_RAW}/{unit_lua_path}".replace(" ", "%20")
     req = urllib.request.Request(lua_url, headers={"User-Agent": "BAR-modelviewer"})
     with urllib.request.urlopen(req) as resp:
         lua_content = resp.read().decode("utf-8", errors="replace")

@@ -14,7 +14,9 @@
       "Bash(python -X utf8 tools/convert.py --unit leglob)",
       "Bash(python -X utf8 tools/convert.py --unit legck)",
       "Bash(python -X utf8 tools/convert.py --unit legaabot)",
-      "Bash(python -X utf8 tools/convert.py --unit legaabot --local)"
+      "Bash(python -X utf8 tools/convert.py --unit legaabot --local)",
+      "Bash(python -X utf8 tools/convert.py --unit legshot --local)",
+      "Bash(python -X utf8 tools/convert.py --unit legshot)"
     ]
   }
 }
