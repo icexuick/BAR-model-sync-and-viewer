@@ -190,6 +190,124 @@ class GLBBuilder:
 
         return node_idx
 
+    def add_animation(self, anim_name: str, tracks: list,
+                      node_name_to_idx: Dict[str, int],
+                      piece_offsets: Dict[str, tuple] = None):
+        """
+        Add a glTF animation from BOS animation tracks.
+
+        tracks       : List[BosTrack] from bos_animator.extract_walk_animation()
+        node_name_to_idx : {piece_name_lower: node_index}
+        piece_offsets    : {piece_name_lower: (ox, oy, oz)} — S3O rest translations.
+                           BOS move values are deltas from this rest position.
+        """
+        import math
+        from collections import defaultdict
+
+        piece_offsets = piece_offsets or {}
+
+        # Group tracks by piece
+        rot_by_piece: Dict[str, Dict[int, object]] = defaultdict(dict)
+        trans_by_piece: Dict[str, Dict[int, object]] = defaultdict(dict)
+
+        for track in tracks:
+            name_lower = track.piece.lower()
+            if name_lower not in node_name_to_idx:
+                continue
+            if track.is_rotation:
+                rot_by_piece[name_lower][track.axis] = track
+            else:
+                trans_by_piece[name_lower][track.axis] = track
+
+        channels = []
+        samplers = []
+
+        def _add_sampler(times: list, values: list, accessor_type: str) -> int:
+            t_arr = np.array(times, dtype=np.float32)
+            t_bv = self.add_buffer_view(t_arr.tobytes())
+            t_acc = self.add_accessor(t_bv, 5126, len(times), "SCALAR",
+                                      min_vals=[float(t_arr.min())],
+                                      max_vals=[float(t_arr.max())])
+            v_arr = np.array(values, dtype=np.float32)
+            v_bv = self.add_buffer_view(v_arr.tobytes())
+            v_acc = self.add_accessor(v_bv, 5126, len(times), accessor_type)
+            idx = len(samplers)
+            samplers.append({"input": t_acc, "interpolation": "LINEAR", "output": v_acc})
+            return idx
+
+        def _interp(axis_tracks: dict, axis: int, t: float) -> float:
+            if axis not in axis_tracks:
+                return 0.0
+            kfs = axis_tracks[axis].keyframes
+            if not kfs:
+                return 0.0
+            if t <= kfs[0].time:
+                return kfs[0].value
+            if t >= kfs[-1].time:
+                return kfs[-1].value
+            for i in range(len(kfs) - 1):
+                if kfs[i].time <= t <= kfs[i + 1].time:
+                    f = (t - kfs[i].time) / (kfs[i + 1].time - kfs[i].time)
+                    return kfs[i].value + f * (kfs[i + 1].value - kfs[i].value)
+            return kfs[-1].value
+
+        def _euler_to_quat(rx_deg: float, ry_deg: float, rz_deg: float) -> list:
+            """Euler XYZ degrees → quaternion [x, y, z, w] (glTF convention)."""
+            rx = math.radians(rx_deg)
+            ry = math.radians(ry_deg)
+            rz = math.radians(rz_deg)
+            cx, sx = math.cos(rx / 2), math.sin(rx / 2)
+            cy, sy = math.cos(ry / 2), math.sin(ry / 2)
+            cz, sz = math.cos(rz / 2), math.sin(rz / 2)
+            # Intrinsic XYZ = extrinsic ZYX
+            qw = cx * cy * cz + sx * sy * sz
+            qx = sx * cy * cz - cx * sy * sz
+            qy = cx * sy * cz + sx * cy * sz
+            qz = cx * cy * sz - sx * sy * sz
+            return [qx, qy, qz, qw]
+
+        # --- Rotation channels ---
+        for piece, axis_tracks in rot_by_piece.items():
+            node_idx = node_name_to_idx[piece]
+            all_times = sorted({kf.time
+                                 for tr in axis_tracks.values()
+                                 for kf in tr.keyframes})
+            quats = []
+            for t in all_times:
+                rx = _interp(axis_tracks, 0, t)
+                ry = _interp(axis_tracks, 1, t)
+                rz = _interp(axis_tracks, 2, t)
+                quats.extend(_euler_to_quat(rx, ry, rz))
+            s = _add_sampler(all_times, quats, "VEC4")
+            channels.append({"sampler": s, "target": {"node": node_idx, "path": "rotation"}})
+
+        # --- Translation channels ---
+        for piece, axis_tracks in trans_by_piece.items():
+            node_idx = node_name_to_idx[piece]
+            rest = piece_offsets.get(piece, (0.0, 0.0, 0.0))
+            all_times = sorted({kf.time
+                                 for tr in axis_tracks.values()
+                                 for kf in tr.keyframes})
+            vecs = []
+            for t in all_times:
+                # BOS move is delta from S3O rest position
+                dx = _interp(axis_tracks, 0, t)
+                dy = _interp(axis_tracks, 1, t)
+                dz = _interp(axis_tracks, 2, t)
+                vecs.extend([rest[0] + dx, rest[1] + dy, rest[2] + dz])
+            s = _add_sampler(all_times, vecs, "VEC3")
+            channels.append({"sampler": s, "target": {"node": node_idx, "path": "translation"}})
+
+        if channels:
+            if not hasattr(self, 'animations'):
+                self.animations = []
+            self.animations.append({
+                "name": anim_name,
+                "channels": channels,
+                "samplers": samplers,
+            })
+            print(f"  GLB animation '{anim_name}': {len(channels)} channels")
+
     def build_glb(self) -> bytes:
         """Build the final GLB binary."""
         # Construct the JSON
@@ -210,6 +328,8 @@ class GLBBuilder:
         }
         if self.materials:
             gltf["materials"] = self.materials
+        if hasattr(self, 'animations') and self.animations:
+            gltf["animations"] = self.animations
 
         json_str = json.dumps(gltf, separators=(',', ':'))
         json_bytes = json_str.encode('utf-8')

@@ -35,6 +35,7 @@ import struct
 import argparse
 import tempfile
 import base64
+import hashlib
 import urllib.request
 import numpy as np
 from typing import Dict, List, Optional, Tuple
@@ -42,13 +43,15 @@ from typing import Dict, List, Optional, Tuple
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
+from bos_animator import extract_walk_animation
 
 
 def convert_with_weapons(
     model: S3OModel,
-    weapon_info: Optional[BOSParseResult] = None
+    weapon_info: Optional[BOSParseResult] = None,
+    script_path: Optional[str] = None,
 ) -> bytes:
-    """Convert S3O to GLB with weapon metadata embedded in glTF extras."""
+    """Convert S3O to GLB with weapon metadata and walk animation."""
     builder = GLBBuilder()
     mat_idx = builder.add_default_material()
 
@@ -82,6 +85,11 @@ def convert_with_weapons(
                 if "aim_piece" not in weapon_lookup[key]["roles"]:
                     weapon_lookup[key]["roles"].append("aim_piece")
 
+    # Maps piece_name.lower() → glTF node index (built while adding pieces)
+    node_name_to_idx: Dict[str, int] = {}
+    # Maps piece_name.lower() → S3O rest offset (x, y, z)
+    piece_offsets: Dict[str, tuple] = {}
+
     def add_piece_with_extras(piece: S3OPiece, parent_idx=None) -> int:
         """Add a piece node with weapon extras metadata."""
         mesh_idx = builder.add_piece_mesh(piece, mat_idx)
@@ -106,6 +114,10 @@ def convert_with_weapons(
 
         node_idx = len(builder.nodes)
         builder.nodes.append(node)
+
+        # Track name → index and rest offset for animation
+        node_name_to_idx[piece_key] = node_idx
+        piece_offsets[piece_key] = (ox, oy, oz)
 
         child_indices = []
         for child in piece.children:
@@ -137,8 +149,19 @@ def convert_with_weapons(
                 for wnum, wmap in weapon_info.weapons.items()
             }
         builder.nodes[root_idx]["extras"] = root_extras
-
         builder.scenes[0]["nodes"] = [root_idx]
+
+    # --- Animation ---
+    if script_path and os.path.isfile(script_path):
+        try:
+            with open(script_path, 'r', errors='replace') as f:
+                bos_content = f.read()
+            result = extract_walk_animation(bos_content)
+            if result:
+                anim_name, tracks = result
+                builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
+        except Exception as e:
+            print(f"  Warning: animation extraction failed: {e}")
 
     return builder.build_glb()
 
@@ -194,7 +217,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info)
+    glb_data = convert_with_weapons(model, weapon_info, script_path)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -390,9 +413,11 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
             print("  Warning: script not found, converting without weapon metadata")
             script_local = None
 
+        # Output inside the temp dir so it never lands in the repo locally.
+        # push_glb_to_repo() uploads it to GitHub; after that it's cleaned up.
+        # Use --local to save to disk instead.
         if output_path is None:
-            repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            output_path = os.path.join(repo_root, s3o_name.replace(".s3o", ".glb"))
+            output_path = os.path.join(tmpdir, s3o_name.replace(".s3o", ".glb"))
 
         glb_path = convert_single(s3o_local, script_local, output_path, info_only)
         return glb_path
@@ -412,7 +437,7 @@ def push_glb_to_repo(glb_path: str):
     repo_path = filename  # GLBs live in the repo root
 
     with open(glb_path, "rb") as f:
-        content_b64 = base64.b64encode(f.read()).decode("ascii")
+        raw = f.read()
 
     api_url = f"https://api.github.com/repos/{VIEWER_REPO}/contents/{repo_path}"
 
@@ -425,6 +450,13 @@ def push_glb_to_repo(glb_path: str):
         if e.code != 404:
             raise
 
+    # Compare git blob SHA to avoid empty commits when content is unchanged
+    blob_sha = hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
+    if existing_sha and blob_sha == existing_sha:
+        print(f"  → No changes, skipping push ({filename} already up to date)")
+        return
+
+    content_b64 = base64.b64encode(raw).decode("ascii")
     body = {
         "message": f"{'Update' if existing_sha else 'Add'} {filename}",
         "content": content_b64,
@@ -475,6 +507,11 @@ def main():
     args = parser.parse_args()
 
     if args.unit:
+        if args.local:
+            # --local: save GLB to repo root so the user can inspect it
+            if args.output is None:
+                repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                args.output = os.path.join(repo_root, f"{args.unit}.glb")
         glb_path = fetch_unit_from_github(args.unit, args.output, args.info_only)
         if glb_path and not args.local and not args.info_only:
             push_glb_to_repo(glb_path)
