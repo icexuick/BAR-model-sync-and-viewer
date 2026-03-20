@@ -97,31 +97,31 @@ def parse_bos(filepath: str) -> BOSParseResult:
 
     result = BOSParseResult()
 
-    # 1. Extract piece declarations
+    # Remove comments for cleaner parsing first — piece declarations may have
+    # inline // comments (e.g. "railTopRight, //4\n railBotRight,") that break parsing.
+    # BOS uses // for line comments and /* */ for block comments
+    clean = re.sub(r'//[^\n]*', '', content)
+    clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
+
+    # 1. Extract piece declarations from comment-stripped source
     # Format: "piece base, turret, barrel, flare, ..."
     piece_match = re.search(
         r'piece\s+([\w,\s]+?)\s*;',
-        content,
+        clean,
         re.IGNORECASE
     )
     if piece_match:
         pieces_str = piece_match.group(1)
         result.pieces = [p.strip().lower() for p in pieces_str.split(',') if p.strip()]
 
-    # Also catch multi-line piece declarations
+    # Also catch multi-line piece declarations without semicolon
     if not result.pieces:
-        # Sometimes pieces are declared on multiple lines
-        all_pieces = re.findall(r'piece\s+([\w,\s]+)', content, re.IGNORECASE)
+        all_pieces = re.findall(r'piece\s+([\w,\s]+)', clean, re.IGNORECASE)
         for pm in all_pieces:
             for p in pm.split(','):
                 p = p.strip().lower()
                 if p and p not in result.pieces:
                     result.pieces.append(p)
-
-    # Remove comments for cleaner parsing
-    # BOS uses // for line comments and /* */ for block comments
-    clean = re.sub(r'//[^\n]*', '', content)
-    clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
 
     # Old-style BOS uses Primary/Secondary/Tertiary/Quaternary instead of Weapon1/2/3/4
     _LEGACY_WEAPON_MAP = {
