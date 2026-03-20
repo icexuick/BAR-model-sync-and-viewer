@@ -59,6 +59,28 @@ def _load_anim_overrides() -> set:
 REVERSED_UNITS = _load_anim_overrides()
 
 
+_LEG_PREFIXES = ('hinge', 'thigh', 'leg', 'foot', 'shin', 'calf', 'paw', 'toe')
+
+def _count_leg_chains(root_piece: 'S3OPiece') -> int:
+    """
+    Count the number of top-level leg chains in the S3O piece tree.
+    Searches root and its direct children (e.g. pelvis) for pieces whose
+    names start with a leg-related prefix. Returns the count found.
+    """
+    def leg_children(piece) -> int:
+        return sum(1 for c in piece.children
+                   if c.name.lower().startswith(_LEG_PREFIXES))
+
+    count = leg_children(root_piece)
+    if count == 0:
+        # Check one level deeper (pelvis/torso as intermediate root)
+        for child in root_piece.children:
+            n = leg_children(child)
+            if n > count:
+                count = n
+    return count
+
+
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
@@ -103,8 +125,6 @@ def convert_with_weapons(
     node_name_to_idx: Dict[str, int] = {}
     # Maps piece_name.lower() → S3O rest offset (x, y, z)
     piece_offsets: Dict[str, tuple] = {}
-    # Maps piece_name.lower() → first child's offset (x, y, z), for sideways-mount detection
-    child_offsets: Dict[str, tuple] = {}
 
     def add_piece_with_extras(piece: S3OPiece, parent_idx=None) -> int:
         """Add a piece node with weapon extras metadata."""
@@ -134,10 +154,6 @@ def convert_with_weapons(
         # Track name → index and rest offset for animation
         node_name_to_idx[piece_key] = node_idx
         piece_offsets[piece_key] = (ox, oy, oz)
-        # Store first child's offset for sideways-mount detection
-        if piece.children:
-            cx, cy, cz = piece.children[0].offset
-            child_offsets[piece_key] = (cx, cy, cz)
 
         child_indices = []
         for child in piece.children:
@@ -174,13 +190,21 @@ def convert_with_weapons(
     # --- Animation ---
     if script_path and os.path.isfile(script_path):
         try:
-            with open(script_path, 'r', errors='replace') as f:
-                bos_content = f.read()
-            result = extract_walk_animation(bos_content, reverse=reverse_anim)
-            if result:
-                anim_name, tracks, now_rots = result
-                builder.apply_now_rotations(now_rots, node_name_to_idx, child_offsets)
-                builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets, child_offsets)
+            # Count leg chains to decide whether animation is reliable.
+            # Units with more than 2 pairs of legs (>4 leg-root pieces) have
+            # complex multi-axis / sideways-mounted leg geometries that our
+            # BOS→glTF rotation conversion does not handle correctly yet.
+            leg_count = _count_leg_chains(model.root_piece) if model.root_piece else 0
+            if leg_count > 4:
+                print(f"  Skipping animation: {leg_count} leg chains detected (>4 not supported)")
+            else:
+                with open(script_path, 'r', errors='replace') as f:
+                    bos_content = f.read()
+                result = extract_walk_animation(bos_content, reverse=reverse_anim)
+                if result:
+                    anim_name, tracks, now_rots = result
+                    builder.apply_now_rotations(now_rots, node_name_to_idx)
+                    builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
