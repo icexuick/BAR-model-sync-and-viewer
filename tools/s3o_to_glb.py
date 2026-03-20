@@ -194,22 +194,27 @@ class GLBBuilder:
         """
         Apply Create() 'turn piece to axis <value> now' rotations as static
         node rotations in the GLB. This sets the rest pose to match what the
-        Recoil engine sets up via Create() before any animation plays.
+        Spring engine sets up via Create() before any animation plays.
         now_rots: {(piece_lower, axis_int, True): degrees}
         """
         import math
 
         def _euler_to_quat(rx_deg, ry_deg, rz_deg):
-            """Recoil: R(Z)*R(X)*R(Y), Y negated."""
-            def aq(axis, deg):
-                a = math.radians(deg) / 2
-                s, w = math.sin(a), math.cos(a)
-                return [s,0,0,w] if axis==0 else ([0,s,0,w] if axis==1 else [0,0,s,w])
-            def qm(a, b):
-                ax,ay,az,aw = a; bx,by,bz,bw = b
-                return [aw*bx+ax*bw+ay*bz-az*by, aw*by-ax*bz+ay*bw+az*bx,
-                        aw*bz+ax*by-ay*bx+az*bw, aw*bw-ax*bx-ay*by-az*bz]
-            return qm(qm(aq(2,rz_deg), aq(0,rx_deg)), aq(1,-ry_deg))
+            # COBWTF: engine negates Z-axis turns before storing; TurnNow has same negation.
+            # Rotation order is YXZ (FromEulerYPR: R = Rz * Rx * Ry).
+            rx = math.radians(rx_deg)
+            ry = math.radians(ry_deg)
+            rz = -math.radians(rz_deg)  # COBWTF Z-negation
+            cx, sx = math.cos(rx/2), math.sin(rx/2)
+            cy, sy = math.cos(ry/2), math.sin(ry/2)
+            cz, sz = math.cos(rz/2), math.sin(rz/2)
+            # FromEulerYPR(pitch=rx, yaw=ry, roll=rz): R = Rz * Rx * Ry
+            return [
+                cz*cy*sx + cx*sz*sy,   # x
+                cx*cz*sy - cy*sx*sz,   # y
+                cx*cy*sz - cz*sx*sy,   # z
+                cx*cz*cy + sx*sz*sy,   # w
+            ]
 
         # Group by piece
         by_piece: Dict[str, Dict[int, float]] = {}
@@ -288,34 +293,23 @@ class GLBBuilder:
                     return kfs[i].value + f * (kfs[i + 1].value - kfs[i].value)
             return kfs[-1].value
 
-        def _axis_quat(axis: int, deg: float) -> list:
-            """Single-axis quaternion: axis 0=X, 1=Y, 2=Z."""
-            a = math.radians(deg) / 2
-            s = math.sin(a)
-            w = math.cos(a)
-            if axis == 0: return [s, 0.0, 0.0, w]
-            if axis == 1: return [0.0, s, 0.0, w]
-            return [0.0, 0.0, s, w]
-
-        def _quat_mul(a: list, b: list) -> list:
-            """Quaternion multiply a * b (Hamilton product)."""
-            ax, ay, az, aw = a
-            bx, by, bz, bw = b
-            return [
-                aw*bx + ax*bw + ay*bz - az*by,
-                aw*by - ax*bz + ay*bw + az*bx,
-                aw*bz + ax*by - ay*bx + az*bw,
-                aw*bw - ax*bx - ay*by - az*bz,
-            ]
-
-        def _spring_to_quat(rx_deg: float, ry_deg: float, rz_deg: float) -> list:
-            """Recoil BOS rotation → glTF quaternion.
-            Y negated, rotation order R(Z)*R(X)*R(Y) = intrinsic YXZ.
+        def _euler_to_quat(rx_deg: float, ry_deg: float, rz_deg: float) -> list:
+            """BOS turn angles (degrees) → quaternion [x,y,z,w].
+            Engine applies COBWTF (negate Z) and rotation order YXZ (FromEulerYPR).
             """
-            qy = _axis_quat(1, -ry_deg)
-            qx = _axis_quat(0, rx_deg)
-            qz = _axis_quat(2, rz_deg)
-            return _quat_mul(_quat_mul(qz, qx), qy)
+            rx = math.radians(rx_deg)
+            ry = math.radians(ry_deg)
+            rz = -math.radians(rz_deg)  # COBWTF: engine negates turn Z-axis
+            cx, sx = math.cos(rx / 2), math.sin(rx / 2)
+            cy, sy = math.cos(ry / 2), math.sin(ry / 2)
+            cz, sz = math.cos(rz / 2), math.sin(rz / 2)
+            # FromEulerYPR(pitch=rx, yaw=ry, roll=rz): R = Rz * Rx * Ry
+            return [
+                cz*cy*sx + cx*sz*sy,   # x
+                cx*cz*sy - cy*sx*sz,   # y
+                cx*cy*sz - cz*sx*sy,   # z
+                cx*cz*cy + sx*sz*sy,   # w
+            ]
 
         # --- Rotation channels ---
         for piece, axis_tracks in rot_by_piece.items():
@@ -328,7 +322,7 @@ class GLBBuilder:
                 rx = _interp(axis_tracks, 0, t)
                 ry = _interp(axis_tracks, 1, t)
                 rz = _interp(axis_tracks, 2, t)
-                quats.extend(_spring_to_quat(rx, ry, rz))
+                quats.extend(_euler_to_quat(rx, ry, rz))
             s = _add_sampler(all_times, quats, "VEC4")
             channels.append({"sampler": s, "target": {"node": node_idx, "path": "rotation"}})
 
@@ -341,6 +335,7 @@ class GLBBuilder:
                                  for kf in tr.keyframes})
             vecs = []
             for t in all_times:
+                # BOS move is delta from S3O rest position
                 dx = _interp(axis_tracks, 0, t)
                 dy = _interp(axis_tracks, 1, t)
                 dz = _interp(axis_tracks, 2, t)

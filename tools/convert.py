@@ -61,19 +61,13 @@ REVERSED_UNITS = _load_anim_overrides()
 
 _LEG_PREFIXES = ('hinge', 'thigh', 'leg', 'foot', 'shin', 'calf', 'paw', 'toe')
 
-def _count_leg_chains(root_piece: 'S3OPiece') -> int:
-    """
-    Count the number of top-level leg chains in the S3O piece tree.
-    Searches root and its direct children (e.g. pelvis) for pieces whose
-    names start with a leg-related prefix. Returns the count found.
-    """
+def _count_leg_chains(root_piece) -> int:
+    """Count top-level leg chains. >4 = hexapod, skip animation."""
     def leg_children(piece) -> int:
         return sum(1 for c in piece.children
                    if c.name.lower().startswith(_LEG_PREFIXES))
-
     count = leg_children(root_piece)
     if count == 0:
-        # Check one level deeper (pelvis/torso as intermediate root)
         for child in root_piece.children:
             n = leg_children(child)
             if n > count:
@@ -190,10 +184,6 @@ def convert_with_weapons(
     # --- Animation ---
     if script_path and os.path.isfile(script_path):
         try:
-            # Count leg chains to decide whether animation is reliable.
-            # Units with more than 2 pairs of legs (>4 leg-root pieces) have
-            # complex multi-axis / sideways-mounted leg geometries that our
-            # BOS→glTF rotation conversion does not handle correctly yet.
             leg_count = _count_leg_chains(model.root_piece) if model.root_piece else 0
             if leg_count > 4:
                 print(f"  Skipping animation: {leg_count} leg chains detected (>4 not supported)")
