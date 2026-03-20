@@ -183,7 +183,8 @@ def convert_with_weapons(
 
                 if visual_root is None:
                     # No aim_pieces (or none found in hierarchy) — fall back to:
-                    # 1. aim_from_piece if it's an ancestor of fire_point
+                    # 1. aim_from_piece if it's an ancestor of fire_point AND its subtree
+                    #    covers <=50% of the model (otherwise it's a structural pivot)
                     # 2. otherwise direct parent of fire_point
                     if wmap.aim_from_piece:
                         aim_from_key = wmap.aim_from_piece.lower()
@@ -191,7 +192,12 @@ def convert_with_weapons(
                         cur = parent_map.get(fp_key)
                         while cur is not None:
                             if cur == aim_from_key:
-                                visual_root = aim_from_key
+                                # Only use if subtree is small enough to be a real gun mount
+                                candidate_subtree = _collect_subtree(aim_from_key, children_map)
+                                total_pieces = len(parent_map)
+                                if total_pieces == 0 or len(candidate_subtree) <= total_pieces * 0.50:
+                                    visual_root = aim_from_key
+                                # Either way stop walking
                                 break
                             cur = parent_map.get(cur)
                     if visual_root is None:
@@ -201,14 +207,18 @@ def convert_with_weapons(
                 if visual_root:
                     # Tag all descendants of visual_root that are NOT aim_pieces
                     # of any weapon as "visual" pieces.
-                    # Skip if subtree is too large (>30% of model) — likely a structural
-                    # dummy weapon (e.g. hull-aim) rather than a real visual weapon.
+                    # Skip dummy hull-aim weapons: fire_point is itself an aim_piece AND
+                    # the subtree covers >30% of the model (structural pivot, not a real gun).
+                    # Real large weapons (e.g. 26-piece main cannon) have a fire_point that
+                    # is NOT an aim_piece, so they are never skipped.
                     subtree = _collect_subtree(visual_root, children_map)
                     total_pieces = len(parent_map)
-                    if total_pieces > 0 and len(subtree) > total_pieces * 0.30:
+                    fp_is_aim = fp_key in {ap.lower() for ap in wmap.aim_pieces}
+                    is_dummy = fp_is_aim and total_pieces > 0 and len(subtree) > total_pieces * 0.30
+                    if is_dummy:
                         print(f"  Weapon {wnum}: visual root = {visual_root}, "
-                              f"subtree size = {len(subtree)} (skipped — too large, likely structural)")
-                    else:
+                              f"subtree size = {len(subtree)} (skipped — fire_point is aim_piece and subtree too large)")
+                    elif not is_dummy:
                         # Aim_pieces of OTHER weapons that appear in this subtree
                         # should still be excluded (they're structural rotators, not gun geometry).
                         # But the visual_root itself and same-weapon aim_pieces are included.
@@ -218,9 +228,24 @@ def convert_with_weapons(
                             if wn2 != wnum
                             for ap in wm2.aim_pieces
                         }
-                        for piece_key in subtree:
-                            if piece_key == visual_root or piece_key not in other_aim_pieces:
-                                _add_to_lookup(piece_key, wnum, "visual")
+                        def _mirror(name: str) -> str:
+                            """Swap leading l/r prefix for mirror-symmetric pieces."""
+                            if name.startswith('l'): return 'r' + name[1:]
+                            if name.startswith('r'): return 'l' + name[1:]
+                            return name
+
+                        tagged_subtrees = [subtree]
+                        # If visual_root has a mirror sibling (e.g. lsleeve→rsleeve),
+                        # tag that subtree too so both arms highlight together.
+                        mirror_root = _mirror(visual_root)
+                        if mirror_root != visual_root and mirror_root in children_map:
+                            mirror_subtree = _collect_subtree(mirror_root, children_map)
+                            tagged_subtrees.append(mirror_subtree)
+
+                        for s in tagged_subtrees:
+                            for piece_key in s:
+                                if piece_key == visual_root or piece_key not in other_aim_pieces:
+                                    _add_to_lookup(piece_key, wnum, "visual")
                         print(f"  Weapon {wnum}: visual root = {visual_root}, "
                               f"subtree size = {len(subtree)}")
 

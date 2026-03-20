@@ -123,19 +123,16 @@ def parse_bos(filepath: str) -> BOSParseResult:
     clean = re.sub(r'//[^\n]*', '', content)
     clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
 
-    # 2. Extract QueryWeaponN functions
-    # These return the piece where the projectile spawns (flare/barrel)
-    # Pattern: QueryWeaponN(...) { ... return piecenum; }
+    # Old-style BOS uses Primary/Secondary instead of Weapon1/Weapon2
+    _LEGACY_WEAPON_MAP = {'primary': 1, 'secondary': 2}
+
+    # 2. Extract QueryWeaponN / QueryPrimary / QuerySecondary functions
     for match in re.finditer(
-        r'QueryWeapon(\d+)\s*\([^)]*\)\s*\{([^}]+)\}',
+        r'Query(Weapon(\d+)|(Primary)|(Secondary))\s*\([^)]*\)\s*\{([^}]+)\}',
         clean, re.DOTALL | re.IGNORECASE
     ):
-        wnum = int(match.group(1))
-        body = match.group(2)
-
-        # Look for "piecenum = <piece>" or "return <piece>"
-        # In BOS, the return value for piece queries uses piece number variables
-        # But typically: "piecenum = flare1;" or direct piece reference
+        wnum = int(match.group(2)) if match.group(2) else _LEGACY_WEAPON_MAP.get(match.group(3) or match.group(4), 1)
+        body = match.group(5)
         piece_ref = _extract_piece_from_function(body, result.pieces)
         if piece_ref:
             if wnum not in result.weapons:
@@ -143,14 +140,13 @@ def parse_bos(filepath: str) -> BOSParseResult:
             result.weapons[wnum].query_piece = piece_ref
             result.weapons[wnum]._update_all()
 
-    # 3. Extract AimFromWeaponN functions
+    # 3. Extract AimFromWeaponN / AimFromPrimary / AimFromSecondary functions
     for match in re.finditer(
-        r'AimFromWeapon(\d+)\s*\([^)]*\)\s*\{([^}]+)\}',
+        r'AimFrom(Weapon(\d+)|(Primary)|(Secondary))\s*\([^)]*\)\s*\{([^}]+)\}',
         clean, re.DOTALL | re.IGNORECASE
     ):
-        wnum = int(match.group(1))
-        body = match.group(2)
-
+        wnum = int(match.group(2)) if match.group(2) else _LEGACY_WEAPON_MAP.get((match.group(3) or match.group(4) or '').lower(), 1)
+        body = match.group(5)
         piece_ref = _extract_piece_from_function(body, result.pieces)
         if piece_ref:
             if wnum not in result.weapons:
@@ -158,15 +154,14 @@ def parse_bos(filepath: str) -> BOSParseResult:
             result.weapons[wnum].aim_from_piece = piece_ref
             result.weapons[wnum]._update_all()
 
-    # 4. Extract AimWeaponN — look for turn commands to find aiming pieces
+    # 4. Extract AimWeaponN / AimPrimary / AimSecondary — look for turn commands
     for match in re.finditer(
-        r'AimWeapon(\d+)\s*\([^)]*\)\s*\{([^}]+)\}',
+        r'Aim(Weapon(\d+)|(Primary)|(Secondary))\s*\([^)]*\)\s*\{([^}]+)\}',
         clean, re.DOTALL | re.IGNORECASE
     ):
-        wnum = int(match.group(1))
-        body = match.group(2)
+        wnum = int(match.group(2)) if match.group(2) else _LEGACY_WEAPON_MAP.get((match.group(3) or match.group(4) or '').lower(), 1)
+        body = match.group(5)
 
-        # Find all "turn <piece> to <axis>" commands
         aim_pieces = set()
         for turn_match in re.finditer(r'turn\s+(\w+)\s+to\s+[xyz]-axis', body, re.IGNORECASE):
             piece_name = turn_match.group(1).lower()
