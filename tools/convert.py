@@ -165,7 +165,9 @@ def convert_with_weapons(
             for ap in wmap.aim_pieces:
                 _add_to_lookup(ap.lower(), wnum, "aim_piece")
 
-            # Find the visual weapon root: nearest aim_piece ancestor of the fire_point.
+            # Find the visual weapon root: highest aim_piece ancestor of the fire_point.
+            # "Highest" = furthest from the fire_point but still in aim_set — this captures
+            # the full gun mount (e.g. lshoulder) rather than just an inner pivot (lsleeve).
             # If no aim_pieces, use aim_from_piece or direct parent of fire_point.
             if wmap.query_piece:
                 fp_key = wmap.query_piece.lower()
@@ -173,12 +175,18 @@ def convert_with_weapons(
 
                 visual_root = None
                 if aim_set:
-                    # Walk from fire_point up through parents to find the nearest aim_piece
+                    # Walk from fire_point up through parents.
+                    # Keep the HIGHEST aim_piece whose subtree is still ≤30% of the model.
+                    # This picks the full gun mount (e.g. lshoulder) rather than just an
+                    # inner pivot (lsleeve), while avoiding large structural pieces like
+                    # torso or aimx that span most of the model.
+                    total_pieces = len(parent_map)
                     cur = parent_map.get(fp_key)
                     while cur is not None:
                         if cur in aim_set:
-                            visual_root = cur
-                            break
+                            sub = _collect_subtree(cur, children_map)
+                            if total_pieces == 0 or len(sub) <= total_pieces * 0.30:
+                                visual_root = cur  # keep updating — last valid match is highest
                         cur = parent_map.get(cur)
 
                 if visual_root is None:
@@ -235,10 +243,26 @@ def convert_with_weapons(
                             return name
 
                         tagged_subtrees = [subtree]
-                        # If visual_root has a mirror sibling (e.g. lsleeve→rsleeve),
+                        # If visual_root has a mirror sibling (e.g. lshoulder→rshoulder),
                         # tag that subtree too so both arms highlight together.
+                        # But only if the mirror root is NOT already the visual root of
+                        # another weapon — that would incorrectly merge distinct weapons.
                         mirror_root = _mirror(visual_root)
-                        if mirror_root != visual_root and mirror_root in children_map:
+                        other_visual_roots = {
+                            wmap2.query_piece.lower() if wmap2.query_piece else None
+                            for wn2, wmap2 in weapon_info.weapons.items()
+                            if wn2 != wnum
+                        }
+                        # Also block if mirror_root is an aim_piece of a different weapon
+                        other_weapon_pieces = {
+                            ap.lower()
+                            for wn2, wm2 in weapon_info.weapons.items()
+                            if wn2 != wnum
+                            for ap in (list(wm2.aim_pieces) + ([wm2.query_piece] if wm2.query_piece else []))
+                        }
+                        if (mirror_root != visual_root
+                                and mirror_root in children_map
+                                and mirror_root not in other_weapon_pieces):
                             mirror_subtree = _collect_subtree(mirror_root, children_map)
                             tagged_subtrees.append(mirror_subtree)
 
