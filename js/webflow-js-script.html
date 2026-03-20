@@ -74,7 +74,7 @@
 
     // FIX: word-boundary matching zodat 'glow' niet matcht in 'legLowerL1' (le-glow-er).
     // Splitst camelCase namen in losse woorden en checkt elk keyword als heel woord.
-    const HIDE_KEYWORDS = ['flare','fire','emit','jam','wake','bow','nano','blink','glow','light'];
+    const HIDE_KEYWORDS = ['flare','fire','emit','jam','wake','bow','nano','blink','glow','light','door'];
     function shouldHideMesh(name) {
         const words = name.replace(/([A-Z])/g, ' $1').toLowerCase().split(/[\s_\-\.0-9]+/).filter(Boolean);
         return HIDE_KEYWORDS.some(k => words.includes(k));
@@ -334,24 +334,35 @@
                     num: wnum,
                     def: summary ? summary.def : null,
                 });
-                if (!visualMeshesByWeapon.has(wnum)) visualMeshesByWeapon.set(wnum, []);
-                visualMeshesByWeapon.get(wnum).push(node);
+                // Register under ALL weapon numbers so shared geometry (e.g. dual-mode
+                // railgun with RAILGUN + AA_RAILGUN on same mesh) highlights correctly
+                // when either weapon is hovered.
+                for (const wn of weapons) {
+                    if (!visualMeshesByWeapon.has(wn)) visualMeshesByWeapon.set(wn, []);
+                    visualMeshesByWeapon.get(wn).push(node);
+                }
             });
 
             // --- DOM WEAPON NAME LOOKUP ---
             // wpn-cat-link uses dashes (e.g. "legkark-heat-ray"),
             // GLB def uses underscores (e.g. "heat_ray") → normalise both to dashes for matching.
-            const domWeaponNames = new Map(); // normalised slug → { name, desc }
-            document.querySelectorAll('.uw-item-flex[data-wpn-slug]').forEach(el => {
-                const slug = el.getAttribute('data-wpn-slug');
-                const name = el.querySelector('[wpn-cat-link]')?.textContent.trim() || '';
-                const desc = el.querySelector('#weapon-description')?.textContent.trim() || '';
-                if (slug) domWeaponNames.set(slug, { name, desc });
-            });
+            // Built lazily on first tooltip show to ensure Webflow CMS list is fully rendered.
+            function getDomWeaponNames() {
+                const map = new Map();
+                document.querySelectorAll('.uw-item-flex[data-wpn-slug]').forEach(el => {
+                    const slug = el.getAttribute('data-wpn-slug');
+                    const name = el.querySelector('[wpn-cat-link]')?.textContent.trim() || '';
+                    const desc = el.getAttribute('data-wpn-description') || '';
+                    console.log('[wpn-desc] slug=', slug, 'name=', name, 'desc=', desc);
+                    if (slug) map.set(slug, { name, desc });
+                });
+                return map;
+            }
             function getWeaponInfo(winfo) {
                 if (winfo.def) {
                     const slug = `${unitName}-${winfo.def.replace(/_/g, '-')}`;
-                    if (domWeaponNames.has(slug)) return domWeaponNames.get(slug);
+                    const names = getDomWeaponNames();
+                    if (names.has(slug)) return names.get(slug);
                     return { name: slug, desc: '' };
                 }
                 return { name: `Weapon ${winfo.num}`, desc: '' };
@@ -362,14 +373,18 @@
             tooltip.style.cssText = [
                 'position:fixed','pointer-events:none','display:none',
                 'background:rgba(0,0,0,0.78)','color:#fff',
-                'font-size:13px','font-family:sans-serif','font-weight:500',
-                'padding:5px 10px','border-radius:5px',
+                'font-size:14px',"font-family:'Poppins',sans-serif",'font-weight:300',
+                'padding:8px 14px','border-radius:5px',
                 'border:1px solid rgba(255,255,255,0.18)',
                 'white-space:nowrap','z-index:9999',
+                'transform:translateZ(0)','will-change:transform',
+                '-webkit-font-smoothing:antialiased',
+                'letter-spacing:-0.3px',
             ].join(';');
             const tooltipName = document.createElement('div');
+            tooltipName.style.cssText = 'text-transform:uppercase;letter-spacing:-0.7px;font-size:16px;font-weight:300';
             const tooltipDesc = document.createElement('div');
-            tooltipDesc.style.cssText = 'font-size:11px;font-weight:400;color:rgba(255,255,255,0.55);margin-top:2px';
+            tooltipDesc.style.cssText = 'font-size:12px;font-weight:400;color:rgba(255,255,255,0.6);margin-top:1px;-webkit-font-smoothing:antialiased;letter-spacing:-0.3px';
             tooltip.appendChild(tooltipName);
             tooltip.appendChild(tooltipDesc);
             document.body.appendChild(tooltip);
@@ -384,8 +399,8 @@
                 tooltipDesc.textContent = desc;
                 tooltipDesc.style.display = desc ? 'block' : 'none';
                 tooltip.style.display = 'block';
-                tooltip.style.left = (x + 14) + 'px';
-                tooltip.style.top  = (y - 8) + 'px';
+                tooltip.style.left = Math.round(x + 14) + 'px';
+                tooltip.style.top  = Math.round(y - 8) + 'px';
             }
             function hideTooltip() {
                 tooltip.style.display = 'none';

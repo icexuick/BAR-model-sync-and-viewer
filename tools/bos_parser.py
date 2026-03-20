@@ -33,7 +33,8 @@ from typing import List, Dict, Optional, Set
 class WeaponPieceMapping:
     """Maps a weapon number to its associated S3O model pieces."""
     weapon_num: int                    # 1-based weapon number
-    query_piece: Optional[str] = None  # piece returned by QueryWeapon (fire point)
+    query_piece: Optional[str] = None  # primary fire point piece (first found)
+    query_pieces: List[str] = field(default_factory=list)  # ALL fire point pieces (multi-barrel)
     aim_from_piece: Optional[str] = None  # piece returned by AimFromWeapon (aim origin)
     aim_pieces: List[str] = field(default_factory=list)  # pieces turned in AimWeapon
     all_pieces: Set[str] = field(default_factory=set)  # union of all weapon pieces
@@ -45,6 +46,7 @@ class WeaponPieceMapping:
         self.all_pieces = set()
         if self.query_piece:
             self.all_pieces.add(self.query_piece)
+        self.all_pieces.update(self.query_pieces)
         if self.aim_from_piece:
             self.all_pieces.add(self.aim_from_piece)
         self.all_pieces.update(self.aim_pieces)
@@ -135,36 +137,8 @@ def parse_bos(filepath: str) -> BOSParseResult:
 
     _LEGACY_NAMES = 'Primary|Secondary|Tertiary|Quaternary'
 
-    # 2. Extract QueryWeaponN / QueryPrimary / QuerySecondary / ... functions
-    for match in re.finditer(
-        rf'Query(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*\{{([^}}]+)\}}',
-        clean, re.DOTALL | re.IGNORECASE
-    ):
-        wnum = _legacy_wnum(match.group(3), match.group(2))
-        body = match.group(4)
-        piece_ref = _extract_piece_from_function(body, result.pieces)
-        if piece_ref:
-            if wnum not in result.weapons:
-                result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
-            result.weapons[wnum].query_piece = piece_ref
-            result.weapons[wnum]._update_all()
-
-    # 3. Extract AimFromWeaponN / AimFromPrimary / ... functions
-    for match in re.finditer(
-        rf'AimFrom(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*\{{([^}}]+)\}}',
-        clean, re.DOTALL | re.IGNORECASE
-    ):
-        wnum = _legacy_wnum(match.group(3), match.group(2))
-        body = match.group(4)
-        piece_ref = _extract_piece_from_function(body, result.pieces)
-        if piece_ref:
-            if wnum not in result.weapons:
-                result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
-            result.weapons[wnum].aim_from_piece = piece_ref
-            result.weapons[wnum]._update_all()
-
     def _extract_brace_body(text: str, func_pattern: str) -> List[tuple]:
-        """Find all occurrences of func_pattern and return (wnum_str, body) pairs
+        """Find all occurrences of func_pattern and return (group1, body) pairs
         using proper brace matching — handles nested if/while blocks."""
         results = []
         for m in re.finditer(func_pattern, text, re.IGNORECASE):
@@ -183,6 +157,35 @@ def parse_bos(filepath: str) -> BOSParseResult:
                         break
                 pos += 1
         return results
+
+    # 2. Extract QueryWeaponN / QueryPrimary / QuerySecondary / ... functions
+    # Use brace-matching so if/else chains (multi-barrel cycling) are parsed fully.
+    _QUERY_PAT = rf'Query(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*(?=\{{)'
+    for suffix, body in _extract_brace_body(clean, _QUERY_PAT):
+        num_m = re.match(r'Weapon(\d+)', suffix, re.IGNORECASE)
+        leg_m = re.match(rf'({_LEGACY_NAMES})', suffix, re.IGNORECASE)
+        wnum = int(num_m.group(1)) if num_m else _LEGACY_WEAPON_MAP.get((leg_m.group(1) if leg_m else '').lower(), 1)
+        all_refs = _extract_all_pieces_from_function(body, result.pieces)
+        if all_refs:
+            if wnum not in result.weapons:
+                result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
+            result.weapons[wnum].query_piece = all_refs[0]
+            result.weapons[wnum].query_pieces = all_refs
+            result.weapons[wnum]._update_all()
+
+    # 3. Extract AimFromWeaponN / AimFromPrimary / ... functions
+    for match in re.finditer(
+        rf'AimFrom(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*\{{([^}}]+)\}}',
+        clean, re.DOTALL | re.IGNORECASE
+    ):
+        wnum = _legacy_wnum(match.group(3), match.group(2))
+        body = match.group(4)
+        piece_ref = _extract_piece_from_function(body, result.pieces)
+        if piece_ref:
+            if wnum not in result.weapons:
+                result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
+            result.weapons[wnum].aim_from_piece = piece_ref
+            result.weapons[wnum]._update_all()
 
     # 4. Extract AimWeaponN / AimPrimary / ... — use brace-matching to handle
     # nested if/while blocks that trip up simple [^}]+ regex.
@@ -208,15 +211,25 @@ def parse_bos(filepath: str) -> BOSParseResult:
 
 
 def _extract_piece_from_function(body: str, known_pieces: List[str]) -> Optional[str]:
-    """Extract a piece name from a QueryWeapon/AimFromWeapon function body."""
-    # Pattern 1: "piecenum = <piece>;" — most common in BOS
-    # The piece variable is typically used directly
+    """Extract the first piece name from a QueryWeapon/AimFromWeapon function body."""
     for piece in known_pieces:
-        # Check if piece name appears in a return-like context
         if re.search(rf'\b{re.escape(piece)}\b', body, re.IGNORECASE):
             return piece.lower()
-
     return None
+
+
+def _extract_all_pieces_from_function(body: str, known_pieces: List[str]) -> List[str]:
+    """Extract ALL piece names from a QueryWeapon body (for multi-barrel weapons).
+
+    Some units have QueryWeapon functions with if/else chains that assign different
+    fire point pieces per shot (e.g. 6-tube missile launcher cycling through flare1..6).
+    This returns all distinct pieces mentioned in the body, in declaration order.
+    """
+    found = []
+    for piece in known_pieces:
+        if re.search(rf'\b{re.escape(piece)}\b', body, re.IGNORECASE):
+            found.append(piece.lower())
+    return found
 
 
 def parse_lua_script(filepath: str) -> BOSParseResult:
