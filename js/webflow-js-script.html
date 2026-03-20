@@ -17,7 +17,6 @@
     import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
     import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
-    import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
     import GUI from 'three/addons/libs/lil-gui.module.min.js';
 
     // --- CONFIGURATIE ---
@@ -200,7 +199,7 @@
         const clock = new THREE.Clock();
         let isAltDown = false, isTurntableEnabledByUser = true, turntableActive = false, isInteracting = false, idleTimer = null;
         let areShadowsVisible = true;
-        let composer, renderPass, ssaoPass, smaaPass, outputPass, outlinePass;
+        let composer, renderPass, ssaoPass, smaaPass, outputPass;
 
         const textureLoader = new THREE.TextureLoader();
         const gltfLoader = new GLTFLoader();
@@ -293,7 +292,7 @@
                     vec3 S_combinedLight = outgoingLight + totalEmissiveRadiance + S_pbrBoost;
                     // Weapon highlight: boost hovered weapon, dim everything else
                     S_combinedLight = S_combinedLight * (1.0 + highlightStrength * 2.2);
-                    S_combinedLight = S_combinedLight * (1.0 - dimStrength * 0.6);
+                    S_combinedLight = S_combinedLight * (1.0 - dimStrength * 0.35);
                     #ifdef USE_TONEMAPPING
                         gl_FragColor.rgb = toneMapping( S_combinedLight );
                     #else
@@ -457,16 +456,6 @@
                 ssaoPass.minDistance = VIEWER_CONFIG.ssaoMinDist; ssaoPass.maxDistance = VIEWER_CONFIG.ssaoMaxDist;
                 composer.addPass(ssaoPass);
             }
-            outlinePass = new OutlinePass(
-                new THREE.Vector2(container.offsetWidth, container.offsetHeight),
-                scene, camera
-            );
-            outlinePass.edgeStrength = 4.0;
-            outlinePass.edgeGlow = 0.3;
-            outlinePass.edgeThickness = 1.5;
-            outlinePass.visibleEdgeColor.set('#ffffff');
-            outlinePass.hiddenEdgeColor.set('#444444');
-            composer.addPass(outlinePass);
             smaaPass = new SMAAPass( container.offsetWidth * renderer.getPixelRatio(), container.offsetHeight * renderer.getPixelRatio() );
             composer.addPass(smaaPass);
             outputPass = new OutputPass();
@@ -525,7 +514,7 @@
                     camera.aspect = w / h; camera.updateProjectionMatrix();
 
                     if(ssaoPass) ssaoPass.setSize(w, h);
-                    if(outlinePass) outlinePass.setSize(w, h);
+
                     if(smaaPass) smaaPass.setSize(w, h);
 
                     renderer.setClearColor(0x000000, 0);
@@ -562,10 +551,6 @@
             function setWeaponHighlight(wnum) {
                 if (wnum === hoveredWeaponNum) return;
                 hoveredWeaponNum = wnum;
-                // Update outline pass
-                outlinePass.selectedObjects = wnum !== null
-                    ? (visualMeshesByWeapon.get(wnum) || [])
-                    : [];
                 // Update per-mesh highlight/dim values
                 const highlightedMeshes = wnum !== null
                     ? new Set((visualMeshesByWeapon.get(wnum) || []).map(m => m.uuid))

@@ -209,8 +209,17 @@ def convert_with_weapons(
                         print(f"  Weapon {wnum}: visual root = {visual_root}, "
                               f"subtree size = {len(subtree)} (skipped — too large, likely structural)")
                     else:
+                        # Aim_pieces of OTHER weapons that appear in this subtree
+                        # should still be excluded (they're structural rotators, not gun geometry).
+                        # But the visual_root itself and same-weapon aim_pieces are included.
+                        other_aim_pieces = {
+                            ap.lower()
+                            for wn2, wm2 in weapon_info.weapons.items()
+                            if wn2 != wnum
+                            for ap in wm2.aim_pieces
+                        }
                         for piece_key in subtree:
-                            if piece_key not in all_aim_pieces:
+                            if piece_key == visual_root or piece_key not in other_aim_pieces:
                                 _add_to_lookup(piece_key, wnum, "visual")
                         print(f"  Weapon {wnum}: visual root = {visual_root}, "
                               f"subtree size = {len(subtree)}")
