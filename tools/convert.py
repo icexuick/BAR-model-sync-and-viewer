@@ -103,6 +103,8 @@ def convert_with_weapons(
     node_name_to_idx: Dict[str, int] = {}
     # Maps piece_name.lower() → S3O rest offset (x, y, z)
     piece_offsets: Dict[str, tuple] = {}
+    # Maps piece_name.lower() → first child's offset (x, y, z), for sideways-mount detection
+    child_offsets: Dict[str, tuple] = {}
 
     def add_piece_with_extras(piece: S3OPiece, parent_idx=None) -> int:
         """Add a piece node with weapon extras metadata."""
@@ -132,6 +134,10 @@ def convert_with_weapons(
         # Track name → index and rest offset for animation
         node_name_to_idx[piece_key] = node_idx
         piece_offsets[piece_key] = (ox, oy, oz)
+        # Store first child's offset for sideways-mount detection
+        if piece.children:
+            cx, cy, cz = piece.children[0].offset
+            child_offsets[piece_key] = (cx, cy, cz)
 
         child_indices = []
         for child in piece.children:
@@ -173,8 +179,8 @@ def convert_with_weapons(
             result = extract_walk_animation(bos_content, reverse=reverse_anim)
             if result:
                 anim_name, tracks, now_rots = result
-                builder.apply_now_rotations(now_rots, node_name_to_idx)
-                builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
+                builder.apply_now_rotations(now_rots, node_name_to_idx, child_offsets)
+                builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets, child_offsets)
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 

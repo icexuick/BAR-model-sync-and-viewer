@@ -190,26 +190,42 @@ class GLBBuilder:
 
         return node_idx
 
-    def apply_now_rotations(self, now_rots: dict, node_name_to_idx: Dict[str, int]):
+    def apply_now_rotations(self, now_rots: dict, node_name_to_idx: Dict[str, int],
+                            child_offsets: Dict[str, tuple] = None):
         """
         Apply Create() 'turn piece to axis <value> now' rotations as static
         node rotations in the GLB. This sets the rest pose to match what the
-        Spring engine sets up via Create() before any animation plays.
+        Recoil engine sets up via Create() before any animation plays.
         now_rots: {(piece_lower, axis_int, True): degrees}
+        child_offsets: {piece_lower: (cx, cy, cz)} — first child's offset for
+                       sideways-mount detection (|cx| > |cz| → sideways piece).
         """
         import math
 
-        def _euler_to_quat(rx_deg, ry_deg, rz_deg):
-            rx, ry, rz = math.radians(rx_deg), math.radians(ry_deg), math.radians(rz_deg)
-            cx, sx = math.cos(rx/2), math.sin(rx/2)
-            cy, sy = math.cos(ry/2), math.sin(ry/2)
-            cz, sz = math.cos(rz/2), math.sin(rz/2)
-            return [
-                sx*cy*cz - cx*sy*sz,
-                cx*sy*cz + sx*cy*sz,
-                cx*cy*sz - sx*sy*sz,
-                cx*cy*cz + sx*sy*sz,
-            ]
+        child_offsets = child_offsets or {}
+
+        def _is_sideways(piece: str) -> bool:
+            """True if piece's child extends primarily along X (not Z)."""
+            co = child_offsets.get(piece)
+            if co is None:
+                return False
+            return abs(co[0]) > abs(co[2])
+
+        def _euler_to_quat(rx_deg, ry_deg, rz_deg, sideways: bool = False):
+            """Recoil→glTF rotation. Y-axis is negated for handedness correction.
+            For sideways-mounted pieces (X-extended child), the handedness
+            difference between Recoil (left-handed) and glTF (right-handed)
+            already inverts the Y rotation effect, so we cancel the negation."""
+            ry_sign = 1.0 if sideways else -1.0
+            def aq(axis, deg):
+                a = math.radians(deg) / 2
+                s, w = math.sin(a), math.cos(a)
+                return [s,0,0,w] if axis==0 else ([0,s,0,w] if axis==1 else [0,0,s,w])
+            def qm(a, b):
+                ax,ay,az,aw = a; bx,by,bz,bw = b
+                return [aw*bx+ax*bw+ay*bz-az*by, aw*by-ax*bz+ay*bw+az*bx,
+                        aw*bz+ax*by-ay*bx+az*bw, aw*bw-ax*bx-ay*by-az*bz]
+            return qm(qm(aq(2,rz_deg), aq(0,rx_deg)), aq(1, ry_sign * ry_deg))
 
         # Group by piece
         by_piece: Dict[str, Dict[int, float]] = {}
@@ -225,11 +241,13 @@ class GLBBuilder:
             rz = axes.get(2, 0.0)
             if rx == 0 and ry == 0 and rz == 0:
                 continue
-            self.nodes[node_idx]["rotation"] = _euler_to_quat(rx, ry, rz)
+            sideways = _is_sideways(piece)
+            self.nodes[node_idx]["rotation"] = _euler_to_quat(rx, ry, rz, sideways)
 
     def add_animation(self, anim_name: str, tracks: list,
                       node_name_to_idx: Dict[str, int],
-                      piece_offsets: Dict[str, tuple] = None):
+                      piece_offsets: Dict[str, tuple] = None,
+                      child_offsets: Dict[str, tuple] = None):
         """
         Add a glTF animation from BOS animation tracks.
 
@@ -237,11 +255,21 @@ class GLBBuilder:
         node_name_to_idx : {piece_name_lower: node_index}
         piece_offsets    : {piece_name_lower: (ox, oy, oz)} — S3O rest translations.
                            BOS move values are deltas from this rest position.
+        child_offsets    : {piece_name_lower: (cx, cy, cz)} — first child's offset.
+                           Used to detect sideways-mounted pieces (|cx| > |cz|).
         """
         import math
         from collections import defaultdict
 
         piece_offsets = piece_offsets or {}
+        child_offsets = child_offsets or {}
+
+        def _is_sideways(piece: str) -> bool:
+            """True if piece's child extends primarily along X (not Z)."""
+            co = child_offsets.get(piece)
+            if co is None:
+                return False
+            return abs(co[0]) > abs(co[2])
 
         # Group tracks by piece
         rot_by_piece: Dict[str, Dict[int, object]] = defaultdict(dict)
@@ -288,24 +316,45 @@ class GLBBuilder:
                     return kfs[i].value + f * (kfs[i + 1].value - kfs[i].value)
             return kfs[-1].value
 
-        def _euler_to_quat(rx_deg: float, ry_deg: float, rz_deg: float) -> list:
-            """Euler XYZ degrees → quaternion [x, y, z, w] (glTF convention)."""
-            rx = math.radians(rx_deg)
-            ry = math.radians(ry_deg)
-            rz = math.radians(rz_deg)
-            cx, sx = math.cos(rx / 2), math.sin(rx / 2)
-            cy, sy = math.cos(ry / 2), math.sin(ry / 2)
-            cz, sz = math.cos(rz / 2), math.sin(rz / 2)
-            # Intrinsic XYZ = extrinsic ZYX
-            qw = cx * cy * cz + sx * sy * sz
-            qx = sx * cy * cz - cx * sy * sz
-            qy = cx * sy * cz + sx * cy * sz
-            qz = cx * cy * sz - sx * sy * sz
-            return [qx, qy, qz, qw]
+        def _axis_quat(axis: int, deg: float) -> list:
+            """Single-axis quaternion: axis 0=X, 1=Y, 2=Z."""
+            a = math.radians(deg) / 2
+            s = math.sin(a)
+            w = math.cos(a)
+            if axis == 0: return [s, 0.0, 0.0, w]
+            if axis == 1: return [0.0, s, 0.0, w]
+            return [0.0, 0.0, s, w]
+
+        def _quat_mul(a: list, b: list) -> list:
+            """Quaternion multiply a * b (Hamilton product)."""
+            ax, ay, az, aw = a
+            bx, by, bz, bw = b
+            return [
+                aw*bx + ax*bw + ay*bz - az*by,
+                aw*by - ax*bz + ay*bw + az*bx,
+                aw*bz + ax*by - ay*bx + az*bw,
+                aw*bw - ax*bx - ay*by - az*bz,
+            ]
+
+        def _spring_to_quat(rx_deg: float, ry_deg: float, rz_deg: float,
+                            sideways: bool = False) -> list:
+            """Recoil BOS rotation → glTF quaternion.
+            Y is negated to account for Recoil→glTF handedness conversion.
+            Exception: sideways-mounted pieces (X-extended child) already have
+            the Z-movement direction inverted by the handedness difference, so
+            we cancel the Y-negation for those pieces.
+            Rotation order: R(Z)*R(X)*R(Y) = intrinsic YXZ.
+            """
+            ry_sign = 1.0 if sideways else -1.0
+            qy = _axis_quat(1, ry_sign * ry_deg)
+            qx = _axis_quat(0, rx_deg)
+            qz = _axis_quat(2, rz_deg)
+            return _quat_mul(_quat_mul(qz, qx), qy)
 
         # --- Rotation channels ---
         for piece, axis_tracks in rot_by_piece.items():
             node_idx = node_name_to_idx[piece]
+            sideways = _is_sideways(piece)
             all_times = sorted({kf.time
                                  for tr in axis_tracks.values()
                                  for kf in tr.keyframes})
@@ -314,7 +363,7 @@ class GLBBuilder:
                 rx = _interp(axis_tracks, 0, t)
                 ry = _interp(axis_tracks, 1, t)
                 rz = _interp(axis_tracks, 2, t)
-                quats.extend(_euler_to_quat(rx, ry, rz))
+                quats.extend(_spring_to_quat(rx, ry, rz, sideways))
             s = _add_sampler(all_times, quats, "VEC4")
             channels.append({"sampler": s, "target": {"node": node_idx, "path": "rotation"}})
 
@@ -327,7 +376,6 @@ class GLBBuilder:
                                  for kf in tr.keyframes})
             vecs = []
             for t in all_times:
-                # BOS move is delta from S3O rest position
                 dx = _interp(axis_tracks, 0, t)
                 dy = _interp(axis_tracks, 1, t)
                 dz = _interp(axis_tracks, 2, t)
