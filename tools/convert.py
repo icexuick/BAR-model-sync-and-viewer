@@ -119,6 +119,7 @@ def convert_with_weapons(
     weapon_info: Optional[BOSParseResult] = None,
     script_path: Optional[str] = None,
     weapon_defs: Optional[Dict[int, str]] = None,
+    hide_pieces: Optional[set] = None,
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata and walk animation."""
     builder = GLBBuilder()
@@ -298,6 +299,10 @@ def convert_with_weapons(
                             total_pieces = len(parent_map)
                             while cur is not None:
                                 sub = _collect_subtree(cur, children_map)
+                                # Stop if this ancestor's subtree overlaps other weapons' pieces
+                                # (e.g. shared housing containing both riot cannon and miniguns)
+                                if any(p in other_weapon_pieces for p in sub):
+                                    break
                                 # Accept ancestor if subtree ≤ 50% AND ≤ 10 pieces.
                                 # The 50% threshold catches small models where gun mounts
                                 # exceed 30% by count (e.g. 5/15 pieces = 33%).
@@ -315,9 +320,27 @@ def convert_with_weapons(
                     return sum(piece_vert_count.get(k, 0) for k in _collect_subtree(root_key, children_map))
 
                 # Process all fire_points (multi-barrel weapons have flare1..N in query_pieces)
-                all_fp_keys = list(dict.fromkeys(
+                # Filter out "aim reference" pieces used as camera targets when unit is not
+                # deployed (e.g. aimFlare on legapopupdef). These have "aim" in their name
+                # and are not descended from any weapon aim_piece — they sit far from the barrel.
+                # Keep them only if they're the sole fire_point (no better option).
+                raw_fp_keys = list(dict.fromkeys(
                     fp.lower() for fp in (wmap.query_pieces if wmap.query_pieces else [wmap.query_piece])
                 ))
+                aim_set_lower = {ap.lower() for ap in wmap.aim_pieces}
+                def _is_aim_reference(fp_k: str) -> bool:
+                    """True if fp looks like a camera/aim reference, not a barrel flare."""
+                    if 'aim' not in fp_k:
+                        return False
+                    # Check if any aim_piece is an ancestor of this fire_point
+                    cur = parent_map.get(fp_k)
+                    while cur is not None:
+                        if cur in aim_set_lower:
+                            return False  # fp is inside the weapon assembly
+                        cur = parent_map.get(cur)
+                    return True  # aim* piece not under any aim_piece = camera reference
+                real_fps = [k for k in raw_fp_keys if not _is_aim_reference(k)]
+                all_fp_keys = real_fps if real_fps else raw_fp_keys
                 seen_roots: set = set()
 
                 for fp_key in all_fp_keys:
@@ -415,6 +438,8 @@ def convert_with_weapons(
                     print(f"  Weapon {wnum}: visual root = {visual_root}, "
                           f"subtree size = {len(subtree)}")
 
+    hide_pieces = hide_pieces or set()
+
     # Maps piece_name.lower() → glTF node index (built while adding pieces)
     node_name_to_idx: Dict[str, int] = {}
     # Maps piece_name.lower() → S3O rest offset (x, y, z)
@@ -438,6 +463,8 @@ def convert_with_weapons(
             winfo = weapon_lookup[piece_key]
             extras["weapons"] = sorted(winfo["weapons"])
             extras["weapon_roles"] = winfo["roles"]
+        if piece_key in hide_pieces:
+            extras["hide"] = True
 
         if extras:
             node["extras"] = extras
@@ -523,6 +550,14 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     model = parse_s3o(s3o_path)
     unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
 
+    # Per-unit pieces to hide in the viewer (incorrectly positioned in rest pose).
+    _UNIT_HIDE_PIECES: Dict[str, set] = {
+        'legacluster': {'door1', 'door2', 'door3', 'door4', 'door5', 'door6',
+                        'door1pivot', 'door2pivot', 'door3pivot',
+                        'door4pivot', 'door5pivot', 'door6pivot'},
+    }
+    hide_pieces = _UNIT_HIDE_PIECES.get(unit_name.lower(), set())
+
     print(f"\n{'='*60}")
     print(f"Unit: {unit_name}")
     print(f"{'='*60}")
@@ -550,7 +585,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs)
+    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs, hide_pieces)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
