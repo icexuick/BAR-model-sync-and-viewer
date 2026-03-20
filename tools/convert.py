@@ -165,29 +165,55 @@ def convert_with_weapons(
             for ap in wmap.aim_pieces:
                 _add_to_lookup(ap.lower(), wnum, "aim_piece")
 
-            # Find the visual weapon root: nearest aim_piece ancestor of the fire_point
-            if wmap.query_piece and wmap.aim_pieces:
+            # Find the visual weapon root: nearest aim_piece ancestor of the fire_point.
+            # If no aim_pieces, use aim_from_piece or direct parent of fire_point.
+            if wmap.query_piece:
                 fp_key = wmap.query_piece.lower()
                 aim_set = {ap.lower() for ap in wmap.aim_pieces}
 
-                # Walk from fire_point up through parents to find the nearest aim_piece
                 visual_root = None
-                cur = parent_map.get(fp_key)
-                while cur is not None:
-                    if cur in aim_set:
-                        visual_root = cur
-                        break
-                    cur = parent_map.get(cur)
+                if aim_set:
+                    # Walk from fire_point up through parents to find the nearest aim_piece
+                    cur = parent_map.get(fp_key)
+                    while cur is not None:
+                        if cur in aim_set:
+                            visual_root = cur
+                            break
+                        cur = parent_map.get(cur)
+
+                if visual_root is None:
+                    # No aim_pieces (or none found in hierarchy) — fall back to:
+                    # 1. aim_from_piece if it's an ancestor of fire_point
+                    # 2. otherwise direct parent of fire_point
+                    if wmap.aim_from_piece:
+                        aim_from_key = wmap.aim_from_piece.lower()
+                        # Check if aim_from is an ancestor of fire_point
+                        cur = parent_map.get(fp_key)
+                        while cur is not None:
+                            if cur == aim_from_key:
+                                visual_root = aim_from_key
+                                break
+                            cur = parent_map.get(cur)
+                    if visual_root is None:
+                        # Fall back to direct parent of fire_point
+                        visual_root = parent_map.get(fp_key)
 
                 if visual_root:
                     # Tag all descendants of visual_root that are NOT aim_pieces
-                    # of any weapon as "visual" pieces
+                    # of any weapon as "visual" pieces.
+                    # Skip if subtree is too large (>30% of model) — likely a structural
+                    # dummy weapon (e.g. hull-aim) rather than a real visual weapon.
                     subtree = _collect_subtree(visual_root, children_map)
-                    for piece_key in subtree:
-                        if piece_key not in all_aim_pieces:
-                            _add_to_lookup(piece_key, wnum, "visual")
-                    print(f"  Weapon {wnum}: visual root = {visual_root}, "
-                          f"subtree size = {len(subtree)}")
+                    total_pieces = len(parent_map)
+                    if total_pieces > 0 and len(subtree) > total_pieces * 0.30:
+                        print(f"  Weapon {wnum}: visual root = {visual_root}, "
+                              f"subtree size = {len(subtree)} (skipped — too large, likely structural)")
+                    else:
+                        for piece_key in subtree:
+                            if piece_key not in all_aim_pieces:
+                                _add_to_lookup(piece_key, wnum, "visual")
+                        print(f"  Weapon {wnum}: visual root = {visual_root}, "
+                              f"subtree size = {len(subtree)}")
 
     # Maps piece_name.lower() → glTF node index (built while adding pieces)
     node_name_to_idx: Dict[str, int] = {}

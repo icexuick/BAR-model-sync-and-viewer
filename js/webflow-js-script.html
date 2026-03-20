@@ -242,7 +242,6 @@
 
             // Shared highlight uniform — updated per-mesh via onBeforeRender
             const highlightUniform = { value: 0.0 };
-            // dimUniform: 0=normal, 1=dimmed (non-highlighted when some weapon is hovered)
             const dimUniform = { value: 0.0 };
 
             material.onBeforeCompile = (shader) => {
@@ -292,9 +291,8 @@
                         }
                     #endif
                     vec3 S_combinedLight = outgoingLight + totalEmissiveRadiance + S_pbrBoost;
-                    // Weapon highlight: brightness boost for highlighted pieces, dim for others
+                    // Weapon highlight: brightness boost for highlighted pieces only
                     S_combinedLight = S_combinedLight * (1.0 + highlightStrength * 2.2);
-                    S_combinedLight = S_combinedLight * (1.0 - dimStrength * 0.6);
                     #ifdef USE_TONEMAPPING
                         gl_FragColor.rgb = toneMapping( S_combinedLight );
                     #else
@@ -385,12 +383,10 @@
                 if (child.isMesh) {
                     child.material = material;
                     child.userData._highlightVal = 0.0;
-                    child.userData._dimVal = 0.0;
-                    // Per-mesh: update shared uniforms right before this mesh is drawn
+                    // Per-mesh: update shared uniform right before this mesh is drawn
                     child.onBeforeRender = () => {
                         if (material.userData.shader) {
                             material.userData.shader.uniforms.highlightStrength.value = child.userData._highlightVal;
-                            material.userData.shader.uniforms.dimStrength.value = child.userData._dimVal;
                         }
                     };
                     if (shouldHideMesh(child.name)) child.visible = false;
@@ -564,25 +560,13 @@
                 outlinePass.selectedObjects = wnum !== null
                     ? (visualMeshesByWeapon.get(wnum) || [])
                     : [];
-                // Update per-mesh highlight/dim values
+                // Update per-mesh highlight values (no dimming of others)
+                const highlightedMeshes = wnum !== null
+                    ? new Set((visualMeshesByWeapon.get(wnum) || []).map(m => m.uuid))
+                    : new Set();
                 modelScene.traverse(child => {
                     if (!child.isMesh) return;
-                    if (wnum === null) {
-                        // No weapon hovered — reset all
-                        child.userData._highlightVal = 0.0;
-                        child.userData._dimVal = 0.0;
-                    } else {
-                        const winfo = meshWeaponMap.get(child.uuid);
-                        if (winfo && winfo.num === wnum) {
-                            // This mesh belongs to the hovered weapon — highlight it
-                            child.userData._highlightVal = 1.0;
-                            child.userData._dimVal = 0.0;
-                        } else {
-                            // Different weapon or non-weapon — dim it
-                            child.userData._highlightVal = 0.0;
-                            child.userData._dimVal = 1.0;
-                        }
-                    }
+                    child.userData._highlightVal = highlightedMeshes.has(child.uuid) ? 1.0 : 0.0;
                 });
             }
             window.addEventListener('mousemove', (e) => {
