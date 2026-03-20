@@ -295,6 +295,8 @@
             });
             // Build mesh → weapon info lookup
             const meshWeaponMap = new Map();
+            // Also collect all meshes per weapon number for highlighting
+            const weaponMeshes = new Map(); // wnum → [mesh, ...]
             modelScene.traverse(node => {
                 if (!node.isMesh) return;
                 const weapons = node.userData && node.userData.weapons;
@@ -307,18 +309,67 @@
                     def: summary ? summary.def : null,
                     role: roles ? roles[0] : null,
                 });
+                if (!weaponMeshes.has(wnum)) weaponMeshes.set(wnum, []);
+                weaponMeshes.get(wnum).push(node);
             });
+
+            // --- DOM WEAPON NAME LOOKUP ---
+            // wpn-cat-link uses dashes (e.g. "legkark-heat-ray"),
+            // GLB def uses underscores (e.g. "heat_ray") → normalise both to dashes for matching.
+            const domWeaponNames = new Map(); // normalised slug → display name
+            document.querySelectorAll('[wpn-cat-link]').forEach(el => {
+                const slug = el.getAttribute('wpn-cat-link'); // e.g. "legkark-heat-ray"
+                const name = el.textContent.trim();           // e.g. "Heat Ray"
+                if (slug && name) domWeaponNames.set(slug, name);
+            });
+            function getWeaponLabel(winfo) {
+                if (winfo.def) {
+                    const slug = `${unitName}-${winfo.def.replace(/_/g, '-')}`;
+                    if (domWeaponNames.has(slug)) return domWeaponNames.get(slug);
+                    return slug; // fallback to slug if not found in DOM
+                }
+                return `Weapon ${winfo.num}`;
+            }
+
+            // --- HIGHLIGHT ---
+            const HIGHLIGHT_COLOR = new THREE.Color(0xffffff);
+            const HIGHLIGHT_EMISSIVE_INTENSITY = 0.35;
+            let highlightedWeapon = null;
+
+            function highlightWeapon(wnum) {
+                if (highlightedWeapon === wnum) return;
+                clearHighlight();
+                highlightedWeapon = wnum;
+                const meshes = weaponMeshes.get(wnum) || [];
+                meshes.forEach(m => {
+                    m.userData._origEmissive = m.material.emissive ? m.material.emissive.clone() : new THREE.Color(0);
+                    m.userData._origEmissiveIntensity = m.material.emissiveIntensity || 0;
+                    // Clone material so we don't affect all pieces sharing the same material
+                    m.material = m.material.clone();
+                    m.material.emissive = HIGHLIGHT_COLOR;
+                    m.material.emissiveIntensity = HIGHLIGHT_EMISSIVE_INTENSITY;
+                });
+            }
+            function clearHighlight() {
+                if (highlightedWeapon === null) return;
+                const meshes = weaponMeshes.get(highlightedWeapon) || [];
+                meshes.forEach(m => {
+                    // Restore original material (shared one)
+                    m.material.dispose();
+                    m.material = material;
+                });
+                highlightedWeapon = null;
+            }
 
             // --- TOOLTIP ELEMENT ---
             const tooltip = document.createElement('div');
             tooltip.style.cssText = [
                 'position:fixed','pointer-events:none','display:none',
-                'background:rgba(0,0,0,0.75)','color:#fff',
-                'font-size:12px','font-family:monospace',
-                'padding:5px 9px','border-radius:4px',
-                'border:1px solid rgba(255,255,255,0.15)',
+                'background:rgba(0,0,0,0.78)','color:#fff',
+                'font-size:13px','font-family:sans-serif','font-weight:500',
+                'padding:5px 10px','border-radius:5px',
+                'border:1px solid rgba(255,255,255,0.18)',
                 'white-space:nowrap','z-index:9999',
-                'transition:opacity 0.1s',
             ].join(';');
             document.body.appendChild(tooltip);
 
@@ -327,10 +378,7 @@
             let tooltipHideTimer = null;
 
             function showTooltip(x, y, winfo) {
-                const label = winfo.def
-                    ? `${unitName}-${winfo.def}`
-                    : `Weapon ${winfo.num}`;
-                tooltip.textContent = label;
+                tooltip.textContent = getWeaponLabel(winfo);
                 tooltip.style.display = 'block';
                 tooltip.style.left = (x + 14) + 'px';
                 tooltip.style.top  = (y - 8) + 'px';
@@ -495,18 +543,25 @@
             });
             window.addEventListener('keyup', (e) => { if (e.key === 'Alt') { isAltDown = false; container.style.cursor = 'grab'; controls.enabled = true; } });
             window.addEventListener('mousemove', (e) => {
-                if (isAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); return; }
+                if (isAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); clearHighlight(); return; }
                 if (meshWeaponMap.size === 0) return;
                 const rect = renderer.domElement.getBoundingClientRect();
+                // Only raycast when cursor is over the canvas
+                if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+                    hideTooltip(); clearHighlight(); return;
+                }
                 pointer.x = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
                 pointer.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
                 raycaster.setFromCamera(pointer, camera);
                 const hits = raycaster.intersectObject(modelScene, true);
                 const hit = hits.find(h => meshWeaponMap.has(h.object.uuid));
                 if (hit) {
-                    showTooltip(e.clientX, e.clientY, meshWeaponMap.get(hit.object.uuid));
+                    const winfo = meshWeaponMap.get(hit.object.uuid);
+                    showTooltip(e.clientX, e.clientY, winfo);
+                    highlightWeapon(winfo.num);
                 } else {
                     hideTooltip();
+                    clearHighlight();
                 }
             });
             renderer.domElement.addEventListener('touchstart', (e) => {
@@ -519,9 +574,11 @@
                 const hits = raycaster.intersectObject(modelScene, true);
                 const hit = hits.find(h => meshWeaponMap.has(h.object.uuid));
                 if (hit) {
-                    showTooltip(touch.clientX, touch.clientY, meshWeaponMap.get(hit.object.uuid));
+                    const winfo = meshWeaponMap.get(hit.object.uuid);
+                    showTooltip(touch.clientX, touch.clientY, winfo);
+                    highlightWeapon(winfo.num);
                     clearTimeout(tooltipHideTimer);
-                    tooltipHideTimer = setTimeout(hideTooltip, 2000);
+                    tooltipHideTimer = setTimeout(() => { hideTooltip(); clearHighlight(); }, 2000);
                 }
             }, { passive: true });
 
