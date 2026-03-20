@@ -123,16 +123,25 @@ def parse_bos(filepath: str) -> BOSParseResult:
     clean = re.sub(r'//[^\n]*', '', content)
     clean = re.sub(r'/\*.*?\*/', '', clean, flags=re.DOTALL)
 
-    # Old-style BOS uses Primary/Secondary instead of Weapon1/Weapon2
-    _LEGACY_WEAPON_MAP = {'primary': 1, 'secondary': 2}
+    # Old-style BOS uses Primary/Secondary/Tertiary/Quaternary instead of Weapon1/2/3/4
+    _LEGACY_WEAPON_MAP = {
+        'primary': 1, 'secondary': 2, 'tertiary': 3, 'quaternary': 4,
+    }
 
-    # 2. Extract QueryWeaponN / QueryPrimary / QuerySecondary functions
+    def _legacy_wnum(name_group: str, num_group: str) -> int:
+        if num_group:
+            return int(num_group)
+        return _LEGACY_WEAPON_MAP.get((name_group or '').lower(), 1)
+
+    _LEGACY_NAMES = 'Primary|Secondary|Tertiary|Quaternary'
+
+    # 2. Extract QueryWeaponN / QueryPrimary / QuerySecondary / ... functions
     for match in re.finditer(
-        r'Query(Weapon(\d+)|(Primary)|(Secondary))\s*\([^)]*\)\s*\{([^}]+)\}',
+        rf'Query(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*\{{([^}}]+)\}}',
         clean, re.DOTALL | re.IGNORECASE
     ):
-        wnum = int(match.group(2)) if match.group(2) else _LEGACY_WEAPON_MAP.get(match.group(3) or match.group(4), 1)
-        body = match.group(5)
+        wnum = _legacy_wnum(match.group(3), match.group(2))
+        body = match.group(4)
         piece_ref = _extract_piece_from_function(body, result.pieces)
         if piece_ref:
             if wnum not in result.weapons:
@@ -140,13 +149,13 @@ def parse_bos(filepath: str) -> BOSParseResult:
             result.weapons[wnum].query_piece = piece_ref
             result.weapons[wnum]._update_all()
 
-    # 3. Extract AimFromWeaponN / AimFromPrimary / AimFromSecondary functions
+    # 3. Extract AimFromWeaponN / AimFromPrimary / ... functions
     for match in re.finditer(
-        r'AimFrom(Weapon(\d+)|(Primary)|(Secondary))\s*\([^)]*\)\s*\{([^}]+)\}',
+        rf'AimFrom(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*\{{([^}}]+)\}}',
         clean, re.DOTALL | re.IGNORECASE
     ):
-        wnum = int(match.group(2)) if match.group(2) else _LEGACY_WEAPON_MAP.get((match.group(3) or match.group(4) or '').lower(), 1)
-        body = match.group(5)
+        wnum = _legacy_wnum(match.group(3), match.group(2))
+        body = match.group(4)
         piece_ref = _extract_piece_from_function(body, result.pieces)
         if piece_ref:
             if wnum not in result.weapons:
@@ -154,13 +163,13 @@ def parse_bos(filepath: str) -> BOSParseResult:
             result.weapons[wnum].aim_from_piece = piece_ref
             result.weapons[wnum]._update_all()
 
-    # 4. Extract AimWeaponN / AimPrimary / AimSecondary — look for turn commands
+    # 4. Extract AimWeaponN / AimPrimary / ... — look for turn commands
     for match in re.finditer(
-        r'Aim(Weapon(\d+)|(Primary)|(Secondary))\s*\([^)]*\)\s*\{([^}]+)\}',
+        rf'Aim(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*\{{([^}}]+)\}}',
         clean, re.DOTALL | re.IGNORECASE
     ):
-        wnum = int(match.group(2)) if match.group(2) else _LEGACY_WEAPON_MAP.get((match.group(3) or match.group(4) or '').lower(), 1)
-        body = match.group(5)
+        wnum = _legacy_wnum(match.group(3), match.group(2))
+        body = match.group(4)
 
         aim_pieces = set()
         for turn_match in re.finditer(r'turn\s+(\w+)\s+to\s+[xyz]-axis', body, re.IGNORECASE):
