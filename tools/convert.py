@@ -149,6 +149,24 @@ def convert_with_weapons(
             weapon_lookup[key]["roles"].append(role)
 
     if weapon_info:
+        # If weapon_defs is available (from unitdef Lua), filter BOS weapons to only
+        # those that actually exist in the unitdef. BOS scripts sometimes use higher
+        # weapon slots internally (e.g. QueryWeapon2 for a flare when only weapon 1
+        # exists in the unitdef). Drop any BOS wnum not present in weapon_defs.
+        if weapon_defs:
+            # Drop any BOS weapon number not present in the unitdef weapons table.
+            # Some scripts use higher slots internally (e.g. QueryWeapon2 as a
+            # helper flare) even though only weapon 1 exists in the unitdef.
+            weapon_info.weapons = {wn: wm for wn, wm in weapon_info.weapons.items()
+                                   if wn in weapon_defs}
+            # Add empty entries for weapons present in unitdef but absent in BOS
+            # (e.g. anti-nuke launchers that have no QueryWeapon function).
+            # They'll appear in weapon_summary with their def name even without geometry.
+            from bos_parser import WeaponPieceMapping
+            for wn in weapon_defs:
+                if wn not in weapon_info.weapons:
+                    weapon_info.weapons[wn] = WeaponPieceMapping(weapon_num=wn)
+
         # Collect all aim_piece keys across all weapons (for exclusion logic below)
         all_aim_pieces: set = set()
         for wmap in weapon_info.weapons.values():
