@@ -249,11 +249,24 @@ def convert_with_weapons(
                     if wn2 != wnum
                     for ap in wm2.aim_pieces
                 }
+                # Pieces that belong to OTHER weapons — used to stop ancestor-walk from
+                # accidentally tagging shared pivots (e.g. aimx on legkark).
+                # Include: aim_pieces of other weapons (clear ownership)
+                #          query_pieces/aim_from ONLY if not shared with current weapon
+                #          (prevents blocking shared turret bases like on legnavydestro)
+                own_pieces_lower = {p.lower() for p in wmap.all_pieces}
                 other_weapon_pieces = {
                     ap.lower()
                     for wn2, wm2 in weapon_info.weapons.items()
                     if wn2 != wnum
-                    for ap in (list(wm2.aim_pieces) + ([wm2.query_piece] if wm2.query_piece else []))
+                    for ap in list(wm2.aim_pieces)  # aim_pieces are clearly owned
+                } | {
+                    ap.lower()
+                    for wn2, wm2 in weapon_info.weapons.items()
+                    if wn2 != wnum
+                    for ap in ([wm2.query_piece] if wm2.query_piece else [])
+                                + ([wm2.aim_from_piece] if wm2.aim_from_piece else [])
+                    if ap.lower() not in own_pieces_lower  # only if not shared with us
                 }
 
                 def _mirror(name: str) -> str:
@@ -357,11 +370,15 @@ def convert_with_weapons(
                     # siblings of the fire_point ancestor, not connected via BOS aim_pieces.
                     _STRUCTURAL_KEYWORDS = {'wing', 'leg', 'track', 'wheel', 'foot',
                                             'thruster', 'thrust', 'engine', 'body', 'hull',
-                                            'chassis', 'torso', 'hip', 'base', 'armor',
+                                            'chassis', 'torso', 'hip', 'armor',
                                             'plate', 'wake', 'bow', 'stern'}
+                    # Exact-name structural pieces (whole name = keyword)
+                    _STRUCTURAL_EXACT = {'base', 'pelvis', 'body', 'hull'}
 
                     def _is_structural(name: str) -> bool:
                         low = name.lower()
+                        if low in _STRUCTURAL_EXACT:
+                            return True
                         return any(kw in low for kw in _STRUCTURAL_KEYWORDS)
 
                     if _subtree_verts(visual_root) == 0:
@@ -430,8 +447,12 @@ def convert_with_weapons(
                         # Also tag small non-structural ancestors (weapon mount struts/housings)
                         if not _is_dummy_piece(cur) and (is_in_aim or not _is_structural(cur)):
                             _add_to_lookup(cur, wnum, "visual")
-                        # Stop after a large non-aim ancestor to avoid tagging whole model
+                        # Stop after a large non-aim ancestor to avoid tagging whole model.
+                        # Exception: if it has its own mesh geometry it's a rendered weapon
+                        # housing (e.g. turretBaseHeadingPivot on legnavydestro) — tag and stop.
                         if is_big and not is_in_aim:
+                            if piece_vert_count.get(cur, 0) > 0 and not _is_structural(cur):
+                                _add_to_lookup(cur, wnum, "visual")
                             break
                         cur = parent_map.get(cur)
 
@@ -578,6 +599,59 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
         print(f"\n  Script: {script_path}")
         weapon_info = parse_unit_script(script_path)
         weapon_info.print_summary()
+
+    # If weapon_defs not provided, try to find the unitdef .lua locally.
+    # Search for {unit_name}.lua in the same BAR install tree as the script/s3o.
+    if weapon_defs is None:
+        def _native(p: str) -> str:
+            """Convert MSYS/bash /c/... paths to Windows C:/... paths."""
+            import re as _re
+            return _re.sub(r'^/([a-zA-Z])/', lambda m: m.group(1).upper() + ':/', p)
+
+        candidate_dirs = []
+        for ref_path in [script_path, s3o_path]:
+            if ref_path:
+                # Walk up to find a 'units' sibling directory
+                d = os.path.dirname(_native(ref_path))
+                for _ in range(6):
+                    units_dir = os.path.join(d, 'units')
+                    if os.path.isdir(units_dir):
+                        # Only accept if this units/ dir contains .lua files
+                        # (rejects scripts/units/ which only has .bos/.cob)
+                        has_lua = any(
+                            fname.endswith('.lua')
+                            for fname in os.listdir(units_dir)
+                            if os.path.isfile(os.path.join(units_dir, fname))
+                        )
+                        if not has_lua:
+                            # Check one level of subdirs for .lua files
+                            has_lua = any(
+                                fname.endswith('.lua')
+                                for sub in os.listdir(units_dir)
+                                for fname in (os.listdir(os.path.join(units_dir, sub))
+                                              if os.path.isdir(os.path.join(units_dir, sub)) else [])
+                            )
+                        if has_lua:
+                            candidate_dirs.append(units_dir)
+                            break
+                    d = os.path.dirname(d)
+        for units_dir in candidate_dirs:
+            for root, _, files in os.walk(units_dir):
+                for fname in files:
+                    if fname.lower() == f'{unit_name.lower()}.lua':
+                        lua_path = os.path.join(root, fname)
+                        try:
+                            with open(lua_path, 'r', errors='replace') as f:
+                                weapon_defs = parse_lua_weapon_defs(f.read())
+                            if weapon_defs:
+                                print(f"  Weapon defs from: {lua_path}")
+                            break
+                        except Exception:
+                            pass
+                if weapon_defs:
+                    break
+            if weapon_defs:
+                break
 
     if info_only:
         return None
