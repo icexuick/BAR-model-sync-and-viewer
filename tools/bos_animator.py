@@ -51,6 +51,11 @@ _TURN_NOW_RE = re.compile(
     r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([-\d.]+)>\s+now',
     re.IGNORECASE
 )
+# Matches:  move piece to z-axis [value] now;
+_MOVE_NOW_RE = re.compile(
+    r'\bmove\s+(\w+)\s+to\s+([xyz])-axis\s+\[([-\d.]+)\]\s+now',
+    re.IGNORECASE
+)
 
 
 @dataclass
@@ -164,14 +169,19 @@ def _parse_frame_blocks(text: str) -> List[Tuple[int, Dict[Tuple, float]]]:
 
 def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
     """
-    Parse rest-pose rotations for pieces. Tries two sources in order:
-    1. 'turn piece to axis <value> now' in Create() — explicit immediate pose
+    Parse rest-pose transforms for pieces. Tries two sources in order:
+    1. 'turn/move piece to axis <value> now' in Create() — explicit immediate pose
     2. Turn commands in StopWalking() — the idle/rest pose the unit returns to
-    Returns {(piece, axis, True): degrees}.
+    Returns {(piece, axis, is_rotation): value}
+      is_rotation=True  → degrees (turn)
+      is_rotation=False → engine units (move)
     """
     result: Dict[Tuple, float] = {}
 
-    # Source 1: Create() 'now' commands
+    # Source 1: Create() 'now' commands — rotations only.
+    # We intentionally skip 'move ... now' translations: those often stow/retract
+    # parts to a "hidden" start state (e.g. barrels pushed in), while the S3O
+    # geometry already represents the correct displayed rest pose.
     body = _extract_function_body(bos_content, 'Create')
     if body:
         for m in _TURN_NOW_RE.finditer(body):
@@ -181,7 +191,8 @@ def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
     # Source 2: StopWalking() — fallback if Create() has no 'now' rotations.
     # Only use if StopWalking contains significant non-zero rotations (>5°),
     # indicating a non-trivial rest pose that differs from the S3O zero pose.
-    if not result:
+    rot_result = {k: v for k, v in result.items() if k[2]}  # rotations only
+    if not rot_result:
         for func_name in ['StopWalking', 'StopWalk']:
             body = _extract_function_body(bos_content, func_name)
             if not body:
@@ -194,8 +205,8 @@ def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
                     key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
                     candidate[key] = val
             if candidate:
-                result = candidate
-                print(f"  Using {func_name}() as rest pose ({len(result)} rotations)")
+                result.update(candidate)
+                print(f"  Using {func_name}() as rest pose ({len(candidate)} rotations)")
                 break
 
     return result

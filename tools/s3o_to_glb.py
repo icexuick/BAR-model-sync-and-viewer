@@ -192,10 +192,12 @@ class GLBBuilder:
 
     def apply_now_rotations(self, now_rots: dict, node_name_to_idx: Dict[str, int]):
         """
-        Apply Create() 'turn piece to axis <value> now' rotations as static
-        node rotations in the GLB. This sets the rest pose to match what the
-        Spring engine sets up via Create() before any animation plays.
-        now_rots: {(piece_lower, axis_int, True): degrees}
+        Apply Create() 'turn/move piece to axis <value> now' transforms as static
+        node rotations/translations in the GLB. This sets the rest pose to match
+        what the Spring engine sets up via Create() before any animation plays.
+        now_rots: {(piece_lower, axis_int, is_rotation): value}
+          is_rotation=True  → degrees (turn ... now)
+          is_rotation=False → engine units (move ... now), added to S3O base offset
         """
         import math
 
@@ -216,12 +218,16 @@ class GLBBuilder:
                 cx*cz*cy + sx*sz*sy,   # w
             ]
 
-        # Group by piece
-        by_piece: Dict[str, Dict[int, float]] = {}
-        for (piece, axis, _), deg in now_rots.items():
-            by_piece.setdefault(piece, {})[axis] = deg
+        # Group by piece, split rotations and translations
+        rot_by_piece: Dict[str, Dict[int, float]] = {}
+        trans_by_piece: Dict[str, Dict[int, float]] = {}
+        for (piece, axis, is_rot), val in now_rots.items():
+            if is_rot:
+                rot_by_piece.setdefault(piece, {})[axis] = val
+            else:
+                trans_by_piece.setdefault(piece, {})[axis] = val
 
-        for piece, axes in by_piece.items():
+        for piece, axes in rot_by_piece.items():
             node_idx = node_name_to_idx.get(piece)
             if node_idx is None:
                 continue
@@ -231,6 +237,21 @@ class GLBBuilder:
             if rx == 0 and ry == 0 and rz == 0:
                 continue
             self.nodes[node_idx]["rotation"] = _euler_to_quat(rx, ry, rz)
+
+        for piece, axes in trans_by_piece.items():
+            node_idx = node_name_to_idx.get(piece)
+            if node_idx is None:
+                continue
+            node = self.nodes[node_idx]
+            # Start from the existing S3O base translation, add BOS move offset
+            base = node.get("translation", [0.0, 0.0, 0.0])
+            # BOS axes: x=0, y=1, z=2 — same as S3O local axes
+            dx = axes.get(0, 0.0)
+            dy = axes.get(1, 0.0)
+            dz = axes.get(2, 0.0)
+            new_trans = [base[0] + dx, base[1] + dy, base[2] + dz]
+            if any(v != 0 for v in new_trans):
+                node["translation"] = new_trans
 
     def add_animation(self, anim_name: str, tracks: list,
                       node_name_to_idx: Dict[str, int],
