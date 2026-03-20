@@ -305,8 +305,6 @@
             });
             // Build mesh → weapon info lookup
             const meshWeaponMap = new Map();
-            // Also collect all meshes per weapon number for highlighting
-            const weaponMeshes = new Map(); // wnum → [mesh, ...]
             modelScene.traverse(node => {
                 if (!node.isMesh) return;
                 const weapons = node.userData && node.userData.weapons;
@@ -319,8 +317,6 @@
                     def: summary ? summary.def : null,
                     role: roles ? roles[0] : null,
                 });
-                if (!weaponMeshes.has(wnum)) weaponMeshes.set(wnum, []);
-                weaponMeshes.get(wnum).push(node);
             });
 
             // --- DOM WEAPON NAME LOOKUP ---
@@ -339,36 +335,6 @@
                     return slug; // fallback to slug if not found in DOM
                 }
                 return `Weapon ${winfo.num}`;
-            }
-
-            // --- HIGHLIGHT ---
-            const HIGHLIGHT_COLOR = new THREE.Color(0xffffff);
-            const HIGHLIGHT_EMISSIVE_INTENSITY = 0.35;
-            let highlightedWeapon = null;
-
-            function highlightWeapon(wnum) {
-                if (highlightedWeapon === wnum) return;
-                clearHighlight();
-                highlightedWeapon = wnum;
-                const meshes = weaponMeshes.get(wnum) || [];
-                meshes.forEach(m => {
-                    m.userData._origEmissive = m.material.emissive ? m.material.emissive.clone() : new THREE.Color(0);
-                    m.userData._origEmissiveIntensity = m.material.emissiveIntensity || 0;
-                    // Clone material so we don't affect all pieces sharing the same material
-                    m.material = m.material.clone();
-                    m.material.emissive = HIGHLIGHT_COLOR;
-                    m.material.emissiveIntensity = HIGHLIGHT_EMISSIVE_INTENSITY;
-                });
-            }
-            function clearHighlight() {
-                if (highlightedWeapon === null) return;
-                const meshes = weaponMeshes.get(highlightedWeapon) || [];
-                meshes.forEach(m => {
-                    // Restore original material (shared one)
-                    m.material.dispose();
-                    m.material = material;
-                });
-                highlightedWeapon = null;
             }
 
             // --- TOOLTIP ELEMENT ---
@@ -553,12 +519,11 @@
             });
             window.addEventListener('keyup', (e) => { if (e.key === 'Alt') { isAltDown = false; container.style.cursor = 'grab'; controls.enabled = true; } });
             window.addEventListener('mousemove', (e) => {
-                if (isAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); clearHighlight(); return; }
+                if (isAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); return; }
                 if (meshWeaponMap.size === 0) return;
                 const rect = renderer.domElement.getBoundingClientRect();
-                // Only raycast when cursor is over the canvas
                 if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
-                    hideTooltip(); clearHighlight(); return;
+                    hideTooltip(); return;
                 }
                 pointer.x = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
                 pointer.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
@@ -566,12 +531,9 @@
                 const hits = raycaster.intersectObject(modelScene, true);
                 const hit = hits.find(h => meshWeaponMap.has(h.object.uuid));
                 if (hit) {
-                    const winfo = meshWeaponMap.get(hit.object.uuid);
-                    showTooltip(e.clientX, e.clientY, winfo);
-                    highlightWeapon(winfo.num);
+                    showTooltip(e.clientX, e.clientY, meshWeaponMap.get(hit.object.uuid));
                 } else {
                     hideTooltip();
-                    clearHighlight();
                 }
             });
             renderer.domElement.addEventListener('touchstart', (e) => {
@@ -584,11 +546,9 @@
                 const hits = raycaster.intersectObject(modelScene, true);
                 const hit = hits.find(h => meshWeaponMap.has(h.object.uuid));
                 if (hit) {
-                    const winfo = meshWeaponMap.get(hit.object.uuid);
-                    showTooltip(touch.clientX, touch.clientY, winfo);
-                    highlightWeapon(winfo.num);
+                    showTooltip(touch.clientX, touch.clientY, meshWeaponMap.get(hit.object.uuid));
                     clearTimeout(tooltipHideTimer);
-                    tooltipHideTimer = setTimeout(() => { hideTooltip(); clearHighlight(); }, 2000);
+                    tooltipHideTimer = setTimeout(hideTooltip, 2000);
                 }
             }, { passive: true });
 
