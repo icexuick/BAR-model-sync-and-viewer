@@ -163,13 +163,34 @@ def parse_bos(filepath: str) -> BOSParseResult:
             result.weapons[wnum].aim_from_piece = piece_ref
             result.weapons[wnum]._update_all()
 
-    # 4. Extract AimWeaponN / AimPrimary / ... — look for turn commands
-    for match in re.finditer(
-        rf'Aim(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*\{{([^}}]+)\}}',
-        clean, re.DOTALL | re.IGNORECASE
-    ):
-        wnum = _legacy_wnum(match.group(3), match.group(2))
-        body = match.group(4)
+    def _extract_brace_body(text: str, func_pattern: str) -> List[tuple]:
+        """Find all occurrences of func_pattern and return (wnum_str, body) pairs
+        using proper brace matching — handles nested if/while blocks."""
+        results = []
+        for m in re.finditer(func_pattern, text, re.IGNORECASE):
+            open_pos = text.find('{', m.end())
+            if open_pos == -1:
+                continue
+            depth = 0
+            pos = open_pos
+            while pos < len(text):
+                if text[pos] == '{':
+                    depth += 1
+                elif text[pos] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        results.append((m.group(1), text[open_pos + 1:pos]))
+                        break
+                pos += 1
+        return results
+
+    # 4. Extract AimWeaponN / AimPrimary / ... — use brace-matching to handle
+    # nested if/while blocks that trip up simple [^}]+ regex.
+    _AIM_PAT = rf'Aim(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*(?=\{{)'
+    for suffix, body in _extract_brace_body(clean, _AIM_PAT):
+        num_m = re.match(r'Weapon(\d+)', suffix, re.IGNORECASE)
+        leg_m = re.match(rf'({_LEGACY_NAMES})', suffix, re.IGNORECASE)
+        wnum = int(num_m.group(1)) if num_m else _LEGACY_WEAPON_MAP.get((leg_m.group(1) if leg_m else '').lower(), 1)
 
         aim_pieces = set()
         for turn_match in re.finditer(r'turn\s+(\w+)\s+to\s+[xyz]-axis', body, re.IGNORECASE):

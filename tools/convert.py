@@ -187,6 +187,39 @@ def convert_with_weapons(
             # "Highest" = furthest from the fire_point but still in aim_set — this captures
             # the full gun mount (e.g. lshoulder) rather than just an inner pivot (lsleeve).
             # If no aim_pieces, use aim_from_piece or direct parent of fire_point.
+            # Fallback for no fire_point but has aim_pieces: use highest aim_piece ≤30%.
+            if not wmap.query_piece and wmap.aim_pieces:
+                aim_set = {ap.lower() for ap in wmap.aim_pieces}
+                total_pieces = len(parent_map)
+                other_aim_pieces = {
+                    ap.lower()
+                    for wn2, wm2 in weapon_info.weapons.items()
+                    if wn2 != wnum
+                    for ap in wm2.aim_pieces
+                }
+                # Tag ALL aim_pieces whose subtree is ≤30% of the model as visual roots.
+                # This handles dual-barrel units (sleeveTop + sleeveBottom both highlight).
+                visual_roots = []
+                for ap_key in sorted(aim_set):  # sorted for determinism
+                    sub = _collect_subtree(ap_key, children_map)
+                    if total_pieces == 0 or len(sub) <= total_pieces * 0.30:
+                        visual_roots.append((ap_key, sub))
+                # Fallback: try aim_from if no aim_piece qualifies
+                if not visual_roots and wmap.aim_from_piece:
+                    af_key = wmap.aim_from_piece.lower()
+                    af_sub = _collect_subtree(af_key, children_map)
+                    if total_pieces == 0 or len(af_sub) <= total_pieces * 0.50:
+                        visual_roots.append((af_key, af_sub))
+                for visual_root, subtree in visual_roots:
+                    for piece_key in subtree:
+                        if piece_key == visual_root or piece_key not in other_aim_pieces:
+                            _add_to_lookup(piece_key, wnum, "visual")
+                if visual_roots:
+                    roots_str = ', '.join(r for r, _ in visual_roots)
+                    total_tagged = sum(len(s) for _, s in visual_roots)
+                    print(f"  Weapon {wnum}: visual roots = [{roots_str}] (no fire_point), "
+                          f"total tagged = {total_tagged}")
+
             if wmap.query_piece:
                 fp_key = wmap.query_piece.lower()
                 aim_set = {ap.lower() for ap in wmap.aim_pieces}
