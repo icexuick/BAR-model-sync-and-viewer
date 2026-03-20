@@ -184,17 +184,13 @@ def convert_with_weapons(
     # --- Animation ---
     if script_path and os.path.isfile(script_path):
         try:
-            leg_count = _count_leg_chains(model.root_piece) if model.root_piece else 0
-            if leg_count > 4:
-                print(f"  Skipping animation: {leg_count} leg chains detected (>4 not supported)")
-            else:
-                with open(script_path, 'r', errors='replace') as f:
-                    bos_content = f.read()
-                result = extract_walk_animation(bos_content, reverse=reverse_anim)
-                if result:
-                    anim_name, tracks, now_rots = result
-                    builder.apply_now_rotations(now_rots, node_name_to_idx)
-                    builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
+            with open(script_path, 'r', errors='replace') as f:
+                bos_content = f.read()
+            result = extract_walk_animation(bos_content, reverse=reverse_anim)
+            if result:
+                anim_name, tracks, now_rots = result
+                builder.apply_now_rotations(now_rots, node_name_to_idx)
+                builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
