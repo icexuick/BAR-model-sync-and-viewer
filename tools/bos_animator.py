@@ -331,7 +331,7 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
 
         if tracks:
             print(f"  Animation '{func_name}': {len(tracks)} tracks, "
-                  f"{n_blocks} keyframes (step={step_size}) → duration {duration:.2f}s")
+                  f"{n_blocks} keyframes (step={step_size}), duration {duration:.2f}s")
             return func_name, tracks, now_rots
 
     return None

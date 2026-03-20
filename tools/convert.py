@@ -82,6 +82,38 @@ def parse_lua_weapon_defs(lua_content: str) -> Dict[int, str]:
     return result
 
 
+def _build_piece_maps(root_piece: 'S3OPiece') -> Tuple[Dict[str, str], Dict[str, List[str]]]:
+    """
+    Build piece parent and children maps from S3O hierarchy.
+    Returns:
+      parent_map:   {piece_name.lower() → parent_name.lower() or None}
+      children_map: {piece_name.lower() → [child_name.lower(), ...]}
+    """
+    parent_map: Dict[str, Optional[str]] = {}
+    children_map: Dict[str, List[str]] = {}
+
+    def walk(piece, parent_key):
+        key = piece.name.lower()
+        parent_map[key] = parent_key
+        children_map[key] = [c.name.lower() for c in piece.children]
+        for child in piece.children:
+            walk(child, key)
+
+    walk(root_piece, None)
+    return parent_map, children_map
+
+
+def _collect_subtree(piece_key: str, children_map: Dict[str, List[str]]) -> List[str]:
+    """Return all piece keys in the subtree rooted at piece_key (inclusive)."""
+    result = []
+    stack = [piece_key]
+    while stack:
+        cur = stack.pop()
+        result.append(cur)
+        stack.extend(children_map.get(cur, []))
+    return result
+
+
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
@@ -92,35 +124,70 @@ def convert_with_weapons(
     builder = GLBBuilder()
     mat_idx = builder.add_default_material()
 
+    # Build piece hierarchy maps for visual weapon root detection
+    parent_map: Dict[str, Optional[str]] = {}
+    children_map: Dict[str, List[str]] = {}
+    if model.root_piece:
+        parent_map, children_map = _build_piece_maps(model.root_piece)
+
     # Build weapon lookup: piece_name → weapon info
+    # Strategy:
+    #   - aim_pieces: tagged as "aim_piece" (structural, used for animation targeting)
+    #   - fire_point: tagged as "fire_point"
+    #   - aim_from: tagged as "aim_from"
+    #   - visual weapon subtree: for each weapon, walk from fire_point up the hierarchy
+    #     to find the nearest aim_piece ancestor → mark its non-aim-piece descendants
+    #     as "visual" so the viewer can highlight the actual gun geometry.
     weapon_lookup: Dict[str, dict] = {}
+
+    def _add_to_lookup(key: str, wnum: int, role: str):
+        if key not in weapon_lookup:
+            weapon_lookup[key] = {"weapons": [], "roles": []}
+        if wnum not in weapon_lookup[key]["weapons"]:
+            weapon_lookup[key]["weapons"].append(wnum)
+        if role not in weapon_lookup[key]["roles"]:
+            weapon_lookup[key]["roles"].append(role)
+
     if weapon_info:
+        # Collect all aim_piece keys across all weapons (for exclusion logic below)
+        all_aim_pieces: set = set()
+        for wmap in weapon_info.weapons.values():
+            for ap in wmap.aim_pieces:
+                all_aim_pieces.add(ap.lower())
+
         for wnum, wmap in weapon_info.weapons.items():
             if wmap.query_piece:
-                key = wmap.query_piece.lower()
-                if key not in weapon_lookup:
-                    weapon_lookup[key] = {"weapons": [], "roles": []}
-                weapon_lookup[key]["weapons"].append(wnum)
-                if "fire_point" not in weapon_lookup[key]["roles"]:
-                    weapon_lookup[key]["roles"].append("fire_point")
+                _add_to_lookup(wmap.query_piece.lower(), wnum, "fire_point")
 
             if wmap.aim_from_piece:
-                key = wmap.aim_from_piece.lower()
-                if key not in weapon_lookup:
-                    weapon_lookup[key] = {"weapons": [], "roles": []}
-                if wnum not in weapon_lookup[key]["weapons"]:
-                    weapon_lookup[key]["weapons"].append(wnum)
-                if "aim_from" not in weapon_lookup[key]["roles"]:
-                    weapon_lookup[key]["roles"].append("aim_from")
+                _add_to_lookup(wmap.aim_from_piece.lower(), wnum, "aim_from")
 
             for ap in wmap.aim_pieces:
-                key = ap.lower()
-                if key not in weapon_lookup:
-                    weapon_lookup[key] = {"weapons": [], "roles": []}
-                if wnum not in weapon_lookup[key]["weapons"]:
-                    weapon_lookup[key]["weapons"].append(wnum)
-                if "aim_piece" not in weapon_lookup[key]["roles"]:
-                    weapon_lookup[key]["roles"].append("aim_piece")
+                _add_to_lookup(ap.lower(), wnum, "aim_piece")
+
+            # Find the visual weapon root: nearest aim_piece ancestor of the fire_point
+            if wmap.query_piece and wmap.aim_pieces:
+                fp_key = wmap.query_piece.lower()
+                aim_set = {ap.lower() for ap in wmap.aim_pieces}
+
+                # Walk from fire_point up through parents to find the nearest aim_piece
+                visual_root = None
+                cur = parent_map.get(fp_key)
+                while cur is not None:
+                    if cur in aim_set:
+                        visual_root = cur
+                        break
+                    cur = parent_map.get(cur)
+
+                if visual_root:
+                    # Tag all descendants of visual_root that are NOT aim_pieces
+                    # of any weapon as "visual" pieces
+                    subtree = _collect_subtree(visual_root, children_map)
+                    for piece_key in subtree:
+                        if piece_key not in all_aim_pieces:
+                            _add_to_lookup(piece_key, wnum, "visual")
+                    print(f"  Weapon {wnum}: visual root = {visual_root}, "
+                          f"subtree size = {len(subtree)}")
 
     # Maps piece_name.lower() → glTF node index (built while adding pieces)
     node_name_to_idx: Dict[str, int] = {}
@@ -262,7 +329,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     with open(output_path, 'wb') as f:
         f.write(glb_data)
 
-    print(f"\n  → GLB written: {output_path} ({len(glb_data):,} bytes)")
+    print(f"\n  GLB written: {output_path} ({len(glb_data):,} bytes)")
     return output_path
 
 
@@ -520,7 +587,7 @@ def push_glb_to_repo(glb_path: str, force: bool = False):
     # Compare git blob SHA to avoid empty commits when content is unchanged
     blob_sha = hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
     if existing_sha and blob_sha == existing_sha and not force:
-        print(f"  → No changes, skipping push ({filename} already up to date)")
+        print(f"  No changes, skipping push ({filename} already up to date)")
         return
 
     content_b64 = base64.b64encode(raw).decode("ascii")
@@ -551,7 +618,7 @@ def push_glb_to_repo(glb_path: str, force: bool = False):
         return
 
     action = "Updated" if existing_sha else "Created"
-    print(f"  → {action} in repo: https://github.com/{VIEWER_REPO}/blob/main/{repo_path}")
+    print(f"  {action} in repo: https://github.com/{VIEWER_REPO}/blob/main/{repo_path}")
 
 
 def main():

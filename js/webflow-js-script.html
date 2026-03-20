@@ -17,6 +17,7 @@
     import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
     import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+    import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
     import GUI from 'three/addons/libs/lil-gui.module.min.js';
 
     // --- CONFIGURATIE ---
@@ -199,7 +200,7 @@
         const clock = new THREE.Clock();
         let isAltDown = false, isTurntableEnabledByUser = true, turntableActive = false, isInteracting = false, idleTimer = null;
         let areShadowsVisible = true;
-        let composer, renderPass, ssaoPass, smaaPass, outputPass;
+        let composer, renderPass, ssaoPass, smaaPass, outputPass, outlinePass;
 
         const textureLoader = new THREE.TextureLoader();
         const gltfLoader = new GLTFLoader();
@@ -303,20 +304,25 @@
                     Object.assign(weaponSummary, node.userData.weapon_summary);
                 }
             });
-            // Build mesh → weapon info lookup
+            // meshWeaponMap: maps mesh uuid → {num, def} for visual weapon pieces only
+            // visualMeshesByWeapon: wnum → [mesh, ...] for highlighting all pieces of a weapon
             const meshWeaponMap = new Map();
+            const visualMeshesByWeapon = new Map();
             modelScene.traverse(node => {
                 if (!node.isMesh) return;
                 const weapons = node.userData && node.userData.weapons;
                 const roles = node.userData && node.userData.weapon_roles;
-                if (!weapons || !weapons.length) return;
+                if (!weapons || !weapons.length || !roles || !roles.length) return;
+                // Only include pieces tagged as "visual" (the actual gun geometry)
+                if (!roles.includes('visual')) return;
                 const wnum = weapons[0];
                 const summary = weaponSummary[String(wnum)];
                 meshWeaponMap.set(node.uuid, {
                     num: wnum,
                     def: summary ? summary.def : null,
-                    role: roles ? roles[0] : null,
                 });
+                if (!visualMeshesByWeapon.has(wnum)) visualMeshesByWeapon.set(wnum, []);
+                visualMeshesByWeapon.get(wnum).push(node);
             });
 
             // --- DOM WEAPON NAME LOOKUP ---
@@ -428,6 +434,16 @@
                 ssaoPass.minDistance = VIEWER_CONFIG.ssaoMinDist; ssaoPass.maxDistance = VIEWER_CONFIG.ssaoMaxDist;
                 composer.addPass(ssaoPass);
             }
+            outlinePass = new OutlinePass(
+                new THREE.Vector2(container.offsetWidth, container.offsetHeight),
+                scene, camera
+            );
+            outlinePass.edgeStrength = 4.0;
+            outlinePass.edgeGlow = 0.3;
+            outlinePass.edgeThickness = 1.5;
+            outlinePass.visibleEdgeColor.set('#ffffff');
+            outlinePass.hiddenEdgeColor.set('#444444');
+            composer.addPass(outlinePass);
             smaaPass = new SMAAPass( container.offsetWidth * renderer.getPixelRatio(), container.offsetHeight * renderer.getPixelRatio() );
             composer.addPass(smaaPass);
             outputPass = new OutputPass();
@@ -486,6 +502,7 @@
                     camera.aspect = w / h; camera.updateProjectionMatrix();
 
                     if(ssaoPass) ssaoPass.setSize(w, h);
+                    if(outlinePass) outlinePass.setSize(w, h);
                     if(smaaPass) smaaPass.setSize(w, h);
 
                     renderer.setClearColor(0x000000, 0);
@@ -518,12 +535,20 @@
                 if (e.code === 'Space' && mixer && currentAction && !e.repeat) currentAction.paused = !currentAction.paused;
             });
             window.addEventListener('keyup', (e) => { if (e.key === 'Alt') { isAltDown = false; container.style.cursor = 'grab'; controls.enabled = true; } });
+            let hoveredWeaponNum = null;
+            function setWeaponHighlight(wnum) {
+                if (wnum === hoveredWeaponNum) return;
+                hoveredWeaponNum = wnum;
+                outlinePass.selectedObjects = wnum !== null
+                    ? (visualMeshesByWeapon.get(wnum) || [])
+                    : [];
+            }
             window.addEventListener('mousemove', (e) => {
-                if (isAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); return; }
+                if (isAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); setWeaponHighlight(null); return; }
                 if (meshWeaponMap.size === 0) return;
                 const rect = renderer.domElement.getBoundingClientRect();
                 if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
-                    hideTooltip(); return;
+                    hideTooltip(); setWeaponHighlight(null); return;
                 }
                 pointer.x = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
                 pointer.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
@@ -531,9 +556,12 @@
                 const hits = raycaster.intersectObject(modelScene, true);
                 const hit = hits.find(h => meshWeaponMap.has(h.object.uuid));
                 if (hit) {
-                    showTooltip(e.clientX, e.clientY, meshWeaponMap.get(hit.object.uuid));
+                    const winfo = meshWeaponMap.get(hit.object.uuid);
+                    showTooltip(e.clientX, e.clientY, winfo);
+                    setWeaponHighlight(winfo.num);
                 } else {
                     hideTooltip();
+                    setWeaponHighlight(null);
                 }
             });
             renderer.domElement.addEventListener('touchstart', (e) => {
@@ -598,6 +626,7 @@
                 camera.aspect = w / h; camera.updateProjectionMatrix();
                 renderer.setSize(w, h); composer.setSize(w, h);
                 if(ssaoPass) ssaoPass.setSize(w, h);
+                if(outlinePass) outlinePass.setSize(w, h);
                 if(smaaPass) smaaPass.setSize(w * renderer.getPixelRatio(), h * renderer.getPixelRatio());
                 composer.render();
             };

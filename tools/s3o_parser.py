@@ -220,7 +220,7 @@ def print_piece_tree(piece: S3OPiece, indent: int = 0):
     """Print the piece hierarchy for debugging."""
     prefix = "  " * indent
     n_tris = len(piece.triangle_indices()) // 3
-    print(f"{prefix}├── {piece.name}  "
+    print(f"{prefix}+-- {piece.name}  "
           f"(verts={len(piece.vertices)}, tris={n_tris}, "
           f"offset=({piece.offset[0]:.1f}, {piece.offset[1]:.1f}, {piece.offset[2]:.1f}))")
     for child in piece.children:

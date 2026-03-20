@@ -84,10 +84,10 @@ class BOSParseResult:
         # Inverse mapping
         wp = self.weapon_pieces()
         if wp:
-            print(f"\nPiece → Weapon mapping:")
+            print(f"\nPiece -> Weapon mapping:")
             for piece in sorted(wp.keys()):
                 wnums = sorted(wp[piece])
-                print(f"  {piece} → weapon(s) {', '.join(str(w) for w in wnums)}")
+                print(f"  {piece} -> weapon(s) {', '.join(str(w) for w in wnums)}")
 
 
 def parse_bos(filepath: str) -> BOSParseResult:
