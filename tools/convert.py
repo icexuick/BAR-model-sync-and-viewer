@@ -48,10 +48,45 @@ from bos_animator import extract_walk_animation
 
 
 
+def parse_lua_weapon_defs(lua_content: str) -> Dict[int, str]:
+    """
+    Extract weapon def names from a unit Lua file.
+    Returns {weapon_num: def_name_lowercase}, e.g. {1: "corkorg_fire", 2: "corkorg_laser"}.
+    Parses: weapons = { [1] = { def = "NAME", ... }, [2] = { ... } }
+    """
+    result: Dict[int, str] = {}
+    # Find the weapons = { ... } block
+    m = re.search(r'\bweapons\s*=\s*\{', lua_content, re.IGNORECASE)
+    if not m:
+        return result
+    # Walk braces to find the full block
+    start = m.end() - 1
+    depth = 0
+    pos = start
+    while pos < len(lua_content):
+        if lua_content[pos] == '{':
+            depth += 1
+        elif lua_content[pos] == '}':
+            depth -= 1
+            if depth == 0:
+                break
+        pos += 1
+    weapons_block = lua_content[start:pos + 1]
+    # Find each [N] = { def = "NAME" }
+    for entry in re.finditer(r'\[(\d+)\]\s*=\s*\{([^}]*)\}', weapons_block, re.DOTALL):
+        wnum = int(entry.group(1))
+        body = entry.group(2)
+        def_m = re.search(r'\bdef\s*=\s*["\']?(\w+)["\']?', body, re.IGNORECASE)
+        if def_m:
+            result[wnum] = def_m.group(1).lower()
+    return result
+
+
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
     script_path: Optional[str] = None,
+    weapon_defs: Optional[Dict[int, str]] = None,
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata and walk animation."""
     builder = GLBBuilder()
@@ -144,6 +179,7 @@ def convert_with_weapons(
             root_extras["weapon_count"] = len(weapon_info.weapons)
             root_extras["weapon_summary"] = {
                 str(wnum): {
+                    "def": (weapon_defs or {}).get(wnum),
                     "fire_point": wmap.query_piece,
                     "aim_from": wmap.aim_from_piece,
                     "aim_pieces": wmap.aim_pieces,
@@ -188,7 +224,8 @@ def find_script_for_unit(bar_dir: str, unit_name: str) -> Optional[str]:
 
 def convert_single(s3o_path: str, script_path: Optional[str] = None,
                    output_path: Optional[str] = None,
-                   info_only: bool = False) -> Optional[str]:
+                   info_only: bool = False,
+                   weapon_defs: Optional[Dict[int, str]] = None) -> Optional[str]:
     """Convert a single S3O file to GLB."""
     model = parse_s3o(s3o_path)
     unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
@@ -220,7 +257,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info, script_path)
+    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -446,7 +483,8 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
         if output_path is None:
             output_path = os.path.join(tmpdir, s3o_name.replace(".s3o", ".glb"))
 
-        glb_path = convert_single(s3o_local, script_local, output_path, info_only)
+        weapon_defs = parse_lua_weapon_defs(lua_content)
+        glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs)
         if glb_path and push and not info_only:
             push_glb_to_repo(glb_path, force=force)
         return glb_path
