@@ -292,7 +292,7 @@
                     vec3 S_combinedLight = outgoingLight + totalEmissiveRadiance + S_pbrBoost;
                     // Weapon highlight: boost hovered weapon, dim everything else
                     S_combinedLight = S_combinedLight * (1.0 + highlightStrength * 2.2);
-                    S_combinedLight = S_combinedLight * (1.0 - dimStrength * 0.35);
+                    S_combinedLight = S_combinedLight * (1.0 - dimStrength * 0.85);
                     #ifdef USE_TONEMAPPING
                         gl_FragColor.rgb = toneMapping( S_combinedLight );
                     #else
@@ -387,6 +387,8 @@
                     child.material = material;
                     child.userData._highlightVal = 0.0;
                     child.userData._dimVal = 0.0;
+                    child.userData._targetHighlight = 0.0;
+                    child.userData._targetDim = 0.0;
                     // Per-mesh: update shared uniforms right before this mesh is drawn
                     child.onBeforeRender = () => {
                         if (material.userData.shader) {
@@ -548,30 +550,82 @@
             });
             window.addEventListener('keyup', (e) => { if (e.key === 'Alt') { isAltDown = false; container.style.cursor = 'grab'; controls.enabled = true; } });
             let hoveredWeaponNum = null;
+
+            // Build slug → weapon number map from weaponSummary
+            // Full slug = unitName + "-" + def (underscores → dashes), e.g. "legkark-heat-ray"
+            const slugToWnum = new Map();
+            for (const [wnum, summary] of Object.entries(weaponSummary)) {
+                if (!summary || !summary.def) continue;
+                const fullSlug = `${unitName}-${summary.def.replace(/_/g, '-')}`;
+                slugToWnum.set(fullSlug, parseInt(wnum));
+            }
+
+            let activeDomEl = null;
+
+            // Use event delegation on document — works regardless of when Webflow renders CMS elements
+            document.addEventListener('mouseover', (e) => {
+                const el = e.target.closest('.uw-item-flex[data-wpn-slug]');
+                if (!el) return;
+                const slug = el.getAttribute('data-wpn-slug');
+                const wnum = slugToWnum.get(slug);
+                console.log('[wpn] mouseover slug=', slug, 'wnum=', wnum, 'slugToWnum size=', slugToWnum.size);
+                if (wnum !== undefined) setWeaponHighlight(wnum);
+            });
+            document.addEventListener('mouseout', (e) => {
+                const el = e.target.closest('.uw-item-flex[data-wpn-slug]');
+                if (!el) return;
+                // Only clear if leaving the element entirely (not moving to a child)
+                if (!el.contains(e.relatedTarget)) setWeaponHighlight(null);
+            });
+
             function setWeaponHighlight(wnum) {
                 if (wnum === hoveredWeaponNum) return;
                 hoveredWeaponNum = wnum;
-                // Update per-mesh highlight/dim values
+                // Collect all wnums that share the same def (e.g. 4× medium_laser on flagship)
+                // so hovering one highlights all instances of that weapon type.
+                let wnumsToHighlight = new Set();
+                if (wnum !== null) {
+                    const hovDef = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
+                    for (const [wn, summary] of Object.entries(weaponSummary)) {
+                        if (hovDef ? summary.def === hovDef : parseInt(wn) === wnum)
+                            wnumsToHighlight.add(parseInt(wn));
+                    }
+                }
+                // Update per-mesh TARGET highlight/dim values (actual values lerp toward these in animate)
                 const highlightedMeshes = wnum !== null
-                    ? new Set((visualMeshesByWeapon.get(wnum) || []).map(m => m.uuid))
+                    ? new Set([...wnumsToHighlight].flatMap(wn => (visualMeshesByWeapon.get(wn) || []).map(m => m.uuid)))
                     : new Set();
                 modelScene.traverse(child => {
                     if (!child.isMesh) return;
                     if (highlightedMeshes.has(child.uuid)) {
-                        child.userData._highlightVal = 1.0;
-                        child.userData._dimVal = 0.0;
+                        child.userData._targetHighlight = 1.0;
+                        child.userData._targetDim = 0.0;
                     } else {
-                        child.userData._highlightVal = 0.0;
-                        child.userData._dimVal = wnum !== null ? 1.0 : 0.0;
+                        child.userData._targetHighlight = 0.0;
+                        child.userData._targetDim = wnum !== null ? 1.0 : 0.0;
                     }
                 });
+
+                // Sync DOM: toggle is-hovered class on matching .uw-item-flex element
+                if (activeDomEl) { activeDomEl.classList.remove('is-hovered'); activeDomEl = null; }
+                if (wnum !== null) {
+                    const summary = weaponSummary[String(wnum)];
+                    if (summary && summary.def) {
+                        const fullSlug = `${unitName}-${summary.def.replace(/_/g, '-')}`;
+                        const domEl = document.querySelector(`.uw-item-flex[data-wpn-slug="${fullSlug}"]`);
+                        if (domEl) { domEl.classList.add('is-hovered'); activeDomEl = domEl; }
+                    }
+                }
             }
             window.addEventListener('mousemove', (e) => {
                 if (isAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); setWeaponHighlight(null); return; }
                 if (meshWeaponMap.size === 0) return;
                 const rect = renderer.domElement.getBoundingClientRect();
                 if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
-                    hideTooltip(); setWeaponHighlight(null); return;
+                    hideTooltip();
+                    // Don't clear highlight if mouse is over a DOM weapon element
+                    if (!e.target.closest('.uw-item-flex[data-wpn-slug]')) setWeaponHighlight(null);
+                    return;
                 }
                 pointer.x = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
                 pointer.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
@@ -638,6 +692,15 @@
 
                     if (turntableActive && !isInteracting && !isAltDown) modelScene.rotation.y += VIEWER_CONFIG.autoRotationSpeed * clockDelta;
                     if (mixer) mixer.update(clockDelta);
+
+                    // Smooth highlight/dim transition (~250ms = lerp factor ~8/s)
+                    const lerpSpeed = 8.0 * clockDelta;
+                    modelScene.traverse(child => {
+                        if (!child.isMesh) return;
+                        child.userData._highlightVal += (child.userData._targetHighlight - child.userData._highlightVal) * Math.min(lerpSpeed, 1.0);
+                        child.userData._dimVal      += (child.userData._targetDim      - child.userData._dimVal     ) * Math.min(lerpSpeed, 1.0);
+                    });
+
                     controls.update();
                     composer.render();
                 }
@@ -649,7 +712,6 @@
                 camera.aspect = w / h; camera.updateProjectionMatrix();
                 renderer.setSize(w, h); composer.setSize(w, h);
                 if(ssaoPass) ssaoPass.setSize(w, h);
-                if(outlinePass) outlinePass.setSize(w, h);
                 if(smaaPass) smaaPass.setSize(w * renderer.getPixelRatio(), h * renderer.getPixelRatio());
                 composer.render();
             };
