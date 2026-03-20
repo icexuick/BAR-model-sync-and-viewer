@@ -409,12 +409,15 @@ def convert_with_weapons(
 
                     seen_roots.add(visual_root)
                     tagged_subtrees = [subtree]
-                    # Mirror sibling (l↔r or 1↔2) — only if not claimed by another weapon
+                    # Mirror sibling (l↔r or 1↔2) — only for bilateral symmetric pairs.
+                    # Skip mirror when there are >2 fire_points (radial multi-barrel like
+                    # legstarfall with 7 sleeves) to avoid claiming the mirror's own fp root.
                     mirror_root = _mirror(visual_root)
                     if (mirror_root != visual_root
                             and mirror_root in children_map
                             and mirror_root not in other_weapon_pieces
-                            and mirror_root not in seen_roots):
+                            and mirror_root not in seen_roots
+                            and len(all_fp_keys) <= 2):
                         mirror_subtree = _collect_subtree(mirror_root, children_map)
                         tagged_subtrees.append(mirror_subtree)
                         seen_roots.add(mirror_root)
@@ -599,6 +602,28 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
         print(f"\n  Script: {script_path}")
         weapon_info = parse_unit_script(script_path)
         weapon_info.print_summary()
+
+    # Per-unit weapon merges: map source weapon numbers → target weapon number.
+    # Used when the BOS defines redundant separate weapons that should be linked
+    # visually (e.g. legapopupdef w2+w3 are both miniguns of the same weapon def).
+    _UNIT_WEAPON_MERGE: Dict[str, Dict[int, int]] = {
+        'legapopupdef': {3: 2},  # minigunL (w3) → same weapon as minigunR (w2)
+    }
+    merge_map = _UNIT_WEAPON_MERGE.get(unit_name.lower(), {})
+    if merge_map and weapon_info:
+        for src_wnum, dst_wnum in merge_map.items():
+            if src_wnum in weapon_info.weapons and dst_wnum in weapon_info.weapons:
+                src = weapon_info.weapons.pop(src_wnum)
+                dst = weapon_info.weapons[dst_wnum]
+                # Merge all pieces from src into dst
+                merged_query_pieces = list(dict.fromkeys(dst.query_pieces + src.query_pieces))
+                merged_aim_pieces = sorted(set(dst.aim_pieces) | set(src.aim_pieces))
+                dst.query_pieces = merged_query_pieces
+                if not dst.query_piece and src.query_piece:
+                    dst.query_piece = src.query_piece
+                dst.aim_pieces = merged_aim_pieces
+                dst._update_all()
+                print(f"  Merged weapon {src_wnum} -> weapon {dst_wnum} (all_pieces now: {sorted(dst.all_pieces)})")
 
     # If weapon_defs not provided, try to find the unitdef .lua locally.
     # Search for {unit_name}.lua in the same BAR install tree as the script/s3o.
