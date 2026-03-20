@@ -291,8 +291,9 @@
                         }
                     #endif
                     vec3 S_combinedLight = outgoingLight + totalEmissiveRadiance + S_pbrBoost;
-                    // Weapon highlight: brightness boost for highlighted pieces only
+                    // Weapon highlight: boost hovered weapon, dim everything else
                     S_combinedLight = S_combinedLight * (1.0 + highlightStrength * 2.2);
+                    S_combinedLight = S_combinedLight * (1.0 - dimStrength * 0.6);
                     #ifdef USE_TONEMAPPING
                         gl_FragColor.rgb = toneMapping( S_combinedLight );
                     #else
@@ -325,6 +326,9 @@
                 if (!weapons || !weapons.length || !roles || !roles.length) return;
                 // Only include pieces tagged as "visual" (the actual gun geometry)
                 if (!roles.includes('visual')) return;
+                // Exclude pieces that are hidden in the viewer (flare, fire, glow, etc.)
+                // — they can't be raycasted and their inclusion breaks the highlight group
+                if (shouldHideMesh(node.name)) return;
                 const wnum = weapons[0];
                 const summary = weaponSummary[String(wnum)];
                 meshWeaponMap.set(node.uuid, {
@@ -383,10 +387,12 @@
                 if (child.isMesh) {
                     child.material = material;
                     child.userData._highlightVal = 0.0;
-                    // Per-mesh: update shared uniform right before this mesh is drawn
+                    child.userData._dimVal = 0.0;
+                    // Per-mesh: update shared uniforms right before this mesh is drawn
                     child.onBeforeRender = () => {
                         if (material.userData.shader) {
                             material.userData.shader.uniforms.highlightStrength.value = child.userData._highlightVal;
+                            material.userData.shader.uniforms.dimStrength.value = child.userData._dimVal;
                         }
                     };
                     if (shouldHideMesh(child.name)) child.visible = false;
@@ -560,13 +566,19 @@
                 outlinePass.selectedObjects = wnum !== null
                     ? (visualMeshesByWeapon.get(wnum) || [])
                     : [];
-                // Update per-mesh highlight values (no dimming of others)
+                // Update per-mesh highlight/dim values
                 const highlightedMeshes = wnum !== null
                     ? new Set((visualMeshesByWeapon.get(wnum) || []).map(m => m.uuid))
                     : new Set();
                 modelScene.traverse(child => {
                     if (!child.isMesh) return;
-                    child.userData._highlightVal = highlightedMeshes.has(child.uuid) ? 1.0 : 0.0;
+                    if (highlightedMeshes.has(child.uuid)) {
+                        child.userData._highlightVal = 1.0;
+                        child.userData._dimVal = 0.0;
+                    } else {
+                        child.userData._highlightVal = 0.0;
+                        child.userData._dimVal = wnum !== null ? 1.0 : 0.0;
+                    }
                 });
             }
             window.addEventListener('mousemove', (e) => {
