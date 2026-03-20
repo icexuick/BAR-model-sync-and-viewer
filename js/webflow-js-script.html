@@ -341,19 +341,20 @@
             // --- DOM WEAPON NAME LOOKUP ---
             // wpn-cat-link uses dashes (e.g. "legkark-heat-ray"),
             // GLB def uses underscores (e.g. "heat_ray") → normalise both to dashes for matching.
-            const domWeaponNames = new Map(); // normalised slug → display name
-            document.querySelectorAll('[wpn-cat-link]').forEach(el => {
-                const slug = el.getAttribute('wpn-cat-link'); // e.g. "legkark-heat-ray"
-                const name = el.textContent.trim();           // e.g. "Heat Ray"
-                if (slug && name) domWeaponNames.set(slug, name);
+            const domWeaponNames = new Map(); // normalised slug → { name, desc }
+            document.querySelectorAll('.uw-item-flex[data-wpn-slug]').forEach(el => {
+                const slug = el.getAttribute('data-wpn-slug');
+                const name = el.querySelector('[wpn-cat-link]')?.textContent.trim() || '';
+                const desc = el.querySelector('#weapon-description')?.textContent.trim() || '';
+                if (slug) domWeaponNames.set(slug, { name, desc });
             });
-            function getWeaponLabel(winfo) {
+            function getWeaponInfo(winfo) {
                 if (winfo.def) {
                     const slug = `${unitName}-${winfo.def.replace(/_/g, '-')}`;
                     if (domWeaponNames.has(slug)) return domWeaponNames.get(slug);
-                    return slug; // fallback to slug if not found in DOM
+                    return { name: slug, desc: '' };
                 }
-                return `Weapon ${winfo.num}`;
+                return { name: `Weapon ${winfo.num}`, desc: '' };
             }
 
             // --- TOOLTIP ELEMENT ---
@@ -366,6 +367,11 @@
                 'border:1px solid rgba(255,255,255,0.18)',
                 'white-space:nowrap','z-index:9999',
             ].join(';');
+            const tooltipName = document.createElement('div');
+            const tooltipDesc = document.createElement('div');
+            tooltipDesc.style.cssText = 'font-size:11px;font-weight:400;color:rgba(255,255,255,0.55);margin-top:2px';
+            tooltip.appendChild(tooltipName);
+            tooltip.appendChild(tooltipDesc);
             document.body.appendChild(tooltip);
 
             const raycaster = new THREE.Raycaster();
@@ -373,7 +379,10 @@
             let tooltipHideTimer = null;
 
             function showTooltip(x, y, winfo) {
-                tooltip.textContent = getWeaponLabel(winfo);
+                const { name, desc } = getWeaponInfo(winfo);
+                tooltipName.textContent = name;
+                tooltipDesc.textContent = desc;
+                tooltipDesc.style.display = desc ? 'block' : 'none';
                 tooltip.style.display = 'block';
                 tooltip.style.left = (x + 14) + 'px';
                 tooltip.style.top  = (y - 8) + 'px';
