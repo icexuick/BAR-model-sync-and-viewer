@@ -46,10 +46,24 @@ from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
 from bos_animator import extract_walk_animation
 
 
+def _load_anim_overrides() -> set:
+    """Load the set of unit names that need reversed animation."""
+    path = os.path.join(os.path.dirname(__file__), 'anim_overrides.json')
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return set(data.get('reverse', []))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+REVERSED_UNITS = _load_anim_overrides()
+
+
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
     script_path: Optional[str] = None,
+    reverse_anim: bool = False,
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata and walk animation."""
     builder = GLBBuilder()
@@ -156,9 +170,10 @@ def convert_with_weapons(
         try:
             with open(script_path, 'r', errors='replace') as f:
                 bos_content = f.read()
-            result = extract_walk_animation(bos_content)
+            result = extract_walk_animation(bos_content, reverse=reverse_anim)
             if result:
-                anim_name, tracks = result
+                anim_name, tracks, now_rots = result
+                builder.apply_now_rotations(now_rots, node_name_to_idx)
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
@@ -185,7 +200,8 @@ def find_script_for_unit(bar_dir: str, unit_name: str) -> Optional[str]:
 
 def convert_single(s3o_path: str, script_path: Optional[str] = None,
                    output_path: Optional[str] = None,
-                   info_only: bool = False) -> Optional[str]:
+                   info_only: bool = False,
+                   reverse_anim: bool = False) -> Optional[str]:
     """Convert a single S3O file to GLB."""
     model = parse_s3o(s3o_path)
     unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
@@ -217,7 +233,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info, script_path)
+    glb_data = convert_with_weapons(model, weapon_info, script_path, reverse_anim)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -312,38 +328,61 @@ def _download(url: str, dest: str):
             f.write(resp.read())
 
 
-def _find_unit_lua_path(unit_name: str) -> Optional[str]:
-    """
-    Find the path of {unit_name}.lua in the BAR units/ directory tree.
-    Uses the git trees API to list all files under units/ in 3 requests (no auth needed).
-    """
-    target = f"{unit_name.lower()}.lua"
+_units_tree_cache: Optional[list] = None
 
-    # 1. Get root tree SHA from latest master commit
+
+def _get_units_tree() -> list:
+    """Fetch and cache the full units/ tree from GitHub (3 API calls, cached)."""
+    global _units_tree_cache
+    if _units_tree_cache is not None:
+        return _units_tree_cache
+
     commit = _github_get(f"{BAR_API}/commits/master")
     root_tree_sha = commit["commit"]["tree"]["sha"]
-
-    # 2. Find the 'units' subtree SHA in the root tree
     root_tree = _github_get(f"{BAR_API}/git/trees/{root_tree_sha}")
     units_entry = next((e for e in root_tree["tree"] if e["path"] == "units"), None)
     if not units_entry:
-        print("  Error: 'units' directory not found in repo root tree")
-        return None
-
-    # 3. Recursively list all files under units/
+        raise RuntimeError("'units' directory not found in repo root tree")
     units_tree = _github_get(f"{BAR_API}/git/trees/{units_entry['sha']}?recursive=1")
-    for entry in units_tree["tree"]:
+    _units_tree_cache = units_tree["tree"]
+    return _units_tree_cache
+
+
+def _find_unit_lua_path(unit_name: str) -> Optional[str]:
+    """
+    Find the path of {unit_name}.lua in the BAR units/ directory tree.
+    Uses the git trees API to list all files under units/ in 3 requests (cached).
+    """
+    target = f"{unit_name.lower()}.lua"
+    for entry in _get_units_tree():
         if entry["type"] == "blob" and entry["path"].lower().endswith("/" + target):
             return f"units/{entry['path']}"
         if entry["type"] == "blob" and entry["path"].lower() == target:
             return f"units/{entry['path']}"
-
     return None
+
+
+def _find_units_with_prefix(prefix: str) -> List[str]:
+    """Return all unit names whose .lua filename starts with the given prefix."""
+    prefix_lower = prefix.lower()
+    names = []
+    for entry in _get_units_tree():
+        if entry["type"] != "blob":
+            continue
+        filename = entry["path"].split("/")[-1]
+        if not filename.endswith(".lua"):
+            continue
+        name = filename[:-4]  # strip .lua
+        if name.lower().startswith(prefix_lower):
+            names.append(name)
+    return sorted(names)
 
 
 def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
                             info_only: bool = False,
-                            push: bool = False) -> Optional[str]:
+                            push: bool = False,
+                            reverse_anim: bool = False,
+                            force: bool = False) -> Optional[str]:
     """
     Look up a BAR unit by name in the GitHub repo, download its S3O and script,
     and convert to GLB.
@@ -421,16 +460,18 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
         if output_path is None:
             output_path = os.path.join(tmpdir, s3o_name.replace(".s3o", ".glb"))
 
-        glb_path = convert_single(s3o_local, script_local, output_path, info_only)
+        # Apply override from anim_overrides.json if not explicitly set via CLI
+        effective_reverse = reverse_anim or (unit_name.lower() in REVERSED_UNITS)
+        glb_path = convert_single(s3o_local, script_local, output_path, info_only, effective_reverse)
         if glb_path and push and not info_only:
-            push_glb_to_repo(glb_path)
+            push_glb_to_repo(glb_path, force=force)
         return glb_path
 
 
 VIEWER_REPO = "icexuick/BAR-modelviewer"
 
 
-def push_glb_to_repo(glb_path: str):
+def push_glb_to_repo(glb_path: str, force: bool = False):
     """Upload or overwrite a GLB file in the BAR-modelviewer GitHub repo."""
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
@@ -456,7 +497,7 @@ def push_glb_to_repo(glb_path: str):
 
     # Compare git blob SHA to avoid empty commits when content is unchanged
     blob_sha = hashlib.sha1(f"blob {len(raw)}\0".encode() + raw).hexdigest()
-    if existing_sha and blob_sha == existing_sha:
+    if existing_sha and blob_sha == existing_sha and not force:
         print(f"  → No changes, skipping push ({filename} already up to date)")
         return
 
@@ -507,8 +548,41 @@ def main():
                         help='Only show info, do not convert')
     parser.add_argument('--local', action='store_true',
                         help='Write GLB locally only, do not push to GitHub repo')
+    parser.add_argument('--reverse-anim', action='store_true',
+                        help='Reverse animation playback direction (for units that walk backwards)')
+    parser.add_argument('--force', action='store_true',
+                        help='Force push to GitHub even if file is unchanged')
+    parser.add_argument('--prefix', help='Convert all units whose name starts with this prefix (e.g. "leg")')
 
     args = parser.parse_args()
+
+    if args.prefix:
+        unit_names = _find_units_with_prefix(args.prefix)
+        if not unit_names:
+            print(f"No units found with prefix '{args.prefix}'")
+            return
+        print(f"Found {len(unit_names)} units with prefix '{args.prefix}': {unit_names}")
+        ok, skipped, failed = 0, 0, []
+        for i, unit_name in enumerate(unit_names, 1):
+            print(f"\n[{i}/{len(unit_names)}] {unit_name}")
+            try:
+                result = fetch_unit_from_github(
+                    unit_name, None, False,
+                    push=not args.local,
+                    reverse_anim=args.reverse_anim,
+                    force=args.force,
+                )
+                if result:
+                    ok += 1
+                else:
+                    skipped += 1
+            except Exception as e:
+                print(f"  ERROR: {e}")
+                failed.append(unit_name)
+        print(f"\n=== Batch complete: {ok} converted, {skipped} skipped, {len(failed)} failed ===")
+        if failed:
+            print(f"Failed: {failed}")
+        return
 
     if args.unit:
         if args.local:
@@ -519,11 +593,14 @@ def main():
         fetch_unit_from_github(
             args.unit, args.output, args.info_only,
             push=not args.local and not args.info_only,
+            reverse_anim=args.reverse_anim,
+            force=args.force,
         )
     elif args.bar_dir:
         batch_convert(args.bar_dir, args.output_dir, args.filter)
     elif args.s3o:
-        convert_single(args.s3o, args.script, args.output, args.info_only)
+        convert_single(args.s3o, args.script, args.output, args.info_only,
+                       reverse_anim=args.reverse_anim)
     else:
         parser.print_help()
 

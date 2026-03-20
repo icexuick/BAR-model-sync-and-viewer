@@ -190,6 +190,43 @@ class GLBBuilder:
 
         return node_idx
 
+    def apply_now_rotations(self, now_rots: dict, node_name_to_idx: Dict[str, int]):
+        """
+        Apply Create() 'turn piece to axis <value> now' rotations as static
+        node rotations in the GLB. This sets the rest pose to match what the
+        Spring engine sets up via Create() before any animation plays.
+        now_rots: {(piece_lower, axis_int, True): degrees}
+        """
+        import math
+
+        def _euler_to_quat(rx_deg, ry_deg, rz_deg):
+            rx, ry, rz = math.radians(rx_deg), math.radians(ry_deg), math.radians(rz_deg)
+            cx, sx = math.cos(rx/2), math.sin(rx/2)
+            cy, sy = math.cos(ry/2), math.sin(ry/2)
+            cz, sz = math.cos(rz/2), math.sin(rz/2)
+            return [
+                sx*cy*cz - cx*sy*sz,
+                cx*sy*cz + sx*cy*sz,
+                cx*cy*sz - sx*sy*sz,
+                cx*cy*cz + sx*sy*sz,
+            ]
+
+        # Group by piece
+        by_piece: Dict[str, Dict[int, float]] = {}
+        for (piece, axis, _), deg in now_rots.items():
+            by_piece.setdefault(piece, {})[axis] = deg
+
+        for piece, axes in by_piece.items():
+            node_idx = node_name_to_idx.get(piece)
+            if node_idx is None:
+                continue
+            rx = axes.get(0, 0.0)
+            ry = axes.get(1, 0.0)
+            rz = axes.get(2, 0.0)
+            if rx == 0 and ry == 0 and rz == 0:
+                continue
+            self.nodes[node_idx]["rotation"] = _euler_to_quat(rx, ry, rz)
+
     def add_animation(self, anim_name: str, tracks: list,
                       node_name_to_idx: Dict[str, int],
                       piece_offsets: Dict[str, tuple] = None):

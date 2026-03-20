@@ -46,6 +46,11 @@ _MOVE_RE = re.compile(
     re.IGNORECASE
 )
 _FRAME_RE = re.compile(r'//\s*Frame\s*:?\s*(\d+)', re.IGNORECASE)
+# Matches:  turn piece to y-axis <value> now;
+_TURN_NOW_RE = re.compile(
+    r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([-\d.]+)>\s+now',
+    re.IGNORECASE
+)
 
 
 @dataclass
@@ -75,10 +80,11 @@ def _extract_function_body(content: str, func_name: str) -> Optional[str]:
     Extract the full body (between outer braces) of a named BOS function.
     Returns body text with comments preserved (needed for Frame:N markers).
     """
-    # Search in comment-stripped content to locate the function opening brace
-    clean = _strip_comments(content)
+    # Search directly in original content for the function opening brace.
+    # We must search in original (not comment-stripped) to get correct positions.
+    # Use comment-stripped only to verify the match is not inside a comment.
     pattern = re.compile(rf'\b{re.escape(func_name)}\s*\([^)]*\)\s*\{{', re.IGNORECASE)
-    match = pattern.search(clean)
+    match = pattern.search(content)
     if not match:
         return None
 
@@ -156,7 +162,46 @@ def _parse_frame_blocks(text: str) -> List[Tuple[int, Dict[Tuple, float]]]:
     return blocks
 
 
-def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrack]]]:
+def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
+    """
+    Parse rest-pose rotations for pieces. Tries two sources in order:
+    1. 'turn piece to axis <value> now' in Create() — explicit immediate pose
+    2. Turn commands in StopWalking() — the idle/rest pose the unit returns to
+    Returns {(piece, axis, True): degrees}.
+    """
+    result: Dict[Tuple, float] = {}
+
+    # Source 1: Create() 'now' commands
+    body = _extract_function_body(bos_content, 'Create')
+    if body:
+        for m in _TURN_NOW_RE.finditer(body):
+            key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+            result[key] = float(m.group(3))
+
+    # Source 2: StopWalking() — fallback if Create() has no 'now' rotations.
+    # Only use if StopWalking contains significant non-zero rotations (>5°),
+    # indicating a non-trivial rest pose that differs from the S3O zero pose.
+    if not result:
+        for func_name in ['StopWalking', 'StopWalk']:
+            body = _extract_function_body(bos_content, func_name)
+            if not body:
+                continue
+            stripped = _strip_comments(body)
+            candidate = {}
+            for m in _TURN_RE.finditer(stripped):
+                val = float(m.group(3))
+                if abs(val) > 20.0:  # only significant rest-pose rotations
+                    key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+                    candidate[key] = val
+            if candidate:
+                result = candidate
+                print(f"  Using {func_name}() as rest pose ({len(result)} rotations)")
+                break
+
+    return result
+
+
+def extract_walk_animation(bos_content: str, reverse: bool = False) -> Optional[Tuple[str, List[BosTrack]]]:
     """
     Extract walk animation tracks from a BOS script.
 
@@ -168,9 +213,14 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
     A closing keyframe equal to t=0 is added for every track at t=duration,
     guaranteeing a seamless Three.js LoopRepeat.
 
-    Returns (animation_name, List[BosTrack]) or None if nothing found.
+    Returns (animation_name, List[BosTrack], now_rots) or None if nothing found.
+    now_rots: {(piece, axis, True): degrees} from Create() 'turn ... now' commands.
+    These must be applied as initial node rotations in the GLB so the rest pose
+    matches what the Spring engine sets up via Create().
     """
-    for func_name in ['Walk', 'StartMoving', 'Move']:
+    now_rots = parse_create_now_rotations(bos_content)
+
+    for func_name in ['Walk', 'StartMoving', 'Move', 'DoTheWalking']:
         body = _extract_function_body(bos_content, func_name)
         if not body:
             continue
@@ -280,8 +330,19 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
                                        is_rotation=is_rot, keyframes=deduped))
 
         if tracks:
-            print(f"  Animation '{func_name}': {len(tracks)} tracks, "
-                  f"{n_blocks} keyframes (step={step_size}) → duration {duration:.2f}s")
-            return func_name, tracks
+            if reverse:
+                # Mirror all keyframe times: t_new = duration - t_old
+                # This reverses the playback direction for units where the
+                # BOS cycle is exported backwards relative to movement direction.
+                for track in tracks:
+                    for kf in track.keyframes:
+                        kf.time = duration - kf.time
+                    track.keyframes.sort(key=lambda k: k.time)
+                print(f"  Animation '{func_name}': {len(tracks)} tracks, "
+                      f"{n_blocks} keyframes (step={step_size}) → duration {duration:.2f}s (reversed)")
+            else:
+                print(f"  Animation '{func_name}': {len(tracks)} tracks, "
+                      f"{n_blocks} keyframes (step={step_size}) → duration {duration:.2f}s")
+            return func_name, tracks, now_rots
 
     return None

@@ -1,0 +1,11 @@
+{
+  "_comment": "Units where walk animation needs to be reversed. Add unit names here after manual verification.",
+  "reverse": [
+    "corcan",
+    "armsptk",
+    "leghrk",
+    "legrezbot",
+    "legelrpcmech",
+    "leganavybattleship"
+  ]
+}
