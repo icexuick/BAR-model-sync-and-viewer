@@ -46,40 +46,12 @@ from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
 from bos_animator import extract_walk_animation
 
 
-def _load_anim_overrides() -> set:
-    """Load the set of unit names that need reversed animation."""
-    path = os.path.join(os.path.dirname(__file__), 'anim_overrides.json')
-    try:
-        with open(path) as f:
-            data = json.load(f)
-        return set(data.get('reverse', []))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return set()
-
-REVERSED_UNITS = _load_anim_overrides()
-
-
-_LEG_PREFIXES = ('hinge', 'thigh', 'leg', 'foot', 'shin', 'calf', 'paw', 'toe')
-
-def _count_leg_chains(root_piece) -> int:
-    """Count top-level leg chains. >4 = hexapod, skip animation."""
-    def leg_children(piece) -> int:
-        return sum(1 for c in piece.children
-                   if c.name.lower().startswith(_LEG_PREFIXES))
-    count = leg_children(root_piece)
-    if count == 0:
-        for child in root_piece.children:
-            n = leg_children(child)
-            if n > count:
-                count = n
-    return count
 
 
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
     script_path: Optional[str] = None,
-    reverse_anim: bool = False,
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata and walk animation."""
     builder = GLBBuilder()
@@ -186,7 +158,7 @@ def convert_with_weapons(
         try:
             with open(script_path, 'r', errors='replace') as f:
                 bos_content = f.read()
-            result = extract_walk_animation(bos_content, reverse=reverse_anim)
+            result = extract_walk_animation(bos_content)
             if result:
                 anim_name, tracks, now_rots = result
                 builder.apply_now_rotations(now_rots, node_name_to_idx)
@@ -216,8 +188,7 @@ def find_script_for_unit(bar_dir: str, unit_name: str) -> Optional[str]:
 
 def convert_single(s3o_path: str, script_path: Optional[str] = None,
                    output_path: Optional[str] = None,
-                   info_only: bool = False,
-                   reverse_anim: bool = False) -> Optional[str]:
+                   info_only: bool = False) -> Optional[str]:
     """Convert a single S3O file to GLB."""
     model = parse_s3o(s3o_path)
     unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
@@ -249,7 +220,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info, script_path, reverse_anim)
+    glb_data = convert_with_weapons(model, weapon_info, script_path)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -397,7 +368,6 @@ def _find_units_with_prefix(prefix: str) -> List[str]:
 def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
                             info_only: bool = False,
                             push: bool = False,
-                            reverse_anim: bool = False,
                             force: bool = False) -> Optional[str]:
     """
     Look up a BAR unit by name in the GitHub repo, download its S3O and script,
@@ -476,9 +446,7 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
         if output_path is None:
             output_path = os.path.join(tmpdir, s3o_name.replace(".s3o", ".glb"))
 
-        # Apply override from anim_overrides.json if not explicitly set via CLI
-        effective_reverse = reverse_anim or (unit_name.lower() in REVERSED_UNITS)
-        glb_path = convert_single(s3o_local, script_local, output_path, info_only, effective_reverse)
+        glb_path = convert_single(s3o_local, script_local, output_path, info_only)
         if glb_path and push and not info_only:
             push_glb_to_repo(glb_path, force=force)
         return glb_path
@@ -564,8 +532,6 @@ def main():
                         help='Only show info, do not convert')
     parser.add_argument('--local', action='store_true',
                         help='Write GLB locally only, do not push to GitHub repo')
-    parser.add_argument('--reverse-anim', action='store_true',
-                        help='Reverse animation playback direction (for units that walk backwards)')
     parser.add_argument('--force', action='store_true',
                         help='Force push to GitHub even if file is unchanged')
     parser.add_argument('--prefix', help='Convert all units whose name starts with this prefix (e.g. "leg")')
@@ -585,7 +551,6 @@ def main():
                 result = fetch_unit_from_github(
                     unit_name, None, False,
                     push=not args.local,
-                    reverse_anim=args.reverse_anim,
                     force=args.force,
                 )
                 if result:
@@ -609,14 +574,12 @@ def main():
         fetch_unit_from_github(
             args.unit, args.output, args.info_only,
             push=not args.local and not args.info_only,
-            reverse_anim=args.reverse_anim,
             force=args.force,
         )
     elif args.bar_dir:
         batch_convert(args.bar_dir, args.output_dir, args.filter)
     elif args.s3o:
-        convert_single(args.s3o, args.script, args.output, args.info_only,
-                       reverse_anim=args.reverse_anim)
+        convert_single(args.s3o, args.script, args.output, args.info_only)
     else:
         parser.print_help()
 

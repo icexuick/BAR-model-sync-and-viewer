@@ -201,7 +201,7 @@ def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
     return result
 
 
-def extract_walk_animation(bos_content: str, reverse: bool = False) -> Optional[Tuple[str, List[BosTrack]]]:
+def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrack]]]:
     """
     Extract walk animation tracks from a BOS script.
 
@@ -330,19 +330,8 @@ def extract_walk_animation(bos_content: str, reverse: bool = False) -> Optional[
                                        is_rotation=is_rot, keyframes=deduped))
 
         if tracks:
-            if reverse:
-                # Mirror all keyframe times: t_new = duration - t_old
-                # This reverses the playback direction for units where the
-                # BOS cycle is exported backwards relative to movement direction.
-                for track in tracks:
-                    for kf in track.keyframes:
-                        kf.time = duration - kf.time
-                    track.keyframes.sort(key=lambda k: k.time)
-                print(f"  Animation '{func_name}': {len(tracks)} tracks, "
-                      f"{n_blocks} keyframes (step={step_size}) → duration {duration:.2f}s (reversed)")
-            else:
-                print(f"  Animation '{func_name}': {len(tracks)} tracks, "
-                      f"{n_blocks} keyframes (step={step_size}) → duration {duration:.2f}s")
+            print(f"  Animation '{func_name}': {len(tracks)} tracks, "
+                  f"{n_blocks} keyframes (step={step_size}) → duration {duration:.2f}s")
             return func_name, tracks, now_rots
 
     return None
