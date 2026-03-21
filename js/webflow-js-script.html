@@ -784,7 +784,7 @@
             if (animToggleButton) animToggleButton.addEventListener('click', () => { if(mixer && currentAction) currentAction.paused = !currentAction.paused; });
             if (movementToggle) movementToggle.addEventListener('change', () => {
                 const enabled = movementToggle.checked;
-                localStorage.setItem('movementToggle', enabled);
+                localStorage.setItem('movementToggle', String(enabled));
                 if (currentAction) currentAction.paused = !enabled;
             });
             if (rotateToggleButton) rotateToggleButton.addEventListener('click', () => { isTurntableEnabledByUser = !isTurntableEnabledByUser; turntableActive = isTurntableEnabledByUser; if(!turntableActive) clearTimeout(idleTimer); });
