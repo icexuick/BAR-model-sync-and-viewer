@@ -87,6 +87,7 @@
 
         const container = document.getElementById('model-container');
         const animToggleButton = document.getElementById('anim-toggle-button');
+        const animToggleWrapper = document.getElementById('anim-toggle-wrapper');
         const rotateToggleButton = document.getElementById('rotate-toggle-button');
         const shadowToggleButton = document.getElementById('shadow-toggle-button');
         const exportButton = document.getElementById('export-button');
@@ -551,14 +552,17 @@
                         if (movementToggleWrap) movementToggleWrap.style.display = '';
                     }
                     if (animToggleButton) animToggleButton.style.display = 'flex';
+                    if (animToggleWrapper) animToggleWrapper.style.display = 'flex';
                 } else {
                     currentAction = null;
                     if (movementToggleWrap) movementToggleWrap.style.display = 'none';
                     if (animToggleButton) animToggleButton.style.display = 'none';
+                    if (animToggleWrapper) animToggleWrapper.style.display = 'none';
                 }
             } else {
                 if (movementToggleWrap) movementToggleWrap.style.display = 'none';
                 if (animToggleButton) animToggleButton.style.display = 'none';
+                if (animToggleWrapper) animToggleWrapper.style.display = 'none';
             }
 
             const renderTarget = new THREE.WebGLRenderTarget(container.offsetWidth, container.offsetHeight, {

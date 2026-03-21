@@ -18,6 +18,10 @@
       });
     }
 
+    // --- Anim toggle wrapper: hidden by default, shown by viewer when walk clip exists ---
+    var animToggleWrapper = document.getElementById("anim-toggle-wrapper");
+    if (animToggleWrapper) animToggleWrapper.style.display = "none";
+
     // --- Movement toggle ---
     var movementToggle = document.getElementById("movementToggle");
     if (movementToggle) {
