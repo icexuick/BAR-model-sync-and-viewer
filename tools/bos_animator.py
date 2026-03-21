@@ -359,7 +359,7 @@ _SPIN_RE = re.compile(
 # Default wind speed (deg/s) used when the BOS speed is a variable like 'WindSpeed'.
 # BAR wind turbines have WindSpeed in [0..2000] Spring units at medium wind; 400 is a
 # reasonable average that gives a visually believable rotation in the viewer.
-_DEFAULT_WIND_SPEED = 400.0
+_DEFAULT_WIND_SPEED = 264.0
 
 
 def _collect_spin_commands(bos_content: str, func_name: str,
