@@ -537,17 +537,40 @@
                 // Walk clip: prefer "walk"-named clip, fall back to first non-spin clip
                 const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c));
                 const walkClip = nonSpinClips.find(c => c.name.toLowerCase() === 'walk') || nonSpinClips[0];
+                const stopWalkClip = gltf.animations.find(c => c.name.toLowerCase() === 'stopwalking') || null;
+                let stopWalkAction = null;
+
                 if (walkClip) {
                     const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
+
                     currentAction = mixer.clipAction(walkClip);
                     currentAction.setLoop(THREE.LoopRepeat, Infinity);
-                    currentAction.play();
-                    currentAction.paused = !walkEnabled;
+
+                    if (stopWalkClip) {
+                        stopWalkAction = mixer.clipAction(stopWalkClip);
+                        stopWalkAction.setLoop(THREE.LoopRepeat, Infinity);
+                        stopWalkAction.clampWhenFinished = true;
+                    }
+
+                    if (walkEnabled || !stopWalkClip) {
+                        // Start walking
+                        currentAction.play();
+                        if (stopWalkAction) { stopWalkAction.play(); stopWalkAction.weight = 0; }
+                    } else {
+                        // Start in neutral stance
+                        currentAction.play(); currentAction.weight = 0;
+                        if (stopWalkAction) stopWalkAction.play();
+                    }
+
                     if (movementToggle) {
                         movementToggle.checked = walkEnabled;
-                        if (movementToggleWrap) movementToggleWrap.style.display = '';
+                        if (movementToggleWrap) movementToggleWrap.style.display = stopWalkClip ? '' : 'none';
                     }
                     if (animToggleButton) animToggleButton.style.display = 'flex';
+
+                    // Store stopWalkAction so the toggle can crossfade
+                    mixer.userData = mixer.userData || {};
+                    mixer.userData.stopWalkAction = stopWalkAction;
                 } else {
                     currentAction = null;
                     if (movementToggleWrap) movementToggleWrap.style.display = 'none';
@@ -785,7 +808,26 @@
             if (movementToggle) movementToggle.addEventListener('change', () => {
                 const enabled = movementToggle.checked;
                 localStorage.setItem('movementToggle', String(enabled));
-                if (currentAction) currentAction.paused = !enabled;
+                if (!currentAction) return;
+                const stopAction = mixer && mixer.userData && mixer.userData.stopWalkAction;
+                const FADE = 0.4; // seconds
+                if (enabled) {
+                    // Crossfade from StopWalking → Walk
+                    if (stopAction) {
+                        currentAction.weight = 1;
+                        currentAction.crossFadeFrom(stopAction, FADE, true);
+                    } else {
+                        currentAction.paused = false;
+                    }
+                } else {
+                    // Crossfade from Walk → StopWalking
+                    if (stopAction) {
+                        stopAction.weight = 1;
+                        stopAction.crossFadeFrom(currentAction, FADE, true);
+                    } else {
+                        currentAction.paused = true;
+                    }
+                }
             });
             if (rotateToggleButton) rotateToggleButton.addEventListener('click', () => { isTurntableEnabledByUser = !isTurntableEnabledByUser; turntableActive = isTurntableEnabledByUser; if(!turntableActive) clearTimeout(idleTimer); });
             if (shadowToggleButton) shadowToggleButton.addEventListener('click', () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; });

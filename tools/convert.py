@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
-from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces
+from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose
 
 
 
@@ -624,6 +624,11 @@ def convert_with_weapons(
                 anim_name, tracks, now_rots = result
                 builder.apply_now_rotations(now_rots, node_name_to_idx)
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
+                # StopWalking pose — exported as a second clip so the viewer can
+                # crossfade to the neutral stance when the movement toggle is off.
+                stop_tracks = extract_stopwalking_pose(bos_content)
+                if stop_tracks:
+                    builder.add_animation('StopWalking', stop_tracks, node_name_to_idx, piece_offsets)
             else:
                 # No walk animation — collect Create() rest-pose rotations.
                 # These are NOT applied as static node rotations here; instead they are

@@ -228,6 +228,44 @@ def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
     return result
 
 
+def extract_stopwalking_pose(bos_content: str) -> Optional[List[BosTrack]]:
+    """
+    Extract the rest/idle pose from StopWalking() (or StopWalk()) as a list of
+    single-keyframe BosTrack objects at t=0.
+
+    Returns None if no StopWalking function is found or it has no turn/move commands.
+    """
+    for func_name in ['StopWalking', 'StopWalk', 'StopMoving']:
+        body = _extract_function_body(bos_content, func_name)
+        if not body:
+            continue
+        # If StopMoving just calls StopWalking, skip it
+        stripped = _strip_comments(body)
+        if re.search(r'\bcall-script\s+StopWalk', stripped, re.IGNORECASE) and \
+                not re.search(r'\bturn\b', stripped, re.IGNORECASE):
+            continue
+        commands: Dict[Tuple, float] = {}
+        for m in _TURN_RE.finditer(stripped):
+            key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+            commands[key] = float(m.group(3))
+        for m in _MOVE_RE.finditer(stripped):
+            key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+            commands[key] = float(m.group(3))
+        if not commands:
+            continue
+        tracks: List[BosTrack] = []
+        # Group by (piece, axis, is_rotation) — last value wins (matches BOS execution order)
+        for (piece, axis, is_rot), value in commands.items():
+            tracks.append(BosTrack(
+                piece=piece, axis=axis, is_rotation=is_rot,
+                keyframes=[BosKeyframe(time=0.0, value=value),
+                           BosKeyframe(time=0.033, value=value)]  # two frames for valid clip
+            ))
+        print(f"  StopWalking pose: {len(tracks)} tracks from {func_name}()")
+        return tracks
+    return None
+
+
 def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrack]]]:
     """
     Extract walk animation tracks from a BOS script.
