@@ -348,7 +348,8 @@
             });
 
             // --- UNIT ROLE MESH MAP: for radar/jammer/sonar units without weapons ---
-            // All visible meshes map to the unit role tooltip so hovering anywhere highlights
+            // Only tag spin_pieces (the actual spinning dish/antenna) and their subtrees.
+            // Falls back to all visible meshes only when spin_pieces is not set.
             const unitRoleMeshMap = new Map();
             if (unitRole && meshWeaponMap.size === 0) {
                 const ROLE_LABELS = {
@@ -358,11 +359,38 @@
                     'RADAR_JAMMER': 'Radar / Jammer',
                 };
                 const roleLabel = ROLE_LABELS[unitRole] || unitRole;
+
+                // Collect spin_pieces names from root node extras
+                let spinPieceNames = null;
                 modelScene.traverse(node => {
-                    if (!node.isMesh || !node.visible) return;
-                    if (shouldHideMesh(node.name)) return;
-                    unitRoleMeshMap.set(node.uuid, roleLabel);
+                    if (node.userData && node.userData.spin_pieces) {
+                        spinPieceNames = new Set(node.userData.spin_pieces.map(n => n.toLowerCase()));
+                    }
                 });
+
+                if (spinPieceNames) {
+                    // Tag only the spinning pieces (and their mesh children) by name
+                    modelScene.traverse(node => {
+                        if (!node.isMesh || !node.visible) return;
+                        if (shouldHideMesh(node.name)) return;
+                        // Walk up to check if this mesh or any ancestor is a spin piece
+                        let cur = node;
+                        while (cur) {
+                            if (spinPieceNames.has(cur.name.toLowerCase())) {
+                                unitRoleMeshMap.set(node.uuid, roleLabel);
+                                break;
+                            }
+                            cur = cur.parent;
+                        }
+                    });
+                } else {
+                    // No spin_pieces info — fall back to all visible meshes
+                    modelScene.traverse(node => {
+                        if (!node.isMesh || !node.visible) return;
+                        if (shouldHideMesh(node.name)) return;
+                        unitRoleMeshMap.set(node.uuid, roleLabel);
+                    });
+                }
             }
 
             // --- DOM WEAPON NAME LOOKUP ---
@@ -489,14 +517,24 @@
 
             if (gltf.animations && gltf.animations.length) {
                 mixer = new THREE.AnimationMixer(modelScene);
-                const clip = gltf.animations.find(c => c.name.toLowerCase() === "walk") || gltf.animations[0];
-                currentAction = mixer.clipAction(clip);
-                currentAction.setLoop(THREE.LoopRepeat, Infinity);
-                currentAction.play();
-                // Hide toggle button for spin-only animations (radar/jammer dishes) —
-                // they are always running and pausing them is not meaningful in the viewer.
                 const isSpinOnly = unitRole && meshWeaponMap.size === 0;
-                if (animToggleButton) animToggleButton.style.display = isSpinOnly ? 'none' : 'flex';
+                if (isSpinOnly) {
+                    // Each spin piece has its own clip so it loops at its own speed.
+                    // Start all clips simultaneously and independently.
+                    for (const clip of gltf.animations) {
+                        const action = mixer.clipAction(clip);
+                        action.setLoop(THREE.LoopRepeat, Infinity);
+                        action.play();
+                    }
+                    currentAction = null; // no single action to pause
+                    if (animToggleButton) animToggleButton.style.display = 'none';
+                } else {
+                    const clip = gltf.animations.find(c => c.name.toLowerCase() === "walk") || gltf.animations[0];
+                    currentAction = mixer.clipAction(clip);
+                    currentAction.setLoop(THREE.LoopRepeat, Infinity);
+                    currentAction.play();
+                    if (animToggleButton) animToggleButton.style.display = 'flex';
+                }
             } else if (animToggleButton) animToggleButton.style.display = 'none';
 
             const renderTarget = new THREE.WebGLRenderTarget(container.offsetWidth, container.offsetHeight, {

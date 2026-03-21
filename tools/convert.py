@@ -567,10 +567,16 @@ def convert_with_weapons(
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
             else:
                 # No walk animation — try spin animation (radar/jammer dishes)
-                spin_result = extract_spin_animation(bos_content)
-                if spin_result:
-                    spin_name, spin_tracks = spin_result
-                    builder.add_spin_animation(spin_name, spin_tracks, node_name_to_idx)
+                spin_clips = extract_spin_animation(bos_content)
+                if spin_clips:
+                    spin_pieces = []
+                    for clip_name, clip_tracks in spin_clips:
+                        builder.add_spin_animation(clip_name, clip_tracks, node_name_to_idx)
+                        spin_pieces.extend(t.piece for t in clip_tracks)
+                    # Store spin_pieces in root extras so viewer can target tooltip
+                    if model.root_piece:
+                        root_idx = builder.scenes[0]["nodes"][0]
+                        builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 

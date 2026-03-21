@@ -355,16 +355,16 @@ _SPIN_RE = re.compile(
 )
 
 
-def extract_spin_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrack]]]:
+def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[BosTrack]]]]:
     """
     Extract continuous spin animations from Activate()/Go() BOS functions.
 
-    BOS 'spin <piece> around y-axis speed <deg/s>' runs indefinitely in the engine.
-    We approximate this as a single 360° rotation loop with duration = 360 / speed.
+    Returns a list of (clip_name, [track]) — one clip per spinning piece —
+    so each piece loops independently at its own speed. A single shared clip
+    would loop at the slowest piece's period, causing faster pieces to pause.
 
-    Returns ('Activate', List[BosTrack]) or None if no spin commands found.
-    Multiple pieces can spin simultaneously at different speeds/axes.
-    Negative speed = counter-clockwise (0 -> -360 keyframes).
+    Each clip has 8 keyframes at 0°..315° (45° steps), no closing 360° frame.
+    Three.js LoopRepeat jumps from last keyframe back to t=0 seamlessly.
     """
     for func_name in ['Activate', 'Go', 'StartActivate']:
         body = _extract_function_body(bos_content, func_name)
@@ -372,10 +372,9 @@ def extract_spin_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
             continue
 
         clean = _strip_comments(body)
-        # Remove stop-spin lines so they don't match _SPIN_RE
         clean = re.sub(r'\bstop-spin\b[^\n]*', '', clean, flags=re.IGNORECASE)
 
-        spins: Dict[Tuple[str, int], float] = {}  # (piece, axis) -> speed deg/s
+        spins: Dict[Tuple[str, int], float] = {}
         for m in _SPIN_RE.finditer(clean):
             piece = m.group(1).lower()
             axis = AXIS_INDEX[m.group(2).lower()]
@@ -386,25 +385,22 @@ def extract_spin_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
         if not spins:
             continue
 
-        tracks: List[BosTrack] = []
+        clips: List[Tuple[str, List[BosTrack]]] = []
         for (piece, axis), speed in spins.items():
             duration = abs(360.0 / speed)
             sign = 1.0 if speed > 0 else -1.0
-            # 8 keyframes at 0°..315° steps of 45°, no closing 360° keyframe.
-            # add_spin_animation builds quaternions directly with consistent
-            # hemisphere. Three.js LoopRepeat jumps from last keyframe time
-            # back to t=0 without interpolating over the loop boundary,
-            # so omitting 360° (== 0°) prevents a direction reversal at the seam.
-            # 8 steps give smooth motion and ≤45° per slerp step.
             n = 8
             kfs = [
                 BosKeyframe(time=duration * i / n, value=sign * 360.0 * i / n)
                 for i in range(n)
             ]
-            tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs))
+            track = BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs)
+            clip_name = f"{func_name}_{piece}"
+            clips.append((clip_name, [track]))
 
-        if tracks:
-            print(f"  Spin animation '{func_name}': {len(tracks)} spinning pieces")
-            return func_name, tracks
+        if clips:
+            pieces = [c[0].split('_', 1)[1] for c in clips]
+            print(f"  Spin animation '{func_name}': {len(clips)} spinning pieces: {', '.join(pieces)}")
+            return clips
 
     return None
