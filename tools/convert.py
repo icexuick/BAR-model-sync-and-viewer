@@ -442,6 +442,28 @@ def convert_with_weapons(
                         tagged_subtrees.append(mirror_subtree)
                         seen_roots.add(mirror_root)
 
+                    # Named-type siblings: pieces that share a "type word" with the visual
+                    # root but aren't caught by l↔r mirror (e.g. leftBarrel/rightBarrel/topBarrel).
+                    # Extract the longest lowercase word in the visual root name (e.g. "barrel"
+                    # from "topBarrel") and tag all same-parent siblings that also contain it.
+                    _BARREL_WORDS = {'barrel', 'gun', 'cannon', 'turret', 'sleeve',
+                                     'launcher', 'missile', 'rocket', 'pod', 'tube'}
+                    vr_lower = visual_root.lower()
+                    vr_type_word = next((w for w in _BARREL_WORDS if w in vr_lower), None)
+                    if vr_type_word:
+                        vr_parent = parent_map.get(visual_root)
+                        if vr_parent is not None:
+                            for sib in children_map.get(vr_parent, []):
+                                if (sib != visual_root
+                                        and sib not in seen_roots
+                                        and sib not in other_weapon_pieces
+                                        and vr_type_word in sib.lower()
+                                        and not _is_dummy_piece(sib)
+                                        and _subtree_verts(sib) > 0):
+                                    sib_subtree = _collect_subtree(sib, children_map)
+                                    tagged_subtrees.append(sib_subtree)
+                                    seen_roots.add(sib)
+
                     for s in tagged_subtrees:
                         for piece_key in s:
                             if not _is_dummy_piece(piece_key) and (piece_key == visual_root or piece_key not in other_aim_pieces):
