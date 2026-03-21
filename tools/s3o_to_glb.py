@@ -375,7 +375,8 @@ class GLBBuilder:
             print(f"  GLB animation '{anim_name}': {len(channels)} channels")
 
     def add_spin_animation(self, anim_name: str, tracks: list,
-                           node_name_to_idx: Dict[str, int]):
+                           node_name_to_idx: Dict[str, int],
+                           now_rots: dict = None):
         """
         Add a continuous spin animation (radar/jammer dishes).
 
@@ -385,8 +386,12 @@ class GLBBuilder:
         sign-flipped if its dot product with the previous is negative,
         guaranteeing slerp takes the short arc in the intended direction.
 
-        tracks: List[BosTrack] with is_rotation=True, keyframes at
-                0/90/180/270/360 degrees from extract_spin_animation().
+        tracks   : List[BosTrack] with is_rotation=True, keyframes at
+                   0/90/180/270/360 degrees from extract_spin_animation().
+        now_rots : {(piece_lower, axis_int, True): degrees} from Create().
+                   When provided, the rest-pose rotation is baked into every
+                   keyframe quaternion (q_rest * q_spin) so that the spin
+                   animates relative to the correct starting orientation.
         """
         import math
         channels = []
@@ -405,11 +410,50 @@ class GLBBuilder:
             samplers.append({"input": t_acc, "interpolation": "LINEAR", "output": v_acc})
             return idx
 
+        def _quat_mul(a, b):
+            """Quaternion multiply a * b (both [x,y,z,w])."""
+            ax, ay, az, aw = a
+            bx, by, bz, bw = b
+            return [
+                aw*bx + ax*bw + ay*bz - az*by,
+                aw*by - ax*bz + ay*bw + az*bx,
+                aw*bz + ax*by - ay*bx + az*bw,
+                aw*bw - ax*bx - ay*by - az*bz,
+            ]
+
+        def _rest_quat(piece_lower):
+            """Build rest-pose quaternion for a piece from now_rots (COBWTF YXZ order)."""
+            if not now_rots:
+                return None
+            rx = now_rots.get((piece_lower, 0, True), 0.0)
+            ry = now_rots.get((piece_lower, 1, True), 0.0)
+            rz = now_rots.get((piece_lower, 2, True), 0.0)
+            if rx == 0.0 and ry == 0.0 and rz == 0.0:
+                return None
+            # Same COBWTF YXZ euler→quat as apply_now_rotations
+            rx_r = math.radians(rx)
+            ry_r = math.radians(ry)
+            rz_r = -math.radians(rz)  # COBWTF Z-negation
+            cx, sx = math.cos(rx_r/2), math.sin(rx_r/2)
+            cy, sy = math.cos(ry_r/2), math.sin(ry_r/2)
+            cz, sz = math.cos(rz_r/2), math.sin(rz_r/2)
+            return [
+                cz*cy*sx + cx*sz*sy,
+                cx*cz*sy - cy*sx*sz,
+                cx*cy*sz - cz*sx*sy,
+                cx*cz*cy + sx*sz*sy,
+            ]
+
         for track in tracks:
             name_lower = track.piece.lower()
             if name_lower not in node_name_to_idx:
                 continue
             node_idx = node_name_to_idx[name_lower]
+
+            # Compute rest-pose quaternion from Create() 'turn ... now' commands.
+            # glTF animation channels override the node's static rotation, so we
+            # must bake the rest-pose into every keyframe: q_final = q_rest * q_spin.
+            q_rest = _rest_quat(name_lower)
 
             # Build keyframes 0°..315° then add closing 360° frame.
             # All quaternions in the same hemisphere so every slerp step
@@ -436,6 +480,8 @@ class GLBBuilder:
                     q = [0.0, s, 0.0, c]
                 else:
                     q = [0.0, 0.0, s, c]
+                if q_rest is not None:
+                    q = _quat_mul(q_rest, q)
                 if prev is not None and sum(a * b for a, b in zip(q, prev)) < 0:
                     q = [-v for v in q]
                 prev = q

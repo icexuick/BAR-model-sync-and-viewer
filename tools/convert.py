@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
-from bos_animator import extract_walk_animation, extract_spin_animation
+from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations
 
 
 
@@ -560,11 +560,18 @@ def convert_with_weapons(
         try:
             with open(script_path, 'r', errors='replace') as f:
                 bos_content = f.read()
+            now_rots = {}
             result = extract_walk_animation(bos_content)
             if result:
                 anim_name, tracks, now_rots = result
                 builder.apply_now_rotations(now_rots, node_name_to_idx)
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
+            else:
+                # No walk animation — collect Create() rest-pose rotations.
+                # These are NOT applied as static node rotations here; instead they are
+                # baked into the spin animation keyframes below (q_rest * q_spin) so that
+                # the spin plays relative to the correct starting orientation.
+                now_rots = parse_create_now_rotations(bos_content)
 
             # Always try spin animation — some units have BOTH walk and spin
             # (e.g. factories with a dish + opening animation).
@@ -589,7 +596,8 @@ def convert_with_weapons(
                 if filtered_clips:
                     spin_pieces = []
                     for clip_name, clip_tracks in filtered_clips:
-                        builder.add_spin_animation(clip_name, clip_tracks, node_name_to_idx)
+                        builder.add_spin_animation(clip_name, clip_tracks, node_name_to_idx,
+                                                   now_rots or None)
                         spin_pieces.extend(t.piece for t in clip_tracks)
                     # Store spin_pieces in root extras so viewer can target tooltip and animations
                     if model.root_piece:
