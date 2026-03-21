@@ -389,10 +389,16 @@ def extract_spin_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
         tracks: List[BosTrack] = []
         for (piece, axis), speed in spins.items():
             duration = abs(360.0 / speed)
-            end_angle = 360.0 if speed > 0 else -360.0
+            sign = 1.0 if speed > 0 else -1.0
+            # Use 4 keyframes at 0°, 90°, 180°, 270° so each slerp step is ≤90°.
+            # Two-keyframe 0°→360° fails: both map to the same quaternion (w=±1)
+            # and Three.js slerp produces zero rotation.
             kfs = [
-                BosKeyframe(time=0.0, value=0.0),
-                BosKeyframe(time=duration, value=end_angle),
+                BosKeyframe(time=0.0,              value=sign *   0.0),
+                BosKeyframe(time=duration * 0.25,  value=sign *  90.0),
+                BosKeyframe(time=duration * 0.50,  value=sign * 180.0),
+                BosKeyframe(time=duration * 0.75,  value=sign * 270.0),
+                BosKeyframe(time=duration,         value=sign * 360.0),
             ]
             tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs))
 
