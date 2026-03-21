@@ -28,7 +28,10 @@
 
       function updateMovementUI(checked) {
         if (movementLabel) movementLabel.textContent = checked ? "Moving" : "Static Pose";
-        if (animToggleButton) animToggleButton.style.opacity = checked ? "1" : "0";
+        if (animToggleButton) {
+          animToggleButton.style.opacity = checked ? "1" : "0";
+          animToggleButton.style.pointerEvents = checked ? "auto" : "none";
+        }
       }
 
       // Restore saved preference (default: true = walking)
