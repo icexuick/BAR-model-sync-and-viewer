@@ -326,9 +326,9 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
             # Detect if the last loop frame duplicates the pre-loop frame
             last_cmds = loop_blocks[-1][1]
             shared_keys = set(pre_cmds) & set(last_cmds)
-            if shared_keys and all(
-                abs(pre_cmds[k] - last_cmds[k]) < 0.01 for k in shared_keys
-            ) and len(shared_keys) >= len(pre_cmds) * 0.6:
+            n_matching = sum(1 for k in shared_keys if abs(pre_cmds[k] - last_cmds[k]) < 0.5)
+            if shared_keys and n_matching >= len(shared_keys) * 0.85 \
+                    and len(shared_keys) >= len(pre_cmds) * 0.6:
                 # Last loop frame is a duplicate of Frame 0 — drop it
                 active_loop = loop_blocks[:-1]
                 print(f"  Dropping duplicate closing frame (Frame {loop_blocks[-1][0]} == Frame 0)")
