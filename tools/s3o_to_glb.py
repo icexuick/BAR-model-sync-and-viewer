@@ -481,7 +481,7 @@ class GLBBuilder:
                 else:
                     q = [0.0, 0.0, s, c]
                 if q_rest is not None:
-                    q = _quat_mul(q_rest, q)
+                    q = _quat_mul(q, q_rest)
                 if prev is not None and sum(a * b for a, b in zip(q, prev)) < 0:
                     q = [-v for v in q]
                 prev = q
