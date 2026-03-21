@@ -369,13 +369,16 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
 # (e.g. WindSpeed, WindSpeed / -5.0).  Both forms are captured.
 _SPIN_RE = re.compile(
     r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+'
-    r'(?:<([^>]+)>|([A-Za-z_]\w*(?:\s*/\s*-?\d+\.?\d*)?))',
+    r'(?:<([^>]+)>|(\(?-?\d*\.?\d*\*?[A-Za-z_]\w*(?:\s*[*/]\s*-?\d+\.?\d*)?\)?))',
     re.IGNORECASE
 )
 # Default wind speed (deg/s) used when the BOS speed is a variable like 'WindSpeed'.
 # BAR wind turbines have WindSpeed in [0..2000] Spring units at medium wind; 400 is a
 # reasonable average that gives a visually believable rotation in the viewer.
 _DEFAULT_WIND_SPEED = 264.0
+# Default metal extractor spin speed (deg/s) used when speed is a variable like
+# 'Static_Var_1' (set at runtime by SetSpeed with the metal extraction rate).
+_DEFAULT_MEX_SPEED = 150.0
 
 
 def _collect_spin_commands(bos_content: str, func_name: str,
@@ -402,15 +405,20 @@ def _collect_spin_commands(bos_content: str, func_name: str,
     for m in _SPIN_RE.finditer(clean):
         piece = m.group(1).lower()
         axis = AXIS_INDEX[m.group(2).lower()]
-        # group(3) = bracketed value <...>, group(4) = bare variable expression
-        raw = (m.group(3) or m.group(4) or '').strip()
+        # group(3) = bracketed value <...>, group(4) = bare/parenthesized variable expression
+        raw = (m.group(3) or m.group(4) or '').strip().strip('()')
         try:
             speed = float(raw)
         except ValueError:
-            # Variable expression (e.g. 'WindSpeed', 'WindSpeed / -5.0').
-            # Derive sign from a division by a negative literal in the expression.
-            sign = -1.0 if re.search(r'/\s*-', raw) or raw.lstrip().startswith('-') else 1.0
-            speed = sign * _DEFAULT_WIND_SPEED
+            # Variable expression — determine sign from the expression, then pick a
+            # sensible default speed based on the variable name.
+            # Sign: negative if expression starts with '-' or has a leading '-N*' multiplier.
+            sign = -1.0 if re.search(r'^-|\b-\d+\s*\*', raw) or re.search(r'/\s*-', raw) else 1.0
+            # Wind-speed variables keep the wind default; all others get the mex default.
+            if re.search(r'wind', raw, re.IGNORECASE):
+                speed = sign * _DEFAULT_WIND_SPEED
+            else:
+                speed = sign * _DEFAULT_MEX_SPEED
         if speed != 0.0:
             spins[(piece, axis)] = speed
 
