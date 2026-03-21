@@ -139,6 +139,19 @@ def _collect_subtree(piece_key: str, children_map: Dict[str, List[str]]) -> List
     return result
 
 
+# Per-unit pieces whose translation tracks should be stripped from animations.
+# Useful for units where body sway/sliding looks wrong in the viewer.
+_STRIP_ANIM_TRANSLATION: Dict[str, set] = {
+    'corsktl': {'base'},
+}
+
+# Per-unit pieces whose rotation tracks should be stripped from animations.
+# Useful for units where body twisting/spinning looks wrong in the viewer.
+_STRIP_ANIM_ROTATION: Dict[str, set] = {
+    'corsktl': {'base'},
+}
+
+
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
@@ -146,6 +159,7 @@ def convert_with_weapons(
     weapon_defs: Optional[Dict[int, str]] = None,
     hide_pieces: Optional[set] = None,
     unit_role: Optional[str] = None,
+    unit_name: str = '',
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata, walk/spin animation, and unit role."""
     builder = GLBBuilder()
@@ -483,10 +497,23 @@ def convert_with_weapons(
                                             and k not in other_weapon_pieces
                                             and k not in seen_roots]
                             if geo_siblings:
-                                visual_root = geo_siblings[0]
-                                subtree = []
-                                for sib in geo_siblings:
-                                    subtree.extend(_collect_subtree(sib, children_map))
+                                # Prefer cur_anc as root if it is itself a small, non-structural
+                                # piece whose subtree wraps the geo siblings (e.g. lgun containing
+                                # lbarrel+lflare). This lets the mirror logic pick up rgun as well.
+                                anc_sub = _collect_subtree(cur_anc, children_map)
+                                total_pieces = len(parent_map)
+                                if (not _is_structural(cur_anc)
+                                        and not _is_limb_joint(cur_anc)
+                                        and not _subtree_has_limb_joint(cur_anc)
+                                        and (total_pieces == 0 or len(anc_sub) <= total_pieces * 0.50)
+                                        and len(anc_sub) <= 10):
+                                    visual_root = cur_anc
+                                    subtree = list(anc_sub)
+                                else:
+                                    visual_root = geo_siblings[0]
+                                    subtree = []
+                                    for sib in geo_siblings:
+                                        subtree.extend(_collect_subtree(sib, children_map))
                                 break
                             cur_anc = parent_map.get(cur_anc)
                     total_pieces = len(parent_map)
@@ -666,6 +693,13 @@ def convert_with_weapons(
             result = extract_walk_animation(bos_content)
             if result:
                 anim_name, tracks, now_rots = result
+                # Strip translation/rotation tracks for units where body sway looks wrong
+                _strip_trans = _STRIP_ANIM_TRANSLATION.get(unit_name.lower(), set())
+                _strip_rot = _STRIP_ANIM_ROTATION.get(unit_name.lower(), set())
+                if _strip_trans:
+                    tracks = [t for t in tracks if not (not t.is_rotation and t.piece.lower() in _strip_trans)]
+                if _strip_rot:
+                    tracks = [t for t in tracks if not (t.is_rotation and t.piece.lower() in _strip_rot)]
                 builder.apply_now_rotations(now_rots, node_name_to_idx)
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
                 # StopWalking pose — exported as a second clip so the viewer can
@@ -717,7 +751,13 @@ def convert_with_weapons(
             if not spin_clips:
                 loop_clips = extract_activate_loop_animation(bos_content)
                 if loop_clips:
+                    _strip_trans = _STRIP_ANIM_TRANSLATION.get(unit_name.lower(), set())
+                    _strip_rot = _STRIP_ANIM_ROTATION.get(unit_name.lower(), set())
                     for clip_name, clip_tracks in loop_clips:
+                        if _strip_trans:
+                            clip_tracks = [t for t in clip_tracks if not (not t.is_rotation and t.piece.lower() in _strip_trans)]
+                        if _strip_rot:
+                            clip_tracks = [t for t in clip_tracks if not (t.is_rotation and t.piece.lower() in _strip_rot)]
                         builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
                                               piece_offsets)
                     loop_pieces = [t.piece for _, ct in loop_clips for t in ct]
@@ -767,6 +807,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                         'door1pivot', 'door2pivot', 'door3pivot',
                         'door4pivot', 'door5pivot', 'door6pivot'},
     }
+
     hide_pieces = set(_UNIT_HIDE_PIECES.get(unit_name.lower(), set()))
     # Add any piece whose name contains a globally-hidden fragment.
     for piece in model.all_pieces():
@@ -905,7 +946,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs, hide_pieces, unit_role)
+    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs, hide_pieces, unit_role, unit_name)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
