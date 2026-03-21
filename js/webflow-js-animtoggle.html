@@ -1,0 +1,45 @@
+<script>
+  document.addEventListener("DOMContentLoaded", function() {
+    // --- Show names toggle ---
+    var toggle = document.getElementById("opacityToggle");
+    if (toggle) {
+      if (localStorage.getItem("alwaysShowText") === "true") {
+        toggle.checked = true;
+        document.body.classList.add("show-all-text");
+      }
+      toggle.addEventListener("change", function() {
+        if (toggle.checked) {
+          document.body.classList.add("show-all-text");
+          localStorage.setItem("alwaysShowText", "true");
+        } else {
+          document.body.classList.remove("show-all-text");
+          localStorage.setItem("alwaysShowText", "false");
+        }
+      });
+    }
+
+    // --- Movement toggle ---
+    var movementToggle = document.getElementById("movementToggle");
+    if (movementToggle) {
+      var movementLabel = movementToggle.closest(".toggle-switch")
+                          ? movementToggle.closest(".toggle-switch").querySelector(".toggle-label")
+                          : null;
+      var animToggleButton = document.getElementById("anim-toggle-button");
+
+      function updateMovementUI(checked) {
+        if (movementLabel) movementLabel.textContent = checked ? "Moving" : "Static Pose";
+        if (animToggleButton) animToggleButton.style.opacity = checked ? "1" : "0";
+      }
+
+      // Restore saved preference (default: true = walking)
+      var savedMovement = localStorage.getItem("movementToggle");
+      movementToggle.checked = savedMovement !== "false";
+      updateMovementUI(movementToggle.checked);
+
+      movementToggle.addEventListener("change", function() {
+        localStorage.setItem("movementToggle", String(movementToggle.checked));
+        updateMovementUI(movementToggle.checked);
+      });
+    }
+  });
+</script>
