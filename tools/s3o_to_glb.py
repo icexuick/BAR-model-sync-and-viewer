@@ -411,31 +411,37 @@ class GLBBuilder:
                 continue
             node_idx = node_name_to_idx[name_lower]
 
-            times = [kf.time for kf in track.keyframes]
+            # Build keyframes 0°..315° then add closing 360° frame.
+            # All quaternions in the same hemisphere so every slerp step
+            # (including the closing 315°→360° step) is +45° forward.
+            # The closing 360° frame equals 0° but is sign-matched to the
+            # previous frame — Three.js LoopRepeat then jumps from the
+            # closing frame back to kf[0] without interpolation (time reset),
+            # so the one-frame discontinuity in quaternion sign is invisible.
+            step = track.keyframes[1].time - track.keyframes[0].time if len(track.keyframes) > 1 else track.keyframes[-1].time
+            closing_time = track.keyframes[-1].time + step
+
+            all_angles = [kf.value for kf in track.keyframes] + [track.keyframes[0].value + (360.0 if track.keyframes[-1].value > 0 else -360.0)]
+            all_times  = [kf.time  for kf in track.keyframes] + [closing_time]
+
             quats = []
             prev = None
-            for kf in track.keyframes:
-                angle_rad = math.radians(kf.value)
+            for angle in all_angles:
+                angle_rad = math.radians(angle)
                 half = angle_rad / 2.0
                 c, s = math.cos(half), math.sin(half)
-                # Build quaternion [x, y, z, w] for rotation around the track axis
-                if track.axis == 0:    # X-axis
+                if track.axis == 0:
                     q = [s, 0.0, 0.0, c]
-                elif track.axis == 1:  # Y-axis
+                elif track.axis == 1:
                     q = [0.0, s, 0.0, c]
-                else:                  # Z-axis
+                else:
                     q = [0.0, 0.0, s, c]
-
-                # Ensure consistent hemisphere: flip if dot with previous < 0
-                # so slerp always takes the short arc in the intended direction.
-                if prev is not None:
-                    dot = sum(a * b for a, b in zip(q, prev))
-                    if dot < 0:
-                        q = [-v for v in q]
+                if prev is not None and sum(a * b for a, b in zip(q, prev)) < 0:
+                    q = [-v for v in q]
                 prev = q
                 quats.extend(q)
 
-            s_idx = _add_sampler(times, quats, "VEC4")
+            s_idx = _add_sampler(all_times, quats, "VEC4")
             channels.append({"sampler": s_idx,
                               "target": {"node": node_idx, "path": "rotation"}})
 
