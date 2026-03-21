@@ -452,7 +452,7 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
         p = piece.lower()
         return not any(frag in p for frag in _EXCLUDE_FRAGMENTS)
 
-    for func_name in ['Activate', 'Go', 'StartActivate', 'Create', 'StartBuilding', 'MoveRate3']:
+    for func_name in ['Activate', 'Go', 'StartActivate', 'Create', 'StartBuilding', 'MoveRate3', 'MMStatus']:
         spins = _collect_spin_commands(bos_content, func_name)
 
         # Filter to interesting (visual) spinners only
