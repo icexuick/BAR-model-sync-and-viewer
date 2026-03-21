@@ -346,3 +346,58 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
             return func_name, tracks, now_rots
 
     return None
+
+
+# Matches: spin <piece> around <axis>-axis speed <deg/s>
+_SPIN_RE = re.compile(
+    r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+<([-\d.]+)>',
+    re.IGNORECASE
+)
+
+
+def extract_spin_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrack]]]:
+    """
+    Extract continuous spin animations from Activate()/Go() BOS functions.
+
+    BOS 'spin <piece> around y-axis speed <deg/s>' runs indefinitely in the engine.
+    We approximate this as a single 360° rotation loop with duration = 360 / speed.
+
+    Returns ('Activate', List[BosTrack]) or None if no spin commands found.
+    Multiple pieces can spin simultaneously at different speeds/axes.
+    Negative speed = counter-clockwise (0 -> -360 keyframes).
+    """
+    for func_name in ['Activate', 'Go', 'StartActivate']:
+        body = _extract_function_body(bos_content, func_name)
+        if not body:
+            continue
+
+        clean = _strip_comments(body)
+        # Remove stop-spin lines so they don't match _SPIN_RE
+        clean = re.sub(r'\bstop-spin\b[^\n]*', '', clean, flags=re.IGNORECASE)
+
+        spins: Dict[Tuple[str, int], float] = {}  # (piece, axis) -> speed deg/s
+        for m in _SPIN_RE.finditer(clean):
+            piece = m.group(1).lower()
+            axis = AXIS_INDEX[m.group(2).lower()]
+            speed = float(m.group(3))
+            if speed != 0.0:
+                spins[(piece, axis)] = speed
+
+        if not spins:
+            continue
+
+        tracks: List[BosTrack] = []
+        for (piece, axis), speed in spins.items():
+            duration = abs(360.0 / speed)
+            end_angle = 360.0 if speed > 0 else -360.0
+            kfs = [
+                BosKeyframe(time=0.0, value=0.0),
+                BosKeyframe(time=duration, value=end_angle),
+            ]
+            tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs))
+
+        if tracks:
+            print(f"  Spin animation '{func_name}': {len(tracks)} spinning pieces")
+            return func_name, tracks
+
+    return None

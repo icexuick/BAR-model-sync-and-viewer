@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
-from bos_animator import extract_walk_animation
+from bos_animator import extract_walk_animation, extract_spin_animation
 
 
 
@@ -80,6 +80,25 @@ def parse_lua_weapon_defs(lua_content: str) -> Dict[int, str]:
         if def_m:
             result[wnum] = def_m.group(1).lower()
     return result
+
+
+def parse_lua_unit_role(lua_content: str) -> Optional[str]:
+    """
+    Detect the unit's role from unitdef Lua fields.
+    Returns one of: 'RADAR', 'JAMMER', 'SONAR', 'RADAR_JAMMER', or None.
+    """
+    has_radar  = bool(re.search(r'\bradardistance\s*=\s*[1-9]', lua_content, re.IGNORECASE))
+    has_jammer = bool(re.search(r'\bradardistancejam\s*=\s*[1-9]', lua_content, re.IGNORECASE))
+    has_sonar  = bool(re.search(r'\bsonardistance\s*=\s*[1-9]', lua_content, re.IGNORECASE))
+    if has_radar and has_jammer:
+        return 'RADAR_JAMMER'
+    if has_jammer:
+        return 'JAMMER'
+    if has_radar:
+        return 'RADAR'
+    if has_sonar:
+        return 'SONAR'
+    return None
 
 
 def _build_piece_maps(root_piece: 'S3OPiece') -> Tuple[Dict[str, str], Dict[str, List[str]]]:
@@ -120,8 +139,9 @@ def convert_with_weapons(
     script_path: Optional[str] = None,
     weapon_defs: Optional[Dict[int, str]] = None,
     hide_pieces: Optional[set] = None,
+    unit_role: Optional[str] = None,
 ) -> bytes:
-    """Convert S3O to GLB with weapon metadata and walk animation."""
+    """Convert S3O to GLB with weapon metadata, walk/spin animation, and unit role."""
     builder = GLBBuilder()
     mat_idx = builder.add_default_material()
 
@@ -530,6 +550,8 @@ def convert_with_weapons(
                 }
                 for wnum, wmap in weapon_info.weapons.items()
             }
+        if unit_role:
+            root_extras["unit_role"] = unit_role
         builder.nodes[root_idx]["extras"] = root_extras
         builder.scenes[0]["nodes"] = [root_idx]
 
@@ -543,6 +565,12 @@ def convert_with_weapons(
                 anim_name, tracks, now_rots = result
                 builder.apply_now_rotations(now_rots, node_name_to_idx)
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
+            else:
+                # No walk animation — try spin animation (radar/jammer dishes)
+                spin_result = extract_spin_animation(bos_content)
+                if spin_result:
+                    spin_name, spin_tracks = spin_result
+                    builder.add_animation(spin_name, spin_tracks, node_name_to_idx, piece_offsets)
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
@@ -626,7 +654,9 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                 print(f"  Merged weapon {src_wnum} -> weapon {dst_wnum} (all_pieces now: {sorted(dst.all_pieces)})")
 
     # If weapon_defs not provided, try to find the unitdef .lua locally.
+    # Also extract unit_role (RADAR/JAMMER/SONAR) from the same file.
     # Search for {unit_name}.lua in the same BAR install tree as the script/s3o.
+    unit_role: Optional[str] = None
     if weapon_defs is None:
         def _native(p: str) -> str:
             """Convert MSYS/bash /c/... paths to Windows C:/... paths."""
@@ -667,15 +697,19 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                         lua_path = os.path.join(root, fname)
                         try:
                             with open(lua_path, 'r', errors='replace') as f:
-                                weapon_defs = parse_lua_weapon_defs(f.read())
+                                lua_content = f.read()
+                            weapon_defs = parse_lua_weapon_defs(lua_content)
                             if weapon_defs:
                                 print(f"  Weapon defs from: {lua_path}")
+                            unit_role = parse_lua_unit_role(lua_content)
+                            if unit_role:
+                                print(f"  Unit role: {unit_role}")
                             break
                         except Exception:
                             pass
-                if weapon_defs:
+                if weapon_defs or unit_role:
                     break
-            if weapon_defs:
+            if weapon_defs or unit_role:
                 break
 
     if info_only:
@@ -684,7 +718,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs, hide_pieces)
+    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs, hide_pieces, unit_role)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
