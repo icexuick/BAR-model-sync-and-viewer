@@ -484,7 +484,10 @@
                 }
             });
 
-            const box = new THREE.Box3().setFromObject(modelScene);
+            const box = new THREE.Box3();
+            modelScene.traverse(child => {
+                if (child.isMesh && child.visible) box.expandByObject(child);
+            });
             const center = box.getCenter(new THREE.Vector3());
             modelScene.position.sub(center);
             scene.add(modelScene);
