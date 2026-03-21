@@ -55,6 +55,9 @@ def parse_lua_weapon_defs(lua_content: str) -> Dict[int, str]:
     Parses: weapons = { [1] = { def = "NAME", ... }, [2] = { ... } }
     """
     result: Dict[int, str] = {}
+    # Strip Lua line comments (-- to end of line) so commented-out weapon slots
+    # (e.g. --[2] = { def = "..." }) are not mistakenly parsed as active weapons.
+    lua_content = re.sub(r'--[^\n]*', '', lua_content)
     # Find the weapons = { ... } block
     m = re.search(r'\bweapons\s*=\s*\{', lua_content, re.IGNORECASE)
     if not m:
