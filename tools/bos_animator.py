@@ -543,3 +543,103 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
             return clips
 
     return None
+
+
+_SLEEP_RE = re.compile(r'\bsleep\s+(\d+)', re.IGNORECASE)
+
+
+def extract_activate_loop_animation(bos_content: str) -> Optional[List[Tuple[str, List[BosTrack]]]]:
+    """
+    Extract keyframe animations from functions that run a while(TRUE) loop
+    with 'turn piece to axis <deg> speed <spd>' + 'sleep N' steps.
+
+    This handles units like armaser whose jammer spindle/arms animate via a
+    dedicated spinarms() helper started from Create() — not a spin command.
+
+    Returns list of (clip_name, [BosTrack]) or None.
+    """
+    # Find candidate function names: started from Create() or Activate()
+    candidates = []
+    for src_func in ('Create', 'Activate', 'Go', 'StartActivate'):
+        body = _extract_function_body(bos_content, src_func)
+        if not body:
+            continue
+        for m in re.finditer(r'\bstart-script\s+(\w+)\s*\(', body, re.IGNORECASE):
+            name = m.group(1)
+            if name.lower() not in ('walk', 'stopwalking', 'unitspeed', 'damagedsmoke',
+                                    'smokeunit', 'randomsmoke', 'offhit', 'offonhit'):
+                candidates.append(name)
+
+    for func_name in candidates:
+        body = _extract_function_body(bos_content, func_name)
+        if not body:
+            continue
+        clean = _strip_comments(body)
+
+        # Must contain a while(TRUE) loop
+        if not re.search(r'\bwhile\s*\(\s*TRUE\s*\)', clean, re.IGNORECASE):
+            continue
+
+        # Extract the while body
+        _, while_body = _extract_while_body(clean)
+        if not while_body:
+            while_body = clean
+
+        # Parse turn-to + sleep segments
+        segments = re.split(_SLEEP_RE, while_body)
+        if len(segments) < 3:
+            continue
+
+        # Build keyframe blocks: for each sleep boundary, collect turn commands
+        time_ms = 0.0
+        kf_blocks: List[Tuple[float, Dict[Tuple, float]]] = []
+
+        i = 0
+        while i < len(segments):
+            block_text = segments[i]
+            cmds: Dict[Tuple, float] = {}
+            for m in _TURN_RE.finditer(block_text):
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+                cmds[key] = float(m.group(3))
+            for m in _MOVE_RE.finditer(block_text):
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+                cmds[key] = float(m.group(3))
+            if cmds:
+                kf_blocks.append((time_ms / 1000.0, cmds))
+            if i + 1 < len(segments):
+                try:
+                    time_ms += float(segments[i + 1])
+                except (ValueError, IndexError):
+                    pass
+            i += 2
+
+        if len(kf_blocks) < 2:
+            continue
+
+        duration = time_ms / 1000.0
+
+        # Build track dict
+        track_dict: Dict[Tuple, List[BosKeyframe]] = {}
+        for t, cmds in kf_blocks:
+            for key, val in cmds.items():
+                track_dict.setdefault(key, []).append(BosKeyframe(time=t, value=val))
+
+        # Add closing keyframe = first keyframe value for seamless loop
+        for key, kfs in track_dict.items():
+            kfs.sort(key=lambda k: k.time)
+            if abs(kfs[-1].time - duration) > 1e-3:
+                kfs.append(BosKeyframe(time=duration, value=kfs[0].value))
+
+        tracks = [
+            BosTrack(piece=key[0], axis=key[1], is_rotation=key[2], keyframes=kfs)
+            for key, kfs in track_dict.items()
+            if len(kfs) >= 2
+        ]
+
+        if tracks:
+            pieces = sorted({t.piece for t in tracks})
+            print(f"  Activate-loop animation '{func_name}': {len(tracks)} tracks, "
+                  f"duration {duration:.2f}s, pieces: {', '.join(pieces)}")
+            return [(func_name, tracks)]
+
+    return None

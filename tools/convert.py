@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
-from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose
+from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose, extract_activate_loop_animation
 
 
 
@@ -673,6 +673,19 @@ def convert_with_weapons(
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
                         builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces
+            # Activate-loop animations (e.g. armaser spinarms — while(TRUE) + turn-to + sleep)
+            if not spin_clips:
+                loop_clips = extract_activate_loop_animation(bos_content)
+                if loop_clips:
+                    for clip_name, clip_tracks in loop_clips:
+                        builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
+                                              piece_offsets)
+                    loop_pieces = [t.piece for _, ct in loop_clips for t in ct]
+                    # Also include clip names so the viewer recognises them as spin clips
+                    loop_clip_names = [cn for cn, _ in loop_clips]
+                    if model.root_piece:
+                        root_idx = builder.scenes[0]["nodes"][0]
+                        builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = loop_pieces + loop_clip_names
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
