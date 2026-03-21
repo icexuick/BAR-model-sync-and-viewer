@@ -862,27 +862,39 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
 
 
 def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
-    """Batch convert all S3O files in a BAR game directory."""
+    """Batch convert all S3O files in a BAR game directory (including subdirs)."""
+    import fnmatch
     objects_dir = os.path.join(bar_dir, 'objects3d')
     if not os.path.isdir(objects_dir):
         print(f"Error: objects3d directory not found at {objects_dir}")
         return
 
-    s3o_files = sorted([
-        f for f in os.listdir(objects_dir)
-        if f.endswith('.s3o')
-    ])
+    # Walk all subdirectories to find .s3o files
+    s3o_paths = []
+    for root, _, files in os.walk(objects_dir):
+        for f in files:
+            if f.lower().endswith('.s3o'):
+                s3o_paths.append(os.path.join(root, f))
+    s3o_paths.sort()
+
+    # Always exclude dead/wreck/debris models
+    _EXCLUDE = ('_dead', 'wreck', 'debris')
+    s3o_paths = [p for p in s3o_paths
+                 if not any(x in os.path.basename(p).lower() for x in _EXCLUDE)]
 
     if unit_filter:
-        s3o_files = [f for f in s3o_files if unit_filter.lower() in f.lower()]
+        # Support glob patterns like "arm*"
+        s3o_paths = [p for p in s3o_paths
+                     if fnmatch.fnmatch(os.path.splitext(os.path.basename(p))[0].lower(),
+                                        unit_filter.lower())]
 
-    print(f"Found {len(s3o_files)} S3O files to convert")
+    print(f"Found {len(s3o_paths)} S3O files to convert")
     os.makedirs(output_dir, exist_ok=True)
 
     success, failed = 0, 0
-    for filename in s3o_files:
+    for s3o_path in s3o_paths:
+        filename = os.path.basename(s3o_path)
         unit_name = os.path.splitext(filename)[0]
-        s3o_path = os.path.join(objects_dir, filename)
         glb_path = os.path.join(output_dir, unit_name + '.glb')
         script_path = find_script_for_unit(bar_dir, unit_name)
 
