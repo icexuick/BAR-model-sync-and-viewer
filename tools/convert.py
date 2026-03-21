@@ -321,6 +321,20 @@ def convert_with_weapons(
                     return any(_is_limb_joint(k) for k in _collect_subtree(root_key, children_map)
                                if k != root_key)
 
+                _STRUCTURAL_KEYWORDS = {'wing', 'leg', 'track', 'wheel', 'foot',
+                                        'thruster', 'thrust', 'engine', 'body', 'hull',
+                                        'chassis', 'torso', 'hip', 'armor',
+                                        'plate', 'wake', 'bow', 'stern',
+                                        'uparm', 'shoulder', 'thigh',
+                                        'pelvis', 'chest', 'neck'}
+                _STRUCTURAL_EXACT = {'base', 'pelvis', 'body', 'hull'}
+
+                def _is_structural(name: str) -> bool:
+                    low = name.lower()
+                    if low in _STRUCTURAL_EXACT:
+                        return True
+                    return any(kw in low for kw in _STRUCTURAL_KEYWORDS)
+
                 def _find_visual_root(fp_key: str) -> Optional[str]:
                     """Find the visual root for a given fire_point key."""
                     visual_root = None
@@ -358,7 +372,12 @@ def convert_with_weapons(
                             best = cur
                             total_pieces = len(parent_map)
                             while cur is not None:
-                                if _is_limb_joint(cur):
+                                # Stop at limb joints or structural pieces.
+                                # If best is still the direct parent (= the structural piece itself),
+                                # there is no dedicated weapon visual — return None.
+                                if _is_limb_joint(cur) or _is_structural(cur):
+                                    if best == cur:
+                                        best = None
                                     break
                                 sub = _collect_subtree(cur, children_map)
                                 # Stop if subtree contains limb joint pieces
@@ -416,20 +435,6 @@ def convert_with_weapons(
                     # geometry and names suggesting weapon parts (not structural names).
                     # This handles units like legphoenix where ring1/2/3 are weapon geometry
                     # siblings of the fire_point ancestor, not connected via BOS aim_pieces.
-                    _STRUCTURAL_KEYWORDS = {'wing', 'leg', 'track', 'wheel', 'foot',
-                                            'thruster', 'thrust', 'engine', 'body', 'hull',
-                                            'chassis', 'torso', 'hip', 'armor',
-                                            'plate', 'wake', 'bow', 'stern',
-                                            'uparm', 'shoulder', 'thigh',
-                                            'pelvis', 'chest', 'neck'}
-                    # Exact-name structural pieces (whole name = keyword)
-                    _STRUCTURAL_EXACT = {'base', 'pelvis', 'body', 'hull'}
-
-                    def _is_structural(name: str) -> bool:
-                        low = name.lower()
-                        if low in _STRUCTURAL_EXACT:
-                            return True
-                        return any(kw in low for kw in _STRUCTURAL_KEYWORDS)
 
                     if _subtree_verts(visual_root) == 0:
                         cur_anc = parent_map.get(visual_root)
