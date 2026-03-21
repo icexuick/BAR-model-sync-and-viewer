@@ -541,11 +541,27 @@
                 if (walkClip) {
                     const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
 
+                    // poseAction: same clip frozen at t=0, used as crossfade target for neutral pose
+                    const poseAction = mixer.clipAction(walkClip);
+                    poseAction.setLoop(THREE.LoopOnce, 1);
+                    poseAction.clampWhenFinished = true;
+                    poseAction.time = 0;
+                    poseAction.play();
+                    poseAction.paused = true;
+
                     currentAction = mixer.clipAction(walkClip);
                     currentAction.setLoop(THREE.LoopRepeat, Infinity);
                     currentAction.play();
-                    // weight=0 → animation has no effect, model shows S3O default pose
-                    currentAction.weight = walkEnabled ? 1 : 0;
+
+                    mixer.userData = { poseAction };
+
+                    if (walkEnabled) {
+                        poseAction.weight = 0;
+                        currentAction.weight = 1;
+                    } else {
+                        poseAction.weight = 1;
+                        currentAction.weight = 0;
+                    }
 
                     if (movementToggle) {
                         movementToggle.checked = walkEnabled;
@@ -789,9 +805,23 @@
             if (movementToggle) movementToggle.addEventListener('change', () => {
                 const enabled = movementToggle.checked;
                 localStorage.setItem('movementToggle', String(enabled));
-                if (!currentAction) return;
-                // weight=1 → walk plays; weight=0 → walk has no effect, model shows S3O default pose
-                currentAction.weight = enabled ? 1 : 0;
+                if (!currentAction || !mixer) return;
+                const poseAction = mixer.userData && mixer.userData.poseAction;
+                const FADE = 0.5;
+                if (enabled) {
+                    // Neutral → Walk
+                    currentAction.enabled = true;
+                    if (poseAction) currentAction.crossFadeFrom(poseAction, FADE, false);
+                    else currentAction.weight = 1;
+                } else {
+                    // Walk → Neutral (frozen at t=0)
+                    if (poseAction) {
+                        poseAction.enabled = true;
+                        poseAction.crossFadeFrom(currentAction, FADE, false);
+                    } else {
+                        currentAction.weight = 0;
+                    }
+                }
             });
             if (rotateToggleButton) rotateToggleButton.addEventListener('click', () => { isTurntableEnabledByUser = !isTurntableEnabledByUser; turntableActive = isTurntableEnabledByUser; if(!turntableActive) clearTimeout(idleTimer); });
             if (shadowToggleButton) shadowToggleButton.addEventListener('click', () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; });
