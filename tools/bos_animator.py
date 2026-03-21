@@ -88,7 +88,11 @@ def _extract_function_body(content: str, func_name: str) -> Optional[str]:
     # Search directly in original content for the function opening brace.
     # We must search in original (not comment-stripped) to get correct positions.
     # Use comment-stripped only to verify the match is not inside a comment.
-    pattern = re.compile(rf'\b{re.escape(func_name)}\s*\([^)]*\)\s*\{{', re.IGNORECASE)
+    # Allow // line comments between ) and { (e.g. "Activate() // comment\n{")
+    pattern = re.compile(
+        rf'\b{re.escape(func_name)}\s*\([^)]*\)\s*(?://[^\n]*)?\s*\{{',
+        re.IGNORECASE
+    )
     match = pattern.search(content)
     if not match:
         return None
@@ -448,7 +452,7 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
         p = piece.lower()
         return not any(frag in p for frag in _EXCLUDE_FRAGMENTS)
 
-    for func_name in ['Activate', 'Go', 'StartActivate', 'Create', 'StartBuilding']:
+    for func_name in ['Activate', 'Go', 'StartActivate', 'Create', 'StartBuilding', 'MoveRate3']:
         spins = _collect_spin_commands(bos_content, func_name)
 
         # Filter to interesting (visual) spinners only
