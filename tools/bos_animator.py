@@ -390,15 +390,16 @@ def extract_spin_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
         for (piece, axis), speed in spins.items():
             duration = abs(360.0 / speed)
             sign = 1.0 if speed > 0 else -1.0
-            # Use 4 keyframes at 0°, 90°, 180°, 270° so each slerp step is ≤90°.
-            # Two-keyframe 0°→360° fails: both map to the same quaternion (w=±1)
-            # and Three.js slerp produces zero rotation.
+            # 8 keyframes at 0°..315° steps of 45°, no closing 360° keyframe.
+            # add_spin_animation builds quaternions directly with consistent
+            # hemisphere. Three.js LoopRepeat jumps from last keyframe time
+            # back to t=0 without interpolating over the loop boundary,
+            # so omitting 360° (== 0°) prevents a direction reversal at the seam.
+            # 8 steps give smooth motion and ≤45° per slerp step.
+            n = 8
             kfs = [
-                BosKeyframe(time=0.0,              value=sign *   0.0),
-                BosKeyframe(time=duration * 0.25,  value=sign *  90.0),
-                BosKeyframe(time=duration * 0.50,  value=sign * 180.0),
-                BosKeyframe(time=duration * 0.75,  value=sign * 270.0),
-                BosKeyframe(time=duration,         value=sign * 360.0),
+                BosKeyframe(time=duration * i / n, value=sign * 360.0 * i / n)
+                for i in range(n)
             ]
             tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs))
 

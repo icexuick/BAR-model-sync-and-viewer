@@ -570,7 +570,7 @@ def convert_with_weapons(
                 spin_result = extract_spin_animation(bos_content)
                 if spin_result:
                     spin_name, spin_tracks = spin_result
-                    builder.add_animation(spin_name, spin_tracks, node_name_to_idx, piece_offsets)
+                    builder.add_spin_animation(spin_name, spin_tracks, node_name_to_idx)
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 

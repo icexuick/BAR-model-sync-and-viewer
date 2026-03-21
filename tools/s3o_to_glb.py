@@ -374,6 +374,81 @@ class GLBBuilder:
             })
             print(f"  GLB animation '{anim_name}': {len(channels)} channels")
 
+    def add_spin_animation(self, anim_name: str, tracks: list,
+                           node_name_to_idx: Dict[str, int]):
+        """
+        Add a continuous spin animation (radar/jammer dishes).
+
+        Unlike add_animation (which uses BOS COBWTF euler→quat conversion),
+        this builds quaternions directly on the spin axis so slerp always
+        travels the correct direction.  Each consecutive quaternion is
+        sign-flipped if its dot product with the previous is negative,
+        guaranteeing slerp takes the short arc in the intended direction.
+
+        tracks: List[BosTrack] with is_rotation=True, keyframes at
+                0/90/180/270/360 degrees from extract_spin_animation().
+        """
+        import math
+        channels = []
+        samplers = []
+
+        def _add_sampler(times, values, accessor_type):
+            t_arr = np.array(times, dtype=np.float32)
+            t_bv = self.add_buffer_view(t_arr.tobytes())
+            t_acc = self.add_accessor(t_bv, 5126, len(times), "SCALAR",
+                                      min_vals=[float(t_arr.min())],
+                                      max_vals=[float(t_arr.max())])
+            v_arr = np.array(values, dtype=np.float32)
+            v_bv = self.add_buffer_view(v_arr.tobytes())
+            v_acc = self.add_accessor(v_bv, 5126, len(times), accessor_type)
+            idx = len(samplers)
+            samplers.append({"input": t_acc, "interpolation": "LINEAR", "output": v_acc})
+            return idx
+
+        for track in tracks:
+            name_lower = track.piece.lower()
+            if name_lower not in node_name_to_idx:
+                continue
+            node_idx = node_name_to_idx[name_lower]
+
+            times = [kf.time for kf in track.keyframes]
+            quats = []
+            prev = None
+            for kf in track.keyframes:
+                angle_rad = math.radians(kf.value)
+                half = angle_rad / 2.0
+                c, s = math.cos(half), math.sin(half)
+                # Build quaternion [x, y, z, w] for rotation around the track axis
+                if track.axis == 0:    # X-axis
+                    q = [s, 0.0, 0.0, c]
+                elif track.axis == 1:  # Y-axis
+                    q = [0.0, s, 0.0, c]
+                else:                  # Z-axis
+                    q = [0.0, 0.0, s, c]
+
+                # Ensure consistent hemisphere: flip if dot with previous < 0
+                # so slerp always takes the short arc in the intended direction.
+                if prev is not None:
+                    dot = sum(a * b for a, b in zip(q, prev))
+                    if dot < 0:
+                        q = [-v for v in q]
+                prev = q
+                quats.extend(q)
+
+            s_idx = _add_sampler(times, quats, "VEC4")
+            channels.append({"sampler": s_idx,
+                              "target": {"node": node_idx, "path": "rotation"}})
+
+        if channels:
+            if not hasattr(self, 'animations'):
+                self.animations = []
+            self.animations.append({
+                "name": anim_name,
+                "channels": channels,
+                "samplers": samplers,
+            })
+            print(f"  GLB spin animation '{anim_name}': {len(channels)} channels")
+
     def build_glb(self) -> bytes:
         """Build the final GLB binary."""
         # Construct the JSON
