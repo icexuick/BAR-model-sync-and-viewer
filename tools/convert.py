@@ -882,10 +882,12 @@ def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
                 s3o_paths.append(os.path.join(root, f))
     s3o_paths.sort()
 
-    # Always exclude dead/wreck/debris models
+    # Always exclude dead/wreck/debris models and commander units with custom animations
     _EXCLUDE = ('_dead', 'wreck', 'debris')
+    _EXCLUDE_EXACT = {'armcom', 'corcom'}
     s3o_paths = [p for p in s3o_paths
-                 if not any(x in os.path.basename(p).lower() for x in _EXCLUDE)]
+                 if not any(x in os.path.basename(p).lower() for x in _EXCLUDE)
+                 and os.path.splitext(os.path.basename(p))[0].lower() not in _EXCLUDE_EXACT]
 
     if unit_filter:
         # Support glob patterns like "arm*"
