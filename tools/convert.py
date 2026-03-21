@@ -565,15 +565,32 @@ def convert_with_weapons(
                 anim_name, tracks, now_rots = result
                 builder.apply_now_rotations(now_rots, node_name_to_idx)
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
-            else:
-                # No walk animation — try spin animation (radar/jammer dishes)
-                spin_clips = extract_spin_animation(bos_content)
-                if spin_clips:
+
+            # Always try spin animation — some units have BOTH walk and spin
+            # (e.g. factories with a dish + opening animation).
+            # Only include spin clips for pieces that are visually meaningful in the viewer:
+            # radar/sonar/jammer dishes, or any unit with an explicit unit_role.
+            _SPIN_INTERESTING_NAMES = (
+                'dish', 'radar', 'sonar', 'strut', 'turret', 'tower', 'spinner',
+                'fork', 'jam', 'antenna', 'array',
+            )
+            spin_clips = extract_spin_animation(bos_content)
+            if spin_clips:
+                # Keep only clips whose piece name is interesting, unless unit has a role
+                if unit_role:
+                    filtered_clips = spin_clips
+                else:
+                    filtered_clips = [
+                        (cn, ct) for cn, ct in spin_clips
+                        if any(frag in t.piece.lower() for t in ct
+                               for frag in _SPIN_INTERESTING_NAMES)
+                    ]
+                if filtered_clips:
                     spin_pieces = []
-                    for clip_name, clip_tracks in spin_clips:
+                    for clip_name, clip_tracks in filtered_clips:
                         builder.add_spin_animation(clip_name, clip_tracks, node_name_to_idx)
                         spin_pieces.extend(t.piece for t in clip_tracks)
-                    # Store spin_pieces in root extras so viewer can target tooltip
+                    # Store spin_pieces in root extras so viewer can target tooltip and animations
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
                         builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces

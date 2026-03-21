@@ -355,9 +355,52 @@ _SPIN_RE = re.compile(
 )
 
 
+def _collect_spin_commands(bos_content: str, func_name: str,
+                           visited: Optional[set] = None) -> Dict[Tuple[str, int], float]:
+    """
+    Collect all non-zero spin commands reachable from func_name, following
+    start-script / call-script into sub-functions (one level deep).
+    Returns {(piece_lower, axis_int): speed_deg_per_s}.
+    """
+    if visited is None:
+        visited = set()
+    if func_name.lower() in visited:
+        return {}
+    visited.add(func_name.lower())
+
+    body = _extract_function_body(bos_content, func_name)
+    if not body:
+        return {}
+
+    clean = _strip_comments(body)
+    clean = re.sub(r'\bstop-spin\b[^\n]*', '', clean, flags=re.IGNORECASE)
+
+    spins: Dict[Tuple[str, int], float] = {}
+    for m in _SPIN_RE.finditer(clean):
+        piece = m.group(1).lower()
+        axis = AXIS_INDEX[m.group(2).lower()]
+        speed = float(m.group(3))
+        if speed != 0.0:
+            spins[(piece, axis)] = speed
+
+    # Follow start-script / call-script into sub-functions
+    for m in re.finditer(r'\b(?:start-script|call-script)\s+(\w+)\s*\(', clean, re.IGNORECASE):
+        sub = m.group(1)
+        sub_spins = _collect_spin_commands(bos_content, sub, visited)
+        # Only add if not already overridden by a direct spin in this function
+        for k, v in sub_spins.items():
+            if k not in spins:
+                spins[k] = v
+
+    return spins
+
+
 def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[BosTrack]]]]:
     """
     Extract continuous spin animations from Activate()/Go() BOS functions.
+
+    Follows start-script/call-script into sub-functions (e.g. DishSpin())
+    so factory units that delegate dish spinning to a helper are handled.
 
     Returns a list of (clip_name, [track]) — one clip per spinning piece —
     so each piece loops independently at its own speed. A single shared clip
@@ -366,21 +409,23 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
     Each clip has 8 keyframes at 0°..315° (45° steps), no closing 360° frame.
     Three.js LoopRepeat jumps from last keyframe back to t=0 seamlessly.
     """
-    for func_name in ['Activate', 'Go', 'StartActivate']:
-        body = _extract_function_body(bos_content, func_name)
-        if not body:
-            continue
+    # Piece name fragments that indicate non-visual / non-interesting spinners.
+    # These are excluded so factory cagelights, pads, wheels etc. don't pollute
+    # the spin_pieces list or trigger misleading radar/role tooltips.
+    _EXCLUDE_FRAGMENTS = (
+        'cagelight', 'light', 'emit', 'blink', 'pad', 'wheel', 'prop',
+        'screw', 'belt', 'nano', 'flare', 'fire', 'glow', 'spark',
+    )
 
-        clean = _strip_comments(body)
-        clean = re.sub(r'\bstop-spin\b[^\n]*', '', clean, flags=re.IGNORECASE)
+    def _is_interesting(piece: str) -> bool:
+        p = piece.lower()
+        return not any(frag in p for frag in _EXCLUDE_FRAGMENTS)
 
-        spins: Dict[Tuple[str, int], float] = {}
-        for m in _SPIN_RE.finditer(clean):
-            piece = m.group(1).lower()
-            axis = AXIS_INDEX[m.group(2).lower()]
-            speed = float(m.group(3))
-            if speed != 0.0:
-                spins[(piece, axis)] = speed
+    for func_name in ['Activate', 'Go', 'StartActivate', 'Create']:
+        spins = _collect_spin_commands(bos_content, func_name)
+
+        # Filter to interesting (visual) spinners only
+        spins = {k: v for k, v in spins.items() if _is_interesting(k[0])}
 
         if not spins:
             continue

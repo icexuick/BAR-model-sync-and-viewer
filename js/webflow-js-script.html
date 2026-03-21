@@ -347,8 +347,16 @@
                 }
             });
 
+            // --- SPIN PIECES: collect from root node extras (used for both animations and tooltips) ---
+            let spinPieceNames = null;
+            modelScene.traverse(node => {
+                if (node.userData && node.userData.spin_pieces) {
+                    spinPieceNames = new Set(node.userData.spin_pieces.map(n => n.toLowerCase()));
+                }
+            });
+
             // --- UNIT ROLE MESH MAP: for radar/jammer/sonar units without weapons ---
-            // Only tag spin_pieces (the actual spinning dish/antenna) and their subtrees.
+            // Tag only spin_pieces (the actual spinning dish/antenna) and their direct mesh children.
             // Falls back to all visible meshes only when spin_pieces is not set.
             const unitRoleMeshMap = new Map();
             if (unitRole && meshWeaponMap.size === 0) {
@@ -360,27 +368,16 @@
                 };
                 const roleLabel = ROLE_LABELS[unitRole] || unitRole;
 
-                // Collect spin_pieces names from root node extras
-                let spinPieceNames = null;
-                modelScene.traverse(node => {
-                    if (node.userData && node.userData.spin_pieces) {
-                        spinPieceNames = new Set(node.userData.spin_pieces.map(n => n.toLowerCase()));
-                    }
-                });
-
                 if (spinPieceNames) {
-                    // Tag only the spinning pieces (and their mesh children) by name
+                    // Tag meshes that ARE a spin_piece or whose direct parent is a spin_piece.
+                    // Walking the full ancestor chain tags too much (e.g. entire paal subtree).
                     modelScene.traverse(node => {
                         if (!node.isMesh || !node.visible) return;
                         if (shouldHideMesh(node.name)) return;
-                        // Walk up to check if this mesh or any ancestor is a spin piece
-                        let cur = node;
-                        while (cur) {
-                            if (spinPieceNames.has(cur.name.toLowerCase())) {
-                                unitRoleMeshMap.set(node.uuid, roleLabel);
-                                break;
-                            }
-                            cur = cur.parent;
+                        if (spinPieceNames.has(node.name.toLowerCase())) {
+                            unitRoleMeshMap.set(node.uuid, roleLabel);
+                        } else if (node.parent && spinPieceNames.has(node.parent.name.toLowerCase())) {
+                            unitRoleMeshMap.set(node.uuid, roleLabel);
                         }
                     });
                 } else {
@@ -517,23 +514,33 @@
 
             if (gltf.animations && gltf.animations.length) {
                 mixer = new THREE.AnimationMixer(modelScene);
-                const isSpinOnly = unitRole && meshWeaponMap.size === 0;
-                if (isSpinOnly) {
-                    // Each spin piece has its own clip so it loops at its own speed.
-                    // Start all clips simultaneously and independently.
-                    for (const clip of gltf.animations) {
-                        const action = mixer.clipAction(clip);
-                        action.setLoop(THREE.LoopRepeat, Infinity);
-                        action.play();
-                    }
-                    currentAction = null; // no single action to pause
-                    if (animToggleButton) animToggleButton.style.display = 'none';
-                } else {
-                    const clip = gltf.animations.find(c => c.name.toLowerCase() === "walk") || gltf.animations[0];
-                    currentAction = mixer.clipAction(clip);
+
+                // Spin clips are identified by spin_pieces names in the GLB root extras.
+                // Their clip names are "<func>_<piece>" (e.g. "Activate_dish", "Go_strut").
+                // Always start ALL spin clips so each piece loops at its own speed.
+                const spinPieceNamesForAnim = spinPieceNames || new Set();
+                const spinClips = gltf.animations.filter(clip => {
+                    const afterUnderscore = clip.name.includes('_') ? clip.name.split('_').slice(1).join('_').toLowerCase() : '';
+                    return spinPieceNamesForAnim.has(clip.name.toLowerCase()) ||
+                           spinPieceNamesForAnim.has(afterUnderscore);
+                });
+                for (const clip of spinClips) {
+                    const action = mixer.clipAction(clip);
+                    action.setLoop(THREE.LoopRepeat, Infinity);
+                    action.play();
+                }
+
+                // Walk clip: prefer "walk"-named clip, fall back to first non-spin clip
+                const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c));
+                const walkClip = nonSpinClips.find(c => c.name.toLowerCase() === 'walk') || nonSpinClips[0];
+                if (walkClip) {
+                    currentAction = mixer.clipAction(walkClip);
                     currentAction.setLoop(THREE.LoopRepeat, Infinity);
                     currentAction.play();
                     if (animToggleButton) animToggleButton.style.display = 'flex';
+                } else {
+                    currentAction = null;
+                    if (animToggleButton) animToggleButton.style.display = 'none';
                 }
             } else if (animToggleButton) animToggleButton.style.display = 'none';
 
