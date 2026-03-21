@@ -91,6 +91,8 @@
         const shadowToggleButton = document.getElementById('shadow-toggle-button');
         const exportButton = document.getElementById('export-button');
         const noticeElement = document.getElementById('model-viewer-notice');
+        const movementToggle = document.getElementById('movementToggle');
+        const movementToggleWrap = movementToggle ? movementToggle.closest('.toggle-switch') : null;
 
         if (!container) return;
         container.style.display = 'block';
@@ -536,15 +538,25 @@
                 const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c));
                 const walkClip = nonSpinClips.find(c => c.name.toLowerCase() === 'walk') || nonSpinClips[0];
                 if (walkClip) {
+                    const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
                     currentAction = mixer.clipAction(walkClip);
                     currentAction.setLoop(THREE.LoopRepeat, Infinity);
                     currentAction.play();
+                    currentAction.paused = !walkEnabled;
+                    if (movementToggle) {
+                        movementToggle.checked = walkEnabled;
+                        if (movementToggleWrap) movementToggleWrap.style.display = '';
+                    }
                     if (animToggleButton) animToggleButton.style.display = 'flex';
                 } else {
                     currentAction = null;
+                    if (movementToggleWrap) movementToggleWrap.style.display = 'none';
                     if (animToggleButton) animToggleButton.style.display = 'none';
                 }
-            } else if (animToggleButton) animToggleButton.style.display = 'none';
+            } else {
+                if (movementToggleWrap) movementToggleWrap.style.display = 'none';
+                if (animToggleButton) animToggleButton.style.display = 'none';
+            }
 
             const renderTarget = new THREE.WebGLRenderTarget(container.offsetWidth, container.offsetHeight, {
                 minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat,
@@ -770,6 +782,11 @@
             if (isTurntableEnabledByUser) turntableActive = true;
 
             if (animToggleButton) animToggleButton.addEventListener('click', () => { if(mixer && currentAction) currentAction.paused = !currentAction.paused; });
+            if (movementToggle) movementToggle.addEventListener('change', () => {
+                const enabled = movementToggle.checked;
+                localStorage.setItem('movementToggle', enabled);
+                if (currentAction) currentAction.paused = !enabled;
+            });
             if (rotateToggleButton) rotateToggleButton.addEventListener('click', () => { isTurntableEnabledByUser = !isTurntableEnabledByUser; turntableActive = isTurntableEnabledByUser; if(!turntableActive) clearTimeout(idleTimer); });
             if (shadowToggleButton) shadowToggleButton.addEventListener('click', () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; });
 
