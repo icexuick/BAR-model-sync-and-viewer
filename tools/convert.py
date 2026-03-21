@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
-from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations
+from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces
 
 
 
@@ -635,13 +635,21 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     model = parse_s3o(s3o_path)
     unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
 
+    # Piece name fragments that are always hidden in the viewer regardless of unit.
+    # These are cosmetic/award pieces shown by in-game Lua widgets, not BOS Create().
+    _GLOBAL_HIDE_FRAGMENTS = ('crown', 'medal')
+
     # Per-unit pieces to hide in the viewer (incorrectly positioned in rest pose).
     _UNIT_HIDE_PIECES: Dict[str, set] = {
         'legacluster': {'door1', 'door2', 'door3', 'door4', 'door5', 'door6',
                         'door1pivot', 'door2pivot', 'door3pivot',
                         'door4pivot', 'door5pivot', 'door6pivot'},
     }
-    hide_pieces = _UNIT_HIDE_PIECES.get(unit_name.lower(), set())
+    hide_pieces = set(_UNIT_HIDE_PIECES.get(unit_name.lower(), set()))
+    # Add any piece whose name contains a globally-hidden fragment.
+    for piece in model.all_pieces():
+        if any(frag in piece.name.lower() for frag in _GLOBAL_HIDE_FRAGMENTS):
+            hide_pieces.add(piece.name.lower())
 
     print(f"\n{'='*60}")
     print(f"Unit: {unit_name}")
@@ -663,6 +671,30 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
         print(f"\n  Script: {script_path}")
         weapon_info = parse_unit_script(script_path)
         weapon_info.print_summary()
+        # Auto-hide pieces that BOS Create() hides at game start (medals, effects).
+        # Only apply to mesh-less pieces (verts=0) — structural geometry that is
+        # temporarily hidden in Create() but shown later by animations should stay
+        # visible in the static viewer.
+        with open(script_path, 'r', errors='replace') as _f:
+            _bos = _f.read()
+        bos_hides = parse_create_hide_pieces(_bos)
+        if bos_hides:
+            piece_verts = {p.name.lower(): len(p.vertices) for p in model.all_pieces()}
+            hide_pieces |= {p for p in bos_hides if piece_verts.get(p, 0) == 0}
+
+    # Expand hide_pieces to include all descendants of fragment-matched pieces only
+    # (e.g. crown subtree). BOS-hidden aim-pivots (aimy1, aimx*) have important
+    # children that must stay visible — do NOT expand those recursively.
+    fragment_hidden = {p.name.lower() for p in model.all_pieces()
+                       if any(frag in p.name.lower() for frag in _GLOBAL_HIDE_FRAGMENTS)}
+    if fragment_hidden and model.root_piece:
+        def _collect_subtree(piece, collecting):
+            if collecting or piece.name.lower() in fragment_hidden:
+                hide_pieces.add(piece.name.lower())
+                collecting = True
+            for child in piece.children:
+                _collect_subtree(child, collecting)
+        _collect_subtree(model.root_piece, False)
 
     # Per-unit weapon merges: map source weapon numbers → target weapon number.
     # Used when the BOS defines redundant separate weapons that should be linked

@@ -74,7 +74,7 @@
 
     // FIX: word-boundary matching zodat 'glow' niet matcht in 'legLowerL1' (le-glow-er).
     // Splitst camelCase namen in losse woorden en checkt elk keyword als heel woord.
-    const HIDE_KEYWORDS = ['flare','fire','emit','jam','wake','bow','nano','blink','glow','light'];
+    const HIDE_KEYWORDS = ['flare','fire','emit','wake','bow','nano','blink','glow','light'];
     function shouldHideMesh(name) {
         const words = name.replace(/([A-Z])/g, ' $1').toLowerCase().split(/[\s_\-\.0-9]+/).filter(Boolean);
         return HIDE_KEYWORDS.some(k => words.includes(k));

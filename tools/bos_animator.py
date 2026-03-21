@@ -167,6 +167,18 @@ def _parse_frame_blocks(text: str) -> List[Tuple[int, Dict[Tuple, float]]]:
     return blocks
 
 
+def parse_create_hide_pieces(bos_content: str) -> set:
+    """
+    Return the set of piece names that are hidden via 'hide <piece>' in Create().
+    These pieces are invisible at game start and should not be rendered in the viewer.
+    """
+    body = _extract_function_body(bos_content, 'Create')
+    if not body:
+        return set()
+    clean = _strip_comments(body)
+    return {m.group(1).lower() for m in re.finditer(r'\bhide\s+(\w+)', clean, re.IGNORECASE)}
+
+
 def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
     """
     Parse rest-pose transforms for pieces. Tries two sources in order:
