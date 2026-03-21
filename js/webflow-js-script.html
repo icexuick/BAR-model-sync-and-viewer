@@ -550,7 +550,10 @@
                         movementToggle.checked = walkEnabled;
                         if (movementToggleWrap) movementToggleWrap.style.display = '';
                     }
-                    if (animToggleButton) animToggleButton.style.display = 'flex';
+                    if (animToggleButton) {
+                        animToggleButton.style.display = 'flex';
+                        animToggleButton.style.opacity = walkEnabled ? '1' : '0';
+                    }
                 } else {
                     currentAction = null;
                     if (movementToggleWrap) movementToggleWrap.style.display = 'none';
@@ -789,6 +792,8 @@
                 const enabled = movementToggle.checked;
                 localStorage.setItem('movementToggle', String(enabled));
                 if (!currentAction) return;
+                if (animToggleButton) animToggleButton.style.transition = 'opacity 0.2s ease';
+                if (animToggleButton) animToggleButton.style.opacity = enabled ? '1' : '0';
                 // Brief opacity dip for a smooth visual transition
                 container.style.transition = 'opacity 0.15s ease-out';
                 container.style.opacity = '0.35';
