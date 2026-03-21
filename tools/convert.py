@@ -304,6 +304,23 @@ def convert_with_weapons(
                     if name.endswith('2'): return name[:-1] + '1'
                     return name
 
+                # Piece-name fragments that mark structural limb joints on bipedal/
+                # quadrupedal bots. A visual root must NOT be one of these pieces or
+                # an ancestor of these pieces — selecting e.g. "ruparm" would pull in
+                # the entire arm + torso as a weapon highlight.
+                _LIMB_JOINT_KEYWORDS = ('uparm', 'upleg', 'thigh', 'shoulder',
+                                        'torso', 'cockpit', 'body', 'hull', 'pelvis',
+                                        'hip', 'chest', 'neck', 'head')
+
+                def _is_limb_joint(name: str) -> bool:
+                    low = name.lower()
+                    return any(kw in low for kw in _LIMB_JOINT_KEYWORDS)
+
+                def _subtree_has_limb_joint(root_key: str) -> bool:
+                    """True if any piece in the subtree is a limb joint (uparm, torso, etc.)."""
+                    return any(_is_limb_joint(k) for k in _collect_subtree(root_key, children_map)
+                               if k != root_key)
+
                 def _find_visual_root(fp_key: str) -> Optional[str]:
                     """Find the visual root for a given fire_point key."""
                     visual_root = None
@@ -311,10 +328,13 @@ def convert_with_weapons(
                         total_pieces = len(parent_map)
                         cur = parent_map.get(fp_key)
                         while cur is not None:
-                            if cur in aim_set and not _is_dummy_piece(cur):
+                            if cur in aim_set and not _is_dummy_piece(cur) and not _is_limb_joint(cur):
                                 sub = _collect_subtree(cur, children_map)
-                                if total_pieces == 0 or len(sub) <= total_pieces * 0.30:
-                                    visual_root = cur
+                                # Reject if subtree contains structural body parts (e.g. aimx1
+                                # on a biped whose subtree includes uparm/torso/etc.)
+                                if not _subtree_has_limb_joint(cur):
+                                    if total_pieces == 0 or len(sub) <= total_pieces * 0.30:
+                                        visual_root = cur
                             cur = parent_map.get(cur)
 
                     if visual_root is None:
@@ -323,29 +343,31 @@ def convert_with_weapons(
                             cur = parent_map.get(fp_key)
                             while cur is not None:
                                 if cur == aim_from_key:
-                                    candidate_subtree = _collect_subtree(aim_from_key, children_map)
-                                    total_pieces = len(parent_map)
-                                    if total_pieces == 0 or len(candidate_subtree) <= total_pieces * 0.50:
-                                        visual_root = aim_from_key
+                                    if not _is_limb_joint(aim_from_key) and not _subtree_has_limb_joint(aim_from_key):
+                                        candidate_subtree = _collect_subtree(aim_from_key, children_map)
+                                        total_pieces = len(parent_map)
+                                        if total_pieces == 0 or len(candidate_subtree) <= total_pieces * 0.50:
+                                            visual_root = aim_from_key
                                     break
                                 cur = parent_map.get(cur)
                         if visual_root is None:
                             # Walk up from fire_point, taking the highest ancestor whose
-                            # subtree is ≤30% of the model and ≤10 pieces total.
-                            # This picks sleeve/barrel groups rather than just the immediate parent.
+                            # subtree is ≤30% of the model, ≤10 pieces total, and does
+                            # not contain structural limb joint pieces (uparm, torso, etc.)
                             cur = parent_map.get(fp_key)
                             best = cur
                             total_pieces = len(parent_map)
                             while cur is not None:
+                                if _is_limb_joint(cur):
+                                    break
                                 sub = _collect_subtree(cur, children_map)
+                                # Stop if subtree contains limb joint pieces
+                                if _subtree_has_limb_joint(cur):
+                                    break
                                 # Stop if this ancestor's subtree overlaps other weapons' pieces
-                                # (e.g. shared housing containing both riot cannon and miniguns)
                                 if any(p in other_weapon_pieces for p in sub):
                                     break
                                 # Accept ancestor if subtree ≤ 50% AND ≤ 10 pieces.
-                                # The 50% threshold catches small models where gun mounts
-                                # exceed 30% by count (e.g. 5/15 pieces = 33%).
-                                # The 10-piece cap prevents taking large structural pieces.
                                 if len(sub) <= 10 and (total_pieces == 0 or len(sub) <= total_pieces * 0.50):
                                     best = cur
                                 else:
@@ -397,7 +419,9 @@ def convert_with_weapons(
                     _STRUCTURAL_KEYWORDS = {'wing', 'leg', 'track', 'wheel', 'foot',
                                             'thruster', 'thrust', 'engine', 'body', 'hull',
                                             'chassis', 'torso', 'hip', 'armor',
-                                            'plate', 'wake', 'bow', 'stern'}
+                                            'plate', 'wake', 'bow', 'stern',
+                                            'uparm', 'shoulder', 'thigh',
+                                            'pelvis', 'chest', 'neck'}
                     # Exact-name structural pieces (whole name = keyword)
                     _STRUCTURAL_EXACT = {'base', 'pelvis', 'body', 'hull'}
 
@@ -472,7 +496,9 @@ def convert_with_weapons(
 
                     for s in tagged_subtrees:
                         for piece_key in s:
-                            if not _is_dummy_piece(piece_key) and (piece_key == visual_root or piece_key not in other_aim_pieces):
+                            if (not _is_dummy_piece(piece_key)
+                                    and not _is_limb_joint(piece_key)
+                                    and (piece_key == visual_root or piece_key not in other_aim_pieces)):
                                 _add_to_lookup(piece_key, wnum, "visual")
 
                     # Also tag ancestors of the visual root that are part of the weapon mount:
@@ -488,6 +514,10 @@ def convert_with_weapons(
                             break
                         # Stop when ancestor subtree contains pieces from OTHER weapons
                         if any(p in other_weapon_pieces for p in cur_sub):
+                            break
+                        # Stop at structural limb joints (uparm, torso, etc.) — never tag these
+                        # as weapon visual, even if they are small or in the aim_set.
+                        if _is_limb_joint(cur):
                             break
                         is_big = _total_anc > 0 and len(cur_sub) > _total_anc * 0.30
                         is_in_aim = cur in aim_set or cur == wmap.aim_from_piece
