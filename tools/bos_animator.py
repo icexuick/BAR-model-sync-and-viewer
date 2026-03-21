@@ -369,7 +369,7 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
 # (e.g. WindSpeed, WindSpeed / -5.0).  Both forms are captured.
 _SPIN_RE = re.compile(
     r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+'
-    r'(?:<([^>]+)>|(\(?-?\d*\.?\d*\*?[A-Za-z_]\w*(?:\s*[*/]\s*-?\d+\.?\d*)?\)?))',
+    r'(?:<([^>]+)>|(\(?-?\d*\.?\d*\)?\s*\*?\s*[A-Za-z_]\w*(?:\s*[*/]\s*-?\d+\.?\d*)?\)?))',
     re.IGNORECASE
 )
 # Default wind speed (deg/s) used when the BOS speed is a variable like 'WindSpeed'.
@@ -406,14 +406,23 @@ def _collect_spin_commands(bos_content: str, func_name: str,
         piece = m.group(1).lower()
         axis = AXIS_INDEX[m.group(2).lower()]
         # group(3) = bracketed value <...>, group(4) = bare/parenthesized variable expression
-        raw = (m.group(3) or m.group(4) or '').strip().strip('()')
+        raw = (m.group(3) or m.group(4) or '').strip()
         try:
             speed = float(raw)
         except ValueError:
-            # Variable expression — determine sign from the expression, then pick a
-            # sensible default speed based on the variable name.
-            # Sign: negative if expression starts with '-' or has a leading '-N*' multiplier.
-            sign = -1.0 if re.search(r'^-|\b-\d+\s*\*', raw) or re.search(r'/\s*-', raw) else 1.0
+            # Variable expression — determine sign from any numeric multiplier present
+            # (e.g. '-1*var', '(-0.5)*var', 'var*2', 'var / -5').
+            # Extract leading numeric coefficient if present.
+            coeff_m = re.search(r'\(?\s*(-?\d+\.?\d*)\s*\)?\s*\*', raw)
+            if coeff_m:
+                try:
+                    sign = -1.0 if float(coeff_m.group(1)) < 0 else 1.0
+                except ValueError:
+                    sign = 1.0
+            elif re.search(r'/\s*-', raw):
+                sign = -1.0
+            else:
+                sign = 1.0
             # Wind-speed variables keep the wind default; all others get the mex default.
             if re.search(r'wind', raw, re.IGNORECASE):
                 speed = sign * _DEFAULT_WIND_SPEED

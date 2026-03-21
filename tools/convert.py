@@ -88,11 +88,12 @@ def parse_lua_weapon_defs(lua_content: str) -> Dict[int, str]:
 def parse_lua_unit_role(lua_content: str) -> Optional[str]:
     """
     Detect the unit's role from unitdef Lua fields.
-    Returns one of: 'RADAR', 'JAMMER', 'SONAR', 'RADAR_JAMMER', or None.
+    Returns one of: 'RADAR', 'JAMMER', 'SONAR', 'RADAR_JAMMER', 'MEX', or None.
     """
     has_radar  = bool(re.search(r'\bradardistance\s*=\s*[1-9]', lua_content, re.IGNORECASE))
     has_jammer = bool(re.search(r'\bradardistancejam\s*=\s*[1-9]', lua_content, re.IGNORECASE))
     has_sonar  = bool(re.search(r'\bsonardistance\s*=\s*[1-9]', lua_content, re.IGNORECASE))
+    has_mex    = bool(re.search(r'\bextractsmetal\s*=\s*[0-9]*\.[0-9]*[1-9]', lua_content, re.IGNORECASE))
     if has_radar and has_jammer:
         return 'RADAR_JAMMER'
     if has_jammer:
@@ -101,6 +102,8 @@ def parse_lua_unit_role(lua_content: str) -> Optional[str]:
         return 'RADAR'
     if has_sonar:
         return 'SONAR'
+    if has_mex:
+        return 'MEX'
     return None
 
 
