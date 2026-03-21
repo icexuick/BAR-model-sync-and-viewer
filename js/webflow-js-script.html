@@ -410,9 +410,10 @@
                     const slug = `${unitName}-${winfo.def.replace(/_/g, '-')}`;
                     const names = getDomWeaponNames();
                     if (names.has(slug)) return names.get(slug);
-                    return { name: slug, desc: '' };
+                    // Def not found in CMS — return null so the caller can skip the tooltip
+                    return null;
                 }
-                return { name: `Weapon ${winfo.num}`, desc: '' };
+                return null;
             }
 
             // --- TOOLTIP ELEMENT ---
@@ -441,10 +442,11 @@
             let tooltipHideTimer = null;
 
             function showTooltip(x, y, winfo) {
-                const { name, desc } = getWeaponInfo(winfo);
-                tooltipName.textContent = name;
-                tooltipDesc.textContent = desc;
-                tooltipDesc.style.display = desc ? 'block' : 'none';
+                const info = getWeaponInfo(winfo);
+                if (!info) return; // weapon not in CMS — no tooltip
+                tooltipName.textContent = info.name;
+                tooltipDesc.textContent = info.desc;
+                tooltipDesc.style.display = info.desc ? 'block' : 'none';
                 tooltip.style.display = 'block';
                 tooltip.style.left = Math.round(x + 14) + 'px';
                 tooltip.style.top  = Math.round(y - 8) + 'px';
