@@ -869,9 +869,14 @@ def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
         print(f"Error: objects3d directory not found at {objects_dir}")
         return
 
-    # Walk all subdirectories to find .s3o files
+    # Walk all subdirectories to find .s3o files.
+    # Skip variant subdirs (event/, aprilfools/, scavboss/, etc.) — only use
+    # files directly under objects3d/ or objects3d/Units/.
+    _SKIP_DIRS = {'event', 'aprilfools', 'scavboss', 'lups', 'test'}
     s3o_paths = []
-    for root, _, files in os.walk(objects_dir):
+    for root, dirs, files in os.walk(objects_dir):
+        # Prune skipped subdirs in-place so os.walk won't descend into them
+        dirs[:] = [d for d in dirs if d.lower() not in _SKIP_DIRS]
         for f in files:
             if f.lower().endswith('.s3o'):
                 s3o_paths.append(os.path.join(root, f))
