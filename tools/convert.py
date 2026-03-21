@@ -246,10 +246,29 @@ def convert_with_weapons(
                 }
                 # Tag ALL aim_pieces whose subtree is ≤30% of the model as visual roots.
                 # This handles dual-barrel units (sleeveTop + sleeveBottom both highlight).
+                # Special case: l/r mirror pairs (gunl/gunr, finl/finr) where each piece
+                # individually exceeds 30% on small models — if both mirrors are in aim_set,
+                # accept them together (their combined subtree is the weapon assembly).
+                def _lr_mirror(n):
+                    if n.endswith('l'): return n[:-1] + 'r'
+                    if n.endswith('r'): return n[:-1] + 'l'
+                    if n.endswith('1'): return n[:-1] + '2'
+                    if n.endswith('2'): return n[:-1] + '1'
+                    if n.startswith('l'): return 'r' + n[1:]
+                    if n.startswith('r'): return 'l' + n[1:]
+                    return n
+
                 visual_roots = []
                 for ap_key in sorted(aim_set):  # sorted for determinism
                     sub = _collect_subtree(ap_key, children_map)
-                    if total_pieces == 0 or len(sub) <= total_pieces * 0.30:
+                    qualifies = (total_pieces == 0 or len(sub) <= total_pieces * 0.30)
+                    if not qualifies:
+                        # l/r mirror pair (gunl/gunr): accept if mirror is also in aim_set
+                        # and neither piece individually is a large structural assembly (>50%).
+                        mirror = _lr_mirror(ap_key)
+                        if mirror != ap_key and mirror in aim_set:
+                            qualifies = (total_pieces == 0 or len(sub) <= total_pieces * 0.50)
+                    if qualifies:
                         visual_roots.append((ap_key, sub))
                 # Fallback: try aim_from if no aim_piece qualifies
                 if not visual_roots and wmap.aim_from_piece:
@@ -257,9 +276,10 @@ def convert_with_weapons(
                     af_sub = _collect_subtree(af_key, children_map)
                     if total_pieces == 0 or len(af_sub) <= total_pieces * 0.50:
                         visual_roots.append((af_key, af_sub))
+                visual_root_keys = {vr for vr, _ in visual_roots}
                 for visual_root, subtree in visual_roots:
                     for piece_key in subtree:
-                        if not _is_dummy_piece(piece_key) and (piece_key == visual_root or piece_key not in other_aim_pieces):
+                        if not _is_dummy_piece(piece_key) and (piece_key == visual_root or piece_key in visual_root_keys or piece_key not in other_aim_pieces):
                             _add_to_lookup(piece_key, wnum, "visual")
                 if visual_roots:
                     roots_str = ', '.join(r for r, _ in visual_roots)
@@ -296,9 +316,12 @@ def convert_with_weapons(
                 }
 
                 def _mirror(name: str) -> str:
-                    """Swap leading l/r prefix, or trailing 1/2 suffix for mirror-symmetric pieces."""
+                    """Swap leading l/r prefix, trailing l/r suffix, or trailing 1/2 suffix."""
                     if name.startswith('l'): return 'r' + name[1:]
                     if name.startswith('r'): return 'l' + name[1:]
+                    # Trailing l/r suffix: gunl ↔ gunr, finl ↔ finr, etc.
+                    if name.endswith('l'): return name[:-1] + 'r'
+                    if name.endswith('r'): return name[:-1] + 'l'
                     # Numbered siblings: barrel1 ↔ barrel2, gun1 ↔ gun2, etc.
                     if name.endswith('1'): return name[:-1] + '2'
                     if name.endswith('2'): return name[:-1] + '1'
@@ -347,23 +370,35 @@ def convert_with_weapons(
                                 # Reject if subtree contains structural body parts (e.g. aimx1
                                 # on a biped whose subtree includes uparm/torso/etc.)
                                 if not _subtree_has_limb_joint(cur):
-                                    if total_pieces == 0 or len(sub) <= total_pieces * 0.30:
+                                    if total_pieces == 0 or len(sub) <= total_pieces * 0.50:
                                         visual_root = cur
                             cur = parent_map.get(cur)
 
                     if visual_root is None:
                         if wmap.aim_from_piece:
                             aim_from_key = wmap.aim_from_piece.lower()
-                            cur = parent_map.get(fp_key)
+                            # Check if aim_from is an ancestor of fp, OR a sibling of fp
+                            fp_parent = parent_map.get(fp_key)
+                            aim_from_is_candidate = False
+                            cur = fp_parent
                             while cur is not None:
                                 if cur == aim_from_key:
-                                    if not _is_limb_joint(aim_from_key) and not _subtree_has_limb_joint(aim_from_key):
-                                        candidate_subtree = _collect_subtree(aim_from_key, children_map)
-                                        total_pieces = len(parent_map)
-                                        if total_pieces == 0 or len(candidate_subtree) <= total_pieces * 0.50:
-                                            visual_root = aim_from_key
+                                    aim_from_is_candidate = True
                                     break
                                 cur = parent_map.get(cur)
+                            # Also accept if aim_from is a sibling (same parent as fp)
+                            if not aim_from_is_candidate and fp_parent:
+                                if aim_from_key in children_map.get(fp_parent, []):
+                                    aim_from_is_candidate = True
+                            if aim_from_is_candidate:
+                                if not _is_limb_joint(aim_from_key) and not _subtree_has_limb_joint(aim_from_key):
+                                    candidate_subtree = _collect_subtree(aim_from_key, children_map)
+                                    total_pieces = len(parent_map)
+                                    # Sibling aim_from (e.g. spindle next to flare) may be larger
+                                    # than ancestor aim_from — allow up to 70% for sibling case.
+                                    limit = 0.70 if aim_from_key in children_map.get(fp_parent, []) else 0.50
+                                    if total_pieces == 0 or len(candidate_subtree) <= total_pieces * limit:
+                                        visual_root = aim_from_key
                         if visual_root is None:
                             # Walk up from fire_point, taking the highest ancestor whose
                             # subtree is ≤30% of the model, ≤10 pieces total, and does
@@ -554,7 +589,12 @@ def convert_with_weapons(
 
     def add_piece_with_extras(piece: S3OPiece, parent_idx=None) -> int:
         """Add a piece node with weapon extras metadata."""
-        mesh_idx = builder.add_piece_mesh(piece, mat_idx)
+        piece_key = piece.name.lower()
+        # Skip mesh geometry for hidden pieces so they don't affect bounding box
+        if piece_key in hide_pieces:
+            mesh_idx = None
+        else:
+            mesh_idx = builder.add_piece_mesh(piece, mat_idx)
 
         node = {"name": piece.name}
         ox, oy, oz = piece.offset
@@ -564,7 +604,6 @@ def convert_with_weapons(
             node["mesh"] = mesh_idx
 
         # Add weapon extras
-        piece_key = piece.name.lower()
         extras = {}
         if piece_key in weapon_lookup:
             winfo = weapon_lookup[piece_key]
@@ -635,11 +674,12 @@ def convert_with_weapons(
                 if stop_tracks:
                     builder.add_animation('StopWalking', stop_tracks, node_name_to_idx, piece_offsets)
             else:
-                # No walk animation — collect Create() rest-pose rotations.
-                # These are NOT applied as static node rotations here; instead they are
-                # baked into the spin animation keyframes below (q_rest * q_spin) so that
-                # the spin plays relative to the correct starting orientation.
+                # No walk animation — collect rest-pose rotations (Create() now + fly pose).
+                # Apply them as static node rotations so aircraft show in fly pose.
+                # They are also baked into spin animation keyframes below.
                 now_rots = parse_create_now_rotations(bos_content)
+                if now_rots:
+                    builder.apply_now_rotations(now_rots, node_name_to_idx)
 
             # Always try spin animation — some units have BOTH walk and spin
             # (e.g. factories with a dish + opening animation).

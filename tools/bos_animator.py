@@ -36,13 +36,15 @@ FPS = 30.0
 
 # Regex patterns for BOS commands
 # Turn:  turn piece to x-axis <value> speed ...
+#   also: turn piece to x-axis ((<value> *animAmplitude)/100) speed ...  (Skeletor animAmplitude format)
 # Move:  move piece to y-axis [value] speed ...
+#   also: move piece to y-axis ((([value] *MOVESCALE)/100) ...) speed ...
 _TURN_RE = re.compile(
-    r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([-\d.]+)>',
+    r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+(?:\(\s*\(\s*)?<([-\d.]+)>',
     re.IGNORECASE
 )
 _MOVE_RE = re.compile(
-    r'\bmove\s+(\w+)\s+to\s+([xyz])-axis\s+\[([-\d.]+)\]',
+    r'\bmove\s+(\w+)\s+to\s+([xyz])-axis\s+(?:\(\s*\(\s*\(\s*)?\[([-\d.]+)\]',
     re.IGNORECASE
 )
 _FRAME_RE = re.compile(r'//\s*Frame\s*:?\s*(\d+)', re.IGNORECASE)
@@ -204,7 +206,35 @@ def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
             key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
             result[key] = float(m.group(3))
 
-    # Source 2: StopWalking() — fallback if Create() has no 'now' rotations.
+    # Source 2: activatescr() — fly pose for aircraft.
+    # Aircraft use activatescr() (state=0 = flying) to fold wings/tilt engines to
+    # the in-flight position. The S3O rest pose is the landed/stored state.
+    # We detect this by: activatescr exists AND has significant turn commands (>15°).
+    # Last value per (piece, axis) wins (the final target angle).
+    # Applied unconditionally (not blocked by Create() now_rots) so that e.g. armthund
+    # can have both thrust hide-turns from Create() AND wing fly-pose from activatescr.
+    for _fly_func in ('activatescr', 'Activate'):
+        body = _extract_function_body(bos_content, _fly_func)
+        if not body:
+            continue
+        stripped = _strip_comments(body)
+        candidate = {}
+        for m in _TURN_RE.finditer(stripped):
+            val = float(m.group(3))
+            if abs(val) > 15.0:
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+                candidate[key] = val  # last value wins = final target angle
+        for m in _MOVE_RE.finditer(stripped):
+            val = float(m.group(3))
+            if abs(val) > 0.0:
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+                candidate[key] = val
+        if candidate:
+            result.update(candidate)
+            print(f"  Using {_fly_func}() as fly pose ({len(candidate)} transforms)")
+            break
+
+    # Source 3: StopWalking() — fallback if Create() has no 'now' rotations.
     # Only use if StopWalking contains significant non-zero rotations (>5°),
     # indicating a non-trivial rest pose that differs from the S3O zero pose.
     rot_result = {k: v for k, v in result.items() if k[2]}  # rotations only

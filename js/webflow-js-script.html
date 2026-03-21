@@ -489,7 +489,11 @@
 
             const box = new THREE.Box3();
             modelScene.traverse(child => {
-                if (child.isMesh && child.visible) box.expandByObject(child);
+                if (child.isMesh && child.visible) {
+                    child.geometry.computeBoundingBox();
+                    const meshBox = child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld);
+                    box.union(meshBox);
+                }
             });
             const center = box.getCenter(new THREE.Vector3());
             modelScene.position.sub(center);
@@ -697,7 +701,7 @@
                 const slug = el.getAttribute('data-wpn-slug');
                 const wnum = slugToWnum.get(slug);
                 console.log('[wpn] mouseover slug=', slug, 'wnum=', wnum, 'slugToWnum size=', slugToWnum.size);
-                if (wnum !== undefined) setWeaponHighlight(wnum);
+                if (wnum !== undefined && visualMeshesByWeapon.has(wnum)) setWeaponHighlight(wnum);
             });
             document.addEventListener('mouseout', (e) => {
                 const el = e.target.closest('.uw-item-flex[data-wpn-slug]');
