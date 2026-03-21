@@ -564,7 +564,7 @@ def convert_with_weapons(
                     for s in tagged_subtrees:
                         for piece_key in s:
                             if (not _is_dummy_piece(piece_key)
-                                    and not _is_limb_joint(piece_key)
+                                    and (piece_key == visual_root or not _is_limb_joint(piece_key))
                                     and (piece_key == visual_root or piece_key not in other_aim_pieces)):
                                 _add_to_lookup(piece_key, wnum, "visual")
 
