@@ -348,11 +348,18 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
     return None
 
 
-# Matches: spin <piece> around <axis>-axis speed <deg/s>
+# Matches: spin <piece> around <axis>-axis speed <value>
+# speed value is either angle-bracketed <number> or a bare variable expression
+# (e.g. WindSpeed, WindSpeed / -5.0).  Both forms are captured.
 _SPIN_RE = re.compile(
-    r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+<([-\d.]+)>',
+    r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+'
+    r'(?:<([^>]+)>|([A-Za-z_]\w*(?:\s*/\s*-?\d+\.?\d*)?))',
     re.IGNORECASE
 )
+# Default wind speed (deg/s) used when the BOS speed is a variable like 'WindSpeed'.
+# BAR wind turbines have WindSpeed in [0..2000] Spring units at medium wind; 400 is a
+# reasonable average that gives a visually believable rotation in the viewer.
+_DEFAULT_WIND_SPEED = 400.0
 
 
 def _collect_spin_commands(bos_content: str, func_name: str,
@@ -379,7 +386,15 @@ def _collect_spin_commands(bos_content: str, func_name: str,
     for m in _SPIN_RE.finditer(clean):
         piece = m.group(1).lower()
         axis = AXIS_INDEX[m.group(2).lower()]
-        speed = float(m.group(3))
+        # group(3) = bracketed value <...>, group(4) = bare variable expression
+        raw = (m.group(3) or m.group(4) or '').strip()
+        try:
+            speed = float(raw)
+        except ValueError:
+            # Variable expression (e.g. 'WindSpeed', 'WindSpeed / -5.0').
+            # Derive sign from a division by a negative literal in the expression.
+            sign = -1.0 if re.search(r'/\s*-', raw) or raw.lstrip().startswith('-') else 1.0
+            speed = sign * _DEFAULT_WIND_SPEED
         if speed != 0.0:
             spins[(piece, axis)] = speed
 
@@ -413,7 +428,7 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
     # These are excluded so factory cagelights, pads, wheels etc. don't pollute
     # the spin_pieces list or trigger misleading radar/role tooltips.
     _EXCLUDE_FRAGMENTS = (
-        'cagelight', 'light', 'emit', 'blink', 'pad', 'wheel', 'prop',
+        'cagelight', 'light', 'emit', 'blink', 'pad', 'prop',
         'screw', 'belt', 'nano', 'flare', 'fire', 'glow', 'spark',
     )
 

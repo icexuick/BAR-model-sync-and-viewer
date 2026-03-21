@@ -581,6 +581,7 @@ def convert_with_weapons(
                 'dish', 'radar', 'sonar', 'strut', 'turret', 'tower', 'spinner',
                 'fork', 'jam', 'antenna', 'array',
                 'fan', 'blade', 'turbine', 'collar', 'ball', 'blades', 'prop',
+                'wheel', 'cradle', 'rotor',
             )
             spin_clips = extract_spin_animation(bos_content)
             if spin_clips:
