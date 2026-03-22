@@ -804,21 +804,17 @@ def convert_with_weapons(
                     ]
                 if filtered_clips:
                     spin_pieces = []
-                    # Group tracks by BOS event (e.g. "Activate_turbinef" → "Activate")
-                    # so all spinners from the same event end up in one GLB animation clip.
-                    # The viewer only plays the first animation, so a single merged clip
-                    # ensures all pieces spin simultaneously.
-                    from collections import defaultdict
-                    grouped: dict = defaultdict(list)
-                    for clip_name, clip_tracks in filtered_clips:
-                        event = clip_name.split('_')[0] if '_' in clip_name else clip_name
-                        grouped[event].extend(clip_tracks)
                     spin_clip_names = []
-                    for event_name, all_tracks in grouped.items():
-                        builder.add_spin_animation(event_name, all_tracks, node_name_to_idx,
-                                                   now_rots or None)
-                        spin_pieces.extend(t.piece for t in all_tracks)
-                        spin_clip_names.append(event_name)
+                    # Each track gets its own GLB animation clip so they loop independently
+                    # at their own speed. Merging tracks with different durations into one
+                    # clip causes the faster piece to pause and wait for the slower one.
+                    for clip_name, clip_tracks in filtered_clips:
+                        for track in clip_tracks:
+                            clip_n = f"Spin_{track.piece}"
+                            builder.add_spin_animation(clip_n, [track], node_name_to_idx,
+                                                       now_rots or None)
+                            spin_pieces.append(track.piece)
+                            spin_clip_names.append(clip_n)
                     # Store spin_pieces + clip names so viewer can identify spin clips by name
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
