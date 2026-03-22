@@ -75,6 +75,68 @@ class BosTrack:
     keyframes: List[BosKeyframe] = field(default_factory=list)
 
 
+def _expand_macros(text: str) -> str:
+    """
+    Expand simple #define macros (no-arg and arg-less) in BOS scripts.
+    Also resolves 'sleep VARNAME' by substituting the last numeric assignment
+    to that variable (e.g. WALK_PERIOD=98 → sleep 98).
+    Only handles simple cases; recursive/complex macros are left as-is.
+    """
+    # 1. Collect #define NAME value  (single-line and multi-line continuation macros)
+    # Uses line-by-line scanning to handle NAME\ style multi-line defines.
+    bs = chr(92)  # backslash — avoids raw-string confusion
+    defines: Dict[str, str] = {}
+    lines = text.split('\n')
+    i = 0
+    while i < len(lines):
+        m = re.match(r'#define\s+(\w+)(.*)', lines[i])
+        if m:
+            name = m.group(1)
+            rest = m.group(2)
+            val_lines: list = []
+            if rest.endswith(bs):
+                val_lines.append(rest[:-1])
+                i += 1
+                while i < len(lines) and lines[i].endswith(bs):
+                    val_lines.append(lines[i][:-1])
+                    i += 1
+                if i < len(lines):
+                    val_lines.append(lines[i])
+            else:
+                val_lines.append(rest)
+            defines[name] = '\n'.join(val_lines).strip()
+        i += 1
+
+    # 2. Remove #define lines themselves
+    text = re.sub(r'#define[^\n]*(\\\n[^\n]*)*\n?', '', text)
+
+    # 3. Expand macros — iterate until stable (handles macros that reference other macros)
+    for _ in range(8):
+        expanded = False
+        for name, val in defines.items():
+            # Only replace when the macro name appears as a standalone identifier
+            new = re.sub(r'\b' + re.escape(name) + r'\b', val, text)
+            if new != text:
+                text = new
+                expanded = True
+        if not expanded:
+            break
+
+    # 4. Resolve 'sleep VARNAME' — find the minimum numeric assignment to that variable.
+    # The walk-speed value is always the smallest (e.g. WALK_PERIOD=98 during walking,
+    # vs WALK_PERIOD=400 at rest), so min gives the most accurate animation timing.
+    def _resolve_sleep_var(m):
+        var = m.group(1)
+        assignments = re.findall(r'\b' + re.escape(var) + r'\s*=\s*(\d+)', text)
+        if assignments:
+            return f'sleep {min(int(v) for v in assignments)}'
+        return m.group(0)  # leave unchanged
+
+    text = re.sub(r'\bsleep\s+([A-Za-z_]\w*)', _resolve_sleep_var, text)
+
+    return text
+
+
 def _strip_comments(text: str) -> str:
     """Remove BOS // and /* */ comments."""
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
@@ -313,9 +375,10 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
     These must be applied as initial node rotations in the GLB so the rest pose
     matches what the Spring engine sets up via Create().
     """
+    bos_content = _expand_macros(bos_content)
     now_rots = parse_create_now_rotations(bos_content)
 
-    for func_name in ['Walk', 'StartMoving', 'Move', 'DoTheWalking']:
+    for func_name in ['Walk', 'StartMoving', 'Move', 'DoTheWalking', 'movelegs', 'walkscr', 'Movement']:
         body = _extract_function_body(bos_content, func_name)
         if not body:
             continue
@@ -337,6 +400,25 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
         loop_blocks = _parse_frame_blocks(while_body)
         if not loop_blocks:
             # No //Frame: markers — try sleep-based parsing (cornecro-style)
+            # Inline call-script sub-functions one level deep, but only when each
+            # sub-function is called exactly once (avoid exploding repeated calls
+            # like call-script movelegs() × 13 in walkscr).
+            def _inline_call_scripts(text: str) -> str:
+                calls = re.findall(
+                    r'\b(?:call-script|start-script)\s+(\w+)\s*\([^)]*\)',
+                    text, flags=re.IGNORECASE)
+                # Only inline sub-functions that appear exactly once
+                once = {name for name in calls if calls.count(name) == 1}
+                def _replacer(m):
+                    name = m.group(1)
+                    if name not in once:
+                        return m.group(0)
+                    sub = _extract_function_body(bos_content, name)
+                    return sub if sub else m.group(0)
+                return re.sub(
+                    r'\b(?:call-script|start-script)\s+(\w+)\s*\([^)]*\)\s*;?',
+                    _replacer, text, flags=re.IGNORECASE)
+            while_body = _inline_call_scripts(while_body)
             clean_while = _strip_comments(while_body)
             # Detect animSpeed-based sleeps: ((N*animSpeed) -K)
             # Use the pre-body fixed sleep (e.g. 'sleep 131') as the per-keyframe
@@ -365,7 +447,13 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
                     for m in _TURN_RE.finditer(block_text):
                         key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
                         cmds[key] = float(m.group(3))
+                    for m in _TURN_NOW_RE.finditer(block_text):
+                        key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+                        cmds[key] = float(m.group(3))
                     for m in _MOVE_RE.finditer(block_text):
+                        key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+                        cmds[key] = float(m.group(3))
+                    for m in _MOVE_NOW_RE.finditer(block_text):
                         key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
                         cmds[key] = float(m.group(3))
                     if cmds:
@@ -381,9 +469,37 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
                             pass
                     i += 2
                 if len(sleep_blocks) >= 2:
-                    # Convert ms timestamps to frame numbers (ms * FPS / 1000) so the
-                    # frame-based duration calculation (step_size / FPS) works correctly.
-                    loop_blocks = [(int(t_ms * FPS / 1000), cmds) for t_ms, cmds in sleep_blocks]
+                    # sleep_blocks already has correct ms timestamps — build tracks
+                    # directly in seconds without going through the frame-number path,
+                    # which loses precision for short sleeps (e.g. 30ms at 30fps = 0.9 frame).
+                    total_ms = sleep_blocks[-1][0] + (
+                        float(segments[len(sleep_blocks) * 2 - 1])
+                        if len(segments) > len(sleep_blocks) * 2 - 1 else 0)
+                    duration = total_ms / 1000.0
+                    n_blocks = len(sleep_blocks)
+
+                    track_dict_ms: Dict[Tuple, List[BosKeyframe]] = {}
+                    for t_ms, cmds in sleep_blocks:
+                        t = t_ms / 1000.0
+                        for key, value in cmds.items():
+                            track_dict_ms.setdefault(key, []).append(BosKeyframe(time=t, value=value))
+
+                    # Closing keyframe — loop back to first block's values
+                    first_cmds = sleep_blocks[0][1]
+                    for key in track_dict_ms:
+                        closing_value = first_cmds.get(key, track_dict_ms[key][0].value)
+                        track_dict_ms[key].append(BosKeyframe(time=duration, value=closing_value))
+
+                    tracks_ms = [
+                        BosTrack(piece=piece, axis=axis, is_rotation=is_rot, keyframes=kfs)
+                        for (piece, axis, is_rot), kfs in track_dict_ms.items()
+                        if len(kfs) >= 2
+                    ]
+                    if tracks_ms:
+                        print(f"  Animation '{func_name}': {len(tracks_ms)} tracks, "
+                              f"{n_blocks} keyframes (sleep-based), duration {duration:.2f}s")
+                        return func_name, tracks_ms, now_rots
+
             if not loop_blocks:
                 continue
 
@@ -723,5 +839,190 @@ def extract_activate_loop_animation(bos_content: str) -> Optional[List[Tuple[str
             print(f"  Activate-loop animation '{func_name}': {len(tracks)} tracks, "
                   f"duration {duration:.2f}s, pieces: {', '.join(pieces)}")
             return [(func_name, tracks)]
+
+    return None
+
+
+def _parse_turn_move_to_tracks(body: str, start_pose: Optional[Dict[Tuple, float]] = None
+                                ) -> Tuple[List[BosTrack], float]:
+    """
+    Parse 'turn piece to axis <deg> speed <spd>' and 'move piece to axis [val] speed [spd]'
+    commands from a BOS function body.  Duration = max(|target - start| / speed) over all pieces.
+
+    Returns (tracks, duration_seconds).  Each track has two keyframes: t=0 (start pose or 0)
+    and t=duration (target value).
+    """
+    clean = _strip_comments(body)
+    targets: Dict[Tuple, float] = {}
+    speeds: Dict[Tuple, float] = {}
+
+    for m in _TURN_RE.finditer(clean):
+        key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+        targets[key] = float(m.group(3))
+        # speed follows the angle value: 'speed <N>'
+        spd_m = re.search(r'speed\s*<([\d.]+)>', clean[m.start():m.start()+200], re.IGNORECASE)
+        if spd_m:
+            speeds[key] = float(spd_m.group(1))
+
+    for m in _MOVE_RE.finditer(clean):
+        key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+        targets[key] = float(m.group(3))
+        spd_m = re.search(r'speed\s*\[([\d.]+)\]', clean[m.start():m.start()+200], re.IGNORECASE)
+        if spd_m:
+            speeds[key] = float(spd_m.group(1))
+
+    if not targets:
+        return [], 0.0
+
+    # Duration = slowest piece (degrees/speed for rotations, units/speed for moves)
+    duration = 0.0
+    for key, target in targets.items():
+        speed = speeds.get(key, 60.0)
+        start_val = (start_pose or {}).get(key, 0.0)
+        delta = abs(target - start_val)
+        if speed > 0:
+            duration = max(duration, delta / speed)
+
+    if duration < 0.01:
+        duration = 1.0  # fallback
+
+    tracks: List[BosTrack] = []
+    for key, target in targets.items():
+        piece, axis, is_rot = key
+        start_val = (start_pose or {}).get(key, 0.0)
+        kfs = [BosKeyframe(time=0.0, value=start_val),
+               BosKeyframe(time=duration, value=target)]
+        tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot, keyframes=kfs))
+
+    return tracks, duration
+
+
+def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List[BosTrack]]]]:
+    """
+    Extract open/close (toggle) animations for units with an Activate/Deactivate pattern.
+
+    Looks for:
+    1. Open() + Close() functions  → clips 'ActivateOpen' and 'ActivateClose'
+    2. MMStatus() with if(State)/else branches → clips 'ActivateOpen' and 'ActivateClose'
+
+    Returns list of (clip_name, tracks) pairs, or None.
+    """
+    bos_content = _expand_macros(bos_content)
+
+    clips: List[Tuple[str, List[BosTrack]]] = []
+
+    # --- Pattern 1: Open() / Close() functions ---
+    open_body = _extract_function_body(bos_content, 'Open')
+    close_body = _extract_function_body(bos_content, 'Close')
+    if open_body and close_body:
+        open_tracks, open_dur = _parse_turn_move_to_tracks(open_body)
+        # Closed pose = all targets set to 0 (the Close() targets)
+        close_tracks_raw, close_dur = _parse_turn_move_to_tracks(close_body)
+        closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                       for t in close_tracks_raw}
+
+        # Re-parse Open with closed pose as the start
+        open_tracks, open_dur = _parse_turn_move_to_tracks(open_body, start_pose=closed_pose)
+        # Re-parse Close with open pose as the start
+        open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                     for t in open_tracks}
+        close_tracks, close_dur = _parse_turn_move_to_tracks(close_body, start_pose=open_pose)
+
+        if open_tracks and close_tracks:
+            print(f"  Toggle animation 'ActivateOpen': {len(open_tracks)} tracks, {open_dur:.2f}s")
+            print(f"  Toggle animation 'ActivateClose': {len(close_tracks)} tracks, {close_dur:.2f}s")
+            clips.append(('ActivateOpen', open_tracks))
+            clips.append(('ActivateClose', close_tracks))
+            return clips
+
+    # --- Pattern 2: OpenSilo() / CloseSiloDoors() functions ---
+    open_silo_body = _extract_function_body(bos_content, 'OpenSilo')
+    close_silo_body = _extract_function_body(bos_content, 'CloseSiloDoors')
+    if open_silo_body and close_silo_body:
+        open_tracks_raw, _ = _parse_turn_move_to_tracks(open_silo_body)
+        close_tracks_raw, _ = _parse_turn_move_to_tracks(close_silo_body)
+        closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                       for t in close_tracks_raw}
+        open_tracks, open_dur = _parse_turn_move_to_tracks(open_silo_body, start_pose=closed_pose)
+        open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                     for t in open_tracks}
+        close_tracks, close_dur = _parse_turn_move_to_tracks(close_silo_body, start_pose=open_pose)
+        if open_tracks and close_tracks:
+            print(f"  Toggle animation 'ActivateOpen': {len(open_tracks)} tracks, {open_dur:.2f}s")
+            print(f"  Toggle animation 'ActivateClose': {len(close_tracks)} tracks, {close_dur:.2f}s")
+            clips.append(('ActivateOpen', open_tracks))
+            clips.append(('ActivateClose', close_tracks))
+            return clips
+
+    # --- Pattern 3: MMStatus(State) with if(State) / else branches ---
+    mm_body = _extract_function_body(bos_content, 'MMStatus')
+    if not mm_body:
+        # Also try Activate/Deactivate as simple (non-looping) one-shots
+        act_body = _extract_function_body(bos_content, 'Activate')
+        deact_body = _extract_function_body(bos_content, 'Deactivate')
+        if act_body and deact_body:
+            open_tracks, open_dur = _parse_turn_move_to_tracks(act_body)
+            close_tracks, close_dur = _parse_turn_move_to_tracks(deact_body)
+            if open_tracks and close_tracks:
+                print(f"  Toggle animation 'ActivateOpen': {len(open_tracks)} tracks, {open_dur:.2f}s")
+                print(f"  Toggle animation 'ActivateClose': {len(close_tracks)} tracks, {close_dur:.2f}s")
+                clips.append(('ActivateOpen', open_tracks))
+                clips.append(('ActivateClose', close_tracks))
+                return clips
+        return None
+
+    clean_mm = _strip_comments(mm_body)
+
+    # Split on if(State) or if(Active) { ... } else { ... }
+    # Find the if-block and else-block via brace counting
+    if_m = re.search(r'\bif\s*\(\s*(?:State|Active)\s*\)\s*\{', clean_mm, re.IGNORECASE)
+    if not if_m:
+        return None
+
+    # Extract if-block body
+    start = if_m.end() - 1
+    depth = 0
+    if_end = start
+    for i, c in enumerate(clean_mm[start:]):
+        if c == '{': depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                if_end = start + i + 1
+                break
+    if_block = clean_mm[start:if_end]
+
+    # Find else block
+    else_m = re.search(r'\belse\s*\{', clean_mm[if_end:], re.IGNORECASE)
+    if not else_m:
+        return None
+    else_start = if_end + else_m.end() - 1
+    depth = 0
+    else_end = else_start
+    for i, c in enumerate(clean_mm[else_start:]):
+        if c == '{': depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                else_end = else_start + i + 1
+                break
+    else_block = clean_mm[else_start:else_end]
+
+    open_tracks, open_dur = _parse_turn_move_to_tracks(if_block)
+    # Parse else (closed) to get start pose for open
+    close_tracks_raw, _ = _parse_turn_move_to_tracks(else_block)
+    closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                   for t in close_tracks_raw}
+    open_tracks, open_dur = _parse_turn_move_to_tracks(if_block, start_pose=closed_pose)
+    open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                 for t in open_tracks}
+    close_tracks, close_dur = _parse_turn_move_to_tracks(else_block, start_pose=open_pose)
+
+    if open_tracks and close_tracks:
+        print(f"  Toggle animation 'ActivateOpen': {len(open_tracks)} tracks, {open_dur:.2f}s")
+        print(f"  Toggle animation 'ActivateClose': {len(close_tracks)} tracks, {close_dur:.2f}s")
+        clips.append(('ActivateOpen', open_tracks))
+        clips.append(('ActivateClose', close_tracks))
+        return clips
 
     return None
