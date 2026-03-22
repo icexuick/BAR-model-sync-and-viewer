@@ -158,6 +158,10 @@ _ANIM_DURATION_OVERRIDE: Dict[str, float] = {
     'cortermite': 0.6,
 }
 
+# Units whose toggle animation is too complex for the current single-pass parser
+# (multi-phase sequential BOS with wait-for-turn sync points, corecont y-offsets, etc.)
+_TOGGLE_SKIP: set = {'legsolar'}
+
 
 def convert_with_weapons(
     model: S3OModel,
@@ -832,7 +836,7 @@ def convert_with_weapons(
                         builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = loop_pieces + loop_clip_names
 
             # Toggle animations (Open/Close or MMStatus) — always check, independent of spin
-            toggle_clips = extract_toggle_animations(bos_content)
+            toggle_clips = [] if unit_name.lower() in _TOGGLE_SKIP else extract_toggle_animations(bos_content)
             if toggle_clips:
                 for clip_name, clip_tracks in toggle_clips:
                     builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
