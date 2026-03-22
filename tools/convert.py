@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
-from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose, extract_activate_loop_animation
+from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose, extract_activate_loop_animation, extract_toggle_animations
 
 
 
@@ -149,6 +149,13 @@ _STRIP_ANIM_TRANSLATION: Dict[str, set] = {
 # Useful for units where body twisting/spinning looks wrong in the viewer.
 _STRIP_ANIM_ROTATION: Dict[str, set] = {
     'corsktl': {'base'},
+}
+
+# Per-unit target duration (seconds) for walk animations.
+# All keyframe times are scaled proportionally so the loop matches this duration.
+# Use this when the BOS sleep values give an unrealistic playback speed.
+_ANIM_DURATION_OVERRIDE: Dict[str, float] = {
+    'cortermite': 0.6,
 }
 
 
@@ -730,6 +737,14 @@ def convert_with_weapons(
                     tracks = [t for t in tracks if not (not t.is_rotation and t.piece.lower() in _strip_trans)]
                 if _strip_rot:
                     tracks = [t for t in tracks if not (t.is_rotation and t.piece.lower() in _strip_rot)]
+                target_dur = _ANIM_DURATION_OVERRIDE.get(unit_name.lower())
+                if target_dur:
+                    current_dur = max(kf.time for t in tracks for kf in t.keyframes)
+                    if current_dur > 0:
+                        scale = target_dur / current_dur
+                        for t in tracks:
+                            for kf in t.keyframes:
+                                kf.time *= scale
                 builder.apply_now_rotations(now_rots, node_name_to_idx)
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
                 # StopWalking pose — exported as a second clip so the viewer can
@@ -811,11 +826,20 @@ def convert_with_weapons(
                         builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
                                               piece_offsets)
                     loop_pieces = [t.piece for _, ct in loop_clips for t in ct]
-                    # Also include clip names so the viewer recognises them as spin clips
                     loop_clip_names = [cn for cn, _ in loop_clips]
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
                         builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = loop_pieces + loop_clip_names
+
+            # Toggle animations (Open/Close or MMStatus) — always check, independent of spin
+            toggle_clips = extract_toggle_animations(bos_content)
+            if toggle_clips:
+                for clip_name, clip_tracks in toggle_clips:
+                    builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
+                                          piece_offsets)
+                if model.root_piece:
+                    root_idx = builder.scenes[0]["nodes"][0]
+                    builder.nodes[root_idx].setdefault("extras", {})["toggleable"] = True
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
