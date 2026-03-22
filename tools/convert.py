@@ -847,8 +847,10 @@ def convert_with_weapons(
                     root_idx = builder.scenes[0]["nodes"][0]
                     extras = builder.nodes[root_idx].setdefault("extras", {})
                     extras["toggleable"] = True
-                    if unit_name.lower().endswith('solar'):
+                    _AUTOPLAY_OPEN_UNITS = {'armsolar', 'corsolar', 'legsolar', 'cortoast', 'armamb', 'legacluster', 'cordoom'}
+                    if unit_name.lower() in _AUTOPLAY_OPEN_UNITS:
                         extras["autoplay_open"] = True
+                        builder.apply_animation_t0_as_default_pose('ActivateOpen')
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 

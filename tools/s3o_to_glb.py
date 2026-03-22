@@ -374,6 +374,40 @@ class GLBBuilder:
             })
             print(f"  GLB animation '{anim_name}': {len(channels)} channels")
 
+    def apply_animation_t0_as_default_pose(self, anim_name: str):
+        """
+        For autoplay_open units: overwrite node default translations/rotations
+        with the t=0 values from the named animation (e.g. 'ActivateOpen').
+        This ensures the model starts in the closed/deactivated pose without
+        requiring the viewer to manually force t=0 before the animation plays.
+        """
+        anim = next((a for a in getattr(self, 'animations', []) if a['name'] == anim_name), None)
+        if anim is None:
+            return
+        for ch in anim['channels']:
+            node_idx = ch['target']['node']
+            path = ch['target']['path']
+            sampler = anim['samplers'][ch['sampler']]
+            # Read t=0 value directly from the output accessor's first element
+            out_acc = self.accessors[sampler['output']]
+            bv = self.buffer_views[out_acc['bufferView']]
+            import struct as _struct
+            offset = bv.get('byteOffset', 0) + out_acc.get('byteOffset', 0)
+            n_comp = {'VEC3': 3, 'VEC4': 4}[out_acc['type']]
+            vals = list(_struct.unpack_from(f'<{n_comp}f', self.buffer_data, offset))
+            node = self.nodes[node_idx]
+            if path == 'rotation':
+                # Only set if meaningfully non-identity
+                if any(abs(v) > 1e-5 for v in vals[:3]):
+                    node['rotation'] = vals
+                else:
+                    node.pop('rotation', None)
+            elif path == 'translation':
+                if any(abs(v) > 1e-5 for v in vals):
+                    node['translation'] = vals
+                else:
+                    node.pop('translation', None)
+
     def add_spin_animation(self, anim_name: str, tracks: list,
                            node_name_to_idx: Dict[str, int],
                            now_rots: dict = None):
