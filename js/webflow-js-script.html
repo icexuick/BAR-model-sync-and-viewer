@@ -262,12 +262,16 @@
 
             const weaponSummary = {};
             let unitRole = null;
+            let isToggleable = false;
             modelScene.traverse(node => {
                 if (node.userData && node.userData.weapon_summary) {
                     Object.assign(weaponSummary, node.userData.weapon_summary);
                 }
                 if (node.userData && node.userData.unit_role) {
                     unitRole = node.userData.unit_role;
+                }
+                if (node.userData && node.userData.toggleable) {
+                    isToggleable = true;
                 }
             });
 
@@ -303,7 +307,7 @@
 
 
             const unitRoleMeshMap = new Map();
-            if (unitRole && meshWeaponMap.size === 0) {
+            if (unitRole && meshWeaponMap.size === 0 && !isToggleable) {
                 const ROLE_LABELS = {
                     'RADAR': 'Radar',
                     'JAMMER': 'Jamming Device',
