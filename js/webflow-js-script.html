@@ -63,10 +63,11 @@
         powerPreference: isMobile ? 'low-power' : 'high-performance',
     };
 
-    const HIDE_KEYWORDS = ['flare','fire','emit','wake','bow','nano','blink','glow','light'];
+    const HIDE_KEYWORDS = ['flare','fire','emit','wake','bow','nano','blink','glow','light','aimpoint'];
     function shouldHideMesh(name) {
-        const words = name.replace(/([A-Z])/g, ' $1').toLowerCase().split(/[\s_\-\.0-9]+/).filter(Boolean);
-        return HIDE_KEYWORDS.some(k => words.includes(k));
+        const lower = name.replace(/([A-Z])/g, ' $1').toLowerCase();
+        const words = lower.split(/[\s_\-\.0-9]+/).filter(Boolean);
+        return HIDE_KEYWORDS.some(k => words.includes(k) || lower.includes(k));
     }
     window.addEventListener('load', function() {
     setTimeout(function() {
