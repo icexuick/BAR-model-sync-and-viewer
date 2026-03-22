@@ -848,8 +848,36 @@ def convert_with_weapons(
                     root_idx = builder.scenes[0]["nodes"][0]
                     extras = builder.nodes[root_idx].setdefault("extras", {})
                     extras["toggleable"] = True
-                    _AUTOPLAY_OPEN_UNITS = {'armsolar', 'corsolar', 'legsolar', 'cortoast', 'armamb', 'legacluster', 'cordoom'}
-                    if unit_name.lower() in _AUTOPLAY_OPEN_UNITS:
+                    # Determine if this unit starts in the open (activated) pose.
+                    # Default assumption: open — most defense/weapon units have their
+                    # S3O rest pose as the deployed/open state.
+                    # Exception: units whose BOS Create() explicitly starts closed.
+                    # Units that are known to start open despite no explicit BOS open call
+                    _FORCE_AUTOPLAY_OPEN = {'armpb'}
+                    # Units that are known to start closed despite no explicit BOS closed call
+                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo'}
+                    _CLOSED_IN_CREATE = [
+                        r'start-script\s+OpenCloseAnim\s*\(\s*0\s*\)',
+                        r'start-script\s+Stop\b',
+                        r'start-script\s+RequestState\s*\(\s*1',
+                        r'start-script\s+Deactivate\b',
+                        r'\bsilo_state\s*=\s*0\b',
+                    ]
+                    create_body = ''
+                    cm = re.search(r'\bCreate\s*\(\s*\)\s*\{', bos_content, re.IGNORECASE)
+                    if cm:
+                        depth, ci = 1, cm.end()
+                        while ci < len(bos_content) and depth:
+                            if bos_content[ci] == '{': depth += 1
+                            elif bos_content[ci] == '}': depth -= 1
+                            ci += 1
+                        create_body = bos_content[cm.start():ci]
+                    starts_closed = (
+                        unit_name.lower() in _FORCE_STARTS_CLOSED or
+                        (unit_name.lower() not in _FORCE_AUTOPLAY_OPEN and
+                         any(re.search(p, create_body, re.IGNORECASE) for p in _CLOSED_IN_CREATE))
+                    )
+                    if not starts_closed:
                         extras["autoplay_open"] = True
                         builder.apply_animation_t0_as_default_pose('ActivateOpen')
         except Exception as e:
