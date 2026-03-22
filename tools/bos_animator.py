@@ -144,6 +144,19 @@ def _strip_comments(text: str) -> str:
     return text
 
 
+def _inline_call_scripts(body: str, bos_content: str, depth: int = 0) -> str:
+    """Replace 'call-script FuncName()' with the body of that function (max 3 levels deep)."""
+    if depth > 3:
+        return body
+    _CALL_RE = re.compile(r'\bcall-script\s+(\w+)\s*\([^)]*\)\s*;', re.IGNORECASE)
+    def replacer(m):
+        sub_body = _extract_function_body(bos_content, m.group(1))
+        if sub_body:
+            return _inline_call_scripts(sub_body, bos_content, depth + 1)
+        return ''
+    return _CALL_RE.sub(replacer, body)
+
+
 def _extract_function_body(content: str, func_name: str) -> Optional[str]:
     """
     Extract the full body (between outer braces) of a named BOS function.
@@ -916,6 +929,8 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
     go_body   = _extract_function_body(bos_content, 'Go')
     stop_body = _extract_function_body(bos_content, 'Stop')
     if go_body and stop_body:
+        go_body   = _inline_call_scripts(go_body,   bos_content)
+        stop_body = _inline_call_scripts(stop_body, bos_content)
         # Use Create() 'now' poses as the closed start pose (initial model state)
         create_body = _extract_function_body(bos_content, 'Create')
         closed_pose: Dict[Tuple, float] = {}
@@ -948,6 +963,8 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
     open_body = _extract_function_body(bos_content, 'Open')
     close_body = _extract_function_body(bos_content, 'Close')
     if open_body and close_body:
+        open_body  = _inline_call_scripts(open_body,  bos_content)
+        close_body = _inline_call_scripts(close_body, bos_content)
         open_tracks, open_dur = _parse_turn_move_to_tracks(open_body)
         # Closed pose = all targets set to 0 (the Close() targets)
         close_tracks_raw, close_dur = _parse_turn_move_to_tracks(close_body)
