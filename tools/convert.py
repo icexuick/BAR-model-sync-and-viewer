@@ -655,11 +655,16 @@ def convert_with_weapons(
     # Maps piece_name.lower() → S3O rest offset (x, y, z)
     piece_offsets: Dict[str, tuple] = {}
 
+    _NO_MESH_FRAGMENTS = ('flare', 'aimpoint', 'fire', 'emit', 'wake', 'nano',
+                          'blink', 'glow')
+
     def add_piece_with_extras(piece: S3OPiece, parent_idx=None) -> int:
         """Add a piece node with weapon extras metadata."""
         piece_key = piece.name.lower()
-        # Skip mesh geometry for hidden pieces so they don't affect bounding box
-        if piece_key in hide_pieces:
+        # Skip mesh geometry for hidden/effect pieces so they don't affect bounding box
+        suppress_mesh = (piece_key in hide_pieces or
+                         any(frag in piece_key for frag in _NO_MESH_FRAGMENTS))
+        if suppress_mesh:
             mesh_idx = None
         else:
             mesh_idx = builder.add_piece_mesh(piece, mat_idx)

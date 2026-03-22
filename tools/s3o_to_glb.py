@@ -159,12 +159,20 @@ class GLBBuilder:
         self.meshes.append(mesh)
         return idx
 
+    # Piece name fragments whose mesh should be omitted from the GLB entirely.
+    # The node itself is kept (for animations/weapon metadata) but has no geometry.
+    _NO_MESH_FRAGMENTS = ('flare', 'aimpoint', 'fire', 'emit', 'wake', 'nano',
+                          'blink', 'glow')
+
     def add_piece_node(self, piece: S3OPiece, material_idx: int,
                        parent_node_idx: Optional[int] = None) -> int:
         """Recursively add nodes for a piece and its children.
         Returns the node index of this piece."""
+        # Skip mesh for pieces whose name contains a hidden-effect fragment
+        name_lower = piece.name.lower()
+        suppress_mesh = any(frag in name_lower for frag in self._NO_MESH_FRAGMENTS)
         # Create mesh for this piece (may be None if piece has no geometry)
-        mesh_idx = self.add_piece_mesh(piece, material_idx)
+        mesh_idx = None if suppress_mesh else self.add_piece_mesh(piece, material_idx)
 
         node = {"name": piece.name}
 
