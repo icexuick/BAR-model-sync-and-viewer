@@ -476,6 +476,22 @@
                     toggleOpenClip  = openClip;
                     toggleCloseClip = closeClip;
                     renderer.domElement.style.cursor = 'pointer';
+                    let autoplayOpen = false;
+                    modelScene.traverse(n => { if (n.userData && n.userData.autoplay_open) autoplayOpen = true; });
+                    if (autoplayOpen) {
+                        toggleOpenAction = mixer.clipAction(openClip);
+                        toggleOpenAction.setLoop(THREE.LoopOnce, 1);
+                        toggleOpenAction.clampWhenFinished = true;
+                        toggleAnimating = true;
+                        toggleOpenAction.reset().play();
+                        mixer.addEventListener('finished', function onAutoOpen(e) {
+                            if (e.action === toggleOpenAction) {
+                                toggleState = true;
+                                toggleAnimating = false;
+                                mixer.removeEventListener('finished', onAutoOpen);
+                            }
+                        });
+                    }
                 } else {
                     renderer.domElement.style.cursor = '';
                 }

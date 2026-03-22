@@ -911,6 +911,39 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
 
     clips: List[Tuple[str, List[BosTrack]]] = []
 
+    # --- Pattern 0: Go() / Stop() functions (e.g. legsolar) ---
+    # Go() = open/active state, Stop() = closed/inactive state
+    go_body   = _extract_function_body(bos_content, 'Go')
+    stop_body = _extract_function_body(bos_content, 'Stop')
+    if go_body and stop_body:
+        # Use Create() 'now' poses as the closed start pose (initial model state)
+        create_body = _extract_function_body(bos_content, 'Create')
+        closed_pose: Dict[Tuple, float] = {}
+        if create_body:
+            clean_create = _strip_comments(create_body)
+            for m in _TURN_NOW_RE.finditer(clean_create):
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+                closed_pose[key] = float(m.group(3))
+            for m in _MOVE_NOW_RE.finditer(clean_create):
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+                closed_pose[key] = float(m.group(3))
+        # Fall back to Stop() targets if Create() has no now-poses for a piece
+        stop_tracks_raw, _ = _parse_turn_move_to_tracks(stop_body)
+        for t in stop_tracks_raw:
+            key = (t.piece, t.axis, t.is_rotation)
+            if key not in closed_pose:
+                closed_pose[key] = t.keyframes[-1].value
+        open_tracks, open_dur = _parse_turn_move_to_tracks(go_body, start_pose=closed_pose)
+        open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                     for t in open_tracks}
+        close_tracks, close_dur = _parse_turn_move_to_tracks(stop_body, start_pose=open_pose)
+        if open_tracks and close_tracks:
+            print(f"  Toggle animation 'ActivateOpen': {len(open_tracks)} tracks, {open_dur:.2f}s")
+            print(f"  Toggle animation 'ActivateClose': {len(close_tracks)} tracks, {close_dur:.2f}s")
+            clips.append(('ActivateOpen', open_tracks))
+            clips.append(('ActivateClose', close_tracks))
+            return clips
+
     # --- Pattern 1: Open() / Close() functions ---
     open_body = _extract_function_body(bos_content, 'Open')
     close_body = _extract_function_body(bos_content, 'Close')

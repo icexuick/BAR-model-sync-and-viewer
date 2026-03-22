@@ -839,7 +839,10 @@ def convert_with_weapons(
                                           piece_offsets)
                 if model.root_piece:
                     root_idx = builder.scenes[0]["nodes"][0]
-                    builder.nodes[root_idx].setdefault("extras", {})["toggleable"] = True
+                    extras = builder.nodes[root_idx].setdefault("extras", {})
+                    extras["toggleable"] = True
+                    if unit_name.lower().endswith('solar'):
+                        extras["autoplay_open"] = True
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
