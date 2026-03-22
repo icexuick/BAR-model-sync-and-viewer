@@ -808,14 +808,16 @@ def convert_with_weapons(
                     for clip_name, clip_tracks in filtered_clips:
                         event = clip_name.split('_')[0] if '_' in clip_name else clip_name
                         grouped[event].extend(clip_tracks)
+                    spin_clip_names = []
                     for event_name, all_tracks in grouped.items():
                         builder.add_spin_animation(event_name, all_tracks, node_name_to_idx,
                                                    now_rots or None)
                         spin_pieces.extend(t.piece for t in all_tracks)
-                    # Store spin_pieces in root extras so viewer can target tooltip and animations
+                        spin_clip_names.append(event_name)
+                    # Store spin_pieces + clip names so viewer can identify spin clips by name
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
-                        builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces
+                        builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces + spin_clip_names
             # Activate-loop animations (e.g. armaser spinarms — while(TRUE) + turn-to + sleep)
             if not spin_clips:
                 loop_clips = extract_activate_loop_animation(bos_content)
