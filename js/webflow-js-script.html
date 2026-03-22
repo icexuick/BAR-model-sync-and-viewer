@@ -479,18 +479,20 @@
                     let autoplayOpen = false;
                     modelScene.traverse(n => { if (n.userData && n.userData.autoplay_open) autoplayOpen = true; });
                     if (autoplayOpen) {
-                        toggleOpenAction = mixer.clipAction(openClip);
-                        toggleOpenAction.setLoop(THREE.LoopOnce, 1);
-                        toggleOpenAction.clampWhenFinished = true;
-                        toggleAnimating = true;
-                        toggleOpenAction.reset().play();
-                        mixer.addEventListener('finished', function onAutoOpen(e) {
-                            if (e.action === toggleOpenAction) {
-                                toggleState = true;
-                                toggleAnimating = false;
-                                mixer.removeEventListener('finished', onAutoOpen);
-                            }
-                        });
+                        setTimeout(() => {
+                            toggleOpenAction = mixer.clipAction(openClip);
+                            toggleOpenAction.setLoop(THREE.LoopOnce, 1);
+                            toggleOpenAction.clampWhenFinished = true;
+                            toggleAnimating = true;
+                            toggleOpenAction.reset().play();
+                            mixer.addEventListener('finished', function onAutoOpen(e) {
+                                if (e.action === toggleOpenAction) {
+                                    toggleState = true;
+                                    toggleAnimating = false;
+                                    mixer.removeEventListener('finished', onAutoOpen);
+                                }
+                            });
+                        }, 1000);
                     }
                 } else {
                     renderer.domElement.style.cursor = '';
