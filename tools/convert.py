@@ -289,7 +289,21 @@ def convert_with_weapons(
                     af_key = wmap.aim_from_piece.lower()
                     af_sub = _collect_subtree(af_key, children_map)
                     if total_pieces == 0 or len(af_sub) <= total_pieces * 0.50:
-                        visual_roots.append((af_key, af_sub))
+                        # Prefer aim_from only if it has real geometry — otherwise
+                        # pick the smallest aim_piece (covers e.g. aimpoint on corsala)
+                        af_verts = piece_vert_count.get(af_key, 0)
+                        if af_verts > 10:
+                            visual_roots.append((af_key, af_sub))
+                        else:
+                            # aim_from is a dummy/near-dummy — use smallest aim_piece
+                            best_ap = min(aim_set, key=lambda k: len(_collect_subtree(k, children_map)))
+                            best_sub = _collect_subtree(best_ap, children_map)
+                            visual_roots.append((best_ap, best_sub))
+                    else:
+                        # aim_from subtree too large — use smallest aim_piece as last resort
+                        best_ap = min(aim_set, key=lambda k: len(_collect_subtree(k, children_map)))
+                        best_sub = _collect_subtree(best_ap, children_map)
+                        visual_roots.append((best_ap, best_sub))
                 visual_root_keys = {vr for vr, _ in visual_roots}
                 for visual_root, subtree in visual_roots:
                     for piece_key in subtree:
@@ -485,7 +499,7 @@ def convert_with_weapons(
                     # This handles units like legphoenix where ring1/2/3 are weapon geometry
                     # siblings of the fire_point ancestor, not connected via BOS aim_pieces.
 
-                    if _subtree_verts(visual_root) == 0:
+                    if _subtree_verts(visual_root) <= 3:
                         cur_anc = parent_map.get(visual_root)
                         while cur_anc is not None:
                             geo_siblings = [k for k in children_map.get(cur_anc, [])
@@ -518,7 +532,11 @@ def convert_with_weapons(
                             cur_anc = parent_map.get(cur_anc)
                     total_pieces = len(parent_map)
                     fp_is_aim = fp_key in {ap.lower() for ap in wmap.aim_pieces}
-                    is_dummy = fp_is_aim and total_pieces > 0 and len(subtree) > total_pieces * 0.30
+                    # Skip only when the fire_point itself has real geometry (it's an aim_pivot
+                    # masquerading as a fire_point) AND its subtree is very large.
+                    # Zero-vert fire_points (flares, dummies) are real barrel tips — never skip.
+                    fp_has_verts = piece_vert_count.get(fp_key, 0) > 0
+                    is_dummy = fp_is_aim and fp_has_verts and total_pieces > 0 and len(subtree) > total_pieces * 0.30
                     if is_dummy:
                         print(f"  Weapon {wnum}: visual root = {visual_root}, "
                               f"subtree size = {len(subtree)} (skipped — fire_point is aim_piece and subtree too large)")
@@ -530,11 +548,23 @@ def convert_with_weapons(
                     # Skip mirror when there are >2 fire_points (radial multi-barrel like
                     # legstarfall with 7 sleeves) to avoid claiming the mirror's own fp root.
                     mirror_root = _mirror(visual_root)
+                    vr_parent = parent_map.get(visual_root)
+                    mirror_parent = parent_map.get(mirror_root)
+                    # Mirror is valid when mirror_root is either:
+                    # (a) a sibling of visual_root (same parent), OR
+                    # (b) a child of the mirrored parent (e.g. rarm under ruparm ↔ larm under luparm)
+                    _mirror_parent_ok = (
+                        vr_parent is not None and (
+                            mirror_root in children_map.get(vr_parent, []) or
+                            (mirror_parent is not None and _mirror(vr_parent) == mirror_parent)
+                        )
+                    )
                     if (mirror_root != visual_root
                             and mirror_root in children_map
                             and mirror_root not in other_weapon_pieces
                             and mirror_root not in seen_roots
-                            and len(all_fp_keys) <= 2):
+                            and len(all_fp_keys) <= 2
+                            and _mirror_parent_ok):
                         mirror_subtree = _collect_subtree(mirror_root, children_map)
                         tagged_subtrees.append(mirror_subtree)
                         seen_roots.add(mirror_root)
@@ -714,6 +744,17 @@ def convert_with_weapons(
                 now_rots = parse_create_now_rotations(bos_content)
                 if now_rots:
                     builder.apply_now_rotations(now_rots, node_name_to_idx)
+                    # Hide pieces that move underground after Activate (factory doors).
+                    # Check: if Activate moves a piece to a negative y-position, mark hidden.
+                    for (piece, axis, is_rot), val in now_rots.items():
+                        if not is_rot and axis == 1:  # y-axis move
+                            base_y = piece_offsets.get(piece, (0, 0, 0))[1]
+                            final_y = base_y + val
+                            if final_y < -2.0:
+                                node_idx = node_name_to_idx.get(piece)
+                                if node_idx is not None:
+                                    builder.nodes[node_idx].setdefault('extras', {})['hide'] = True
+                                    print(f"  Hiding {piece}: moved underground (y={final_y:.1f})")
 
             # Always try spin animation — some units have BOTH walk and spin
             # (e.g. factories with a dish + opening animation).
@@ -739,10 +780,19 @@ def convert_with_weapons(
                     ]
                 if filtered_clips:
                     spin_pieces = []
+                    # Group tracks by BOS event (e.g. "Activate_turbinef" → "Activate")
+                    # so all spinners from the same event end up in one GLB animation clip.
+                    # The viewer only plays the first animation, so a single merged clip
+                    # ensures all pieces spin simultaneously.
+                    from collections import defaultdict
+                    grouped: dict = defaultdict(list)
                     for clip_name, clip_tracks in filtered_clips:
-                        builder.add_spin_animation(clip_name, clip_tracks, node_name_to_idx,
+                        event = clip_name.split('_')[0] if '_' in clip_name else clip_name
+                        grouped[event].extend(clip_tracks)
+                    for event_name, all_tracks in grouped.items():
+                        builder.add_spin_animation(event_name, all_tracks, node_name_to_idx,
                                                    now_rots or None)
-                        spin_pieces.extend(t.piece for t in clip_tracks)
+                        spin_pieces.extend(t.piece for t in all_tracks)
                     # Store spin_pieces in root extras so viewer can target tooltip and animations
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
@@ -1209,7 +1259,7 @@ def push_glb_to_repo(glb_path: str, force: bool = False):
         return
 
     filename = os.path.basename(glb_path)
-    repo_path = filename  # GLBs live in the repo root
+    repo_path = f"glb/{filename}"  # GLBs live in the glb/ subfolder
 
     with open(glb_path, "rb") as f:
         raw = f.read()
@@ -1313,10 +1363,12 @@ def main():
 
     if args.unit:
         if args.local:
-            # --local: save GLB to repo root so the user can inspect it
+            # --local: save GLB to glb/ subfolder so the user can inspect it
             if args.output is None:
                 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                args.output = os.path.join(repo_root, f"{args.unit}.glb")
+                glb_dir = os.path.join(repo_root, "glb")
+                os.makedirs(glb_dir, exist_ok=True)
+                args.output = os.path.join(glb_dir, f"{args.unit}.glb")
         fetch_unit_from_github(
             args.unit, args.output, args.info_only,
             push=not args.local and not args.info_only,

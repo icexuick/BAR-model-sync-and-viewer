@@ -410,19 +410,8 @@ class GLBBuilder:
             samplers.append({"input": t_acc, "interpolation": "LINEAR", "output": v_acc})
             return idx
 
-        def _quat_mul(a, b):
-            """Quaternion multiply a * b (both [x,y,z,w])."""
-            ax, ay, az, aw = a
-            bx, by, bz, bw = b
-            return [
-                aw*bx + ax*bw + ay*bz - az*by,
-                aw*by - ax*bz + ay*bw + az*bx,
-                aw*bz + ax*by - ay*bx + az*bw,
-                aw*bw - ax*bx - ay*by - az*bz,
-            ]
-
-        def _rest_quat(piece_lower):
-            """Build rest-pose quaternion for a piece from now_rots (COBWTF YXZ order)."""
+        def _rest_angles(piece_lower):
+            """Return (rx, ry, rz) rest-pose angles in degrees from now_rots."""
             if not now_rots:
                 return None
             rx = now_rots.get((piece_lower, 0, True), 0.0)
@@ -430,10 +419,13 @@ class GLBBuilder:
             rz = now_rots.get((piece_lower, 2, True), 0.0)
             if rx == 0.0 and ry == 0.0 and rz == 0.0:
                 return None
-            # Same COBWTF YXZ euler→quat as apply_now_rotations
-            rx_r = math.radians(rx)
-            ry_r = math.radians(ry)
-            rz_r = -math.radians(rz)  # COBWTF Z-negation
+            return (rx, ry, rz)
+
+        def _euler_to_quat_cobwtf(rx_deg, ry_deg, rz_deg):
+            """COBWTF YXZ euler→quat (same as apply_now_rotations)."""
+            rx_r = math.radians(rx_deg)
+            ry_r = math.radians(ry_deg)
+            rz_r = -math.radians(rz_deg)  # COBWTF Z-negation
             cx, sx = math.cos(rx_r/2), math.sin(rx_r/2)
             cy, sy = math.cos(ry_r/2), math.sin(ry_r/2)
             cz, sz = math.cos(rz_r/2), math.sin(rz_r/2)
@@ -450,10 +442,12 @@ class GLBBuilder:
                 continue
             node_idx = node_name_to_idx[name_lower]
 
-            # Compute rest-pose quaternion from Create() 'turn ... now' commands.
-            # glTF animation channels override the node's static rotation, so we
-            # must bake the rest-pose into every keyframe: q_final = q_rest * q_spin.
-            q_rest = _rest_quat(name_lower)
+            # In Spring, 'spin piece around <axis>' adds to that piece's angle on
+            # that axis.  The full rotation at spin-angle θ is therefore:
+            #   _euler_to_quat(rx + θ*(axis==0), ry + θ*(axis==1), rz + θ*(axis==2))
+            # This correctly handles tilted/composite rest orientations (e.g. bladesl
+            # with x=-45,y=120 spinning around z).
+            rest = _rest_angles(name_lower)
 
             # Build keyframes 0°..315° then add closing 360° frame.
             # All quaternions in the same hemisphere so every slerp step
@@ -471,17 +465,23 @@ class GLBBuilder:
             quats = []
             prev = None
             for angle in all_angles:
-                angle_rad = math.radians(angle)
-                half = angle_rad / 2.0
-                c, s = math.cos(half), math.sin(half)
-                if track.axis == 0:
-                    q = [s, 0.0, 0.0, c]
-                elif track.axis == 1:
-                    q = [0.0, s, 0.0, c]
+                if rest is not None:
+                    # Add spin angle to the appropriate Euler axis
+                    rx = rest[0] + (angle if track.axis == 0 else 0.0)
+                    ry = rest[1] + (angle if track.axis == 1 else 0.0)
+                    rz = rest[2] + (angle if track.axis == 2 else 0.0)
+                    q = _euler_to_quat_cobwtf(rx, ry, rz)
                 else:
-                    q = [0.0, 0.0, s, c]
-                if q_rest is not None:
-                    q = _quat_mul(q, q_rest)
+                    # No rest orientation — pure axis rotation
+                    angle_rad = math.radians(angle)
+                    half = angle_rad / 2.0
+                    c, s = math.cos(half), math.sin(half)
+                    if track.axis == 0:
+                        q = [s, 0.0, 0.0, c]
+                    elif track.axis == 1:
+                        q = [0.0, s, 0.0, c]
+                    else:
+                        q = [0.0, 0.0, s, c]
                 if prev is not None and sum(a * b for a, b in zip(q, prev)) < 0:
                     q = [-v for v in q]
                 prev = q

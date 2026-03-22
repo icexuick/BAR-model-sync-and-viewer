@@ -50,7 +50,7 @@
         ssaoMaxDist: 5.5,
 
         exportWidth: 4096,
-        initialZoomMultiplier: 0.55,
+        initialZoomMultiplier: 0.70,
         cameraHeightFactor: 0.8
     };
 
@@ -139,7 +139,7 @@
         VIEWER_CONFIG.teamColor = '#' + teamColor.getHexString();
         VIEWER_CONFIG.hdrUrl = selectedHdrUrl;
 
-        const modelURL = `https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/${unitName}.glb?v=${Date.now()}`;
+        const modelURL = `https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/glb/${unitName}.glb?v=${Date.now()}`;
         const baseURL = 'https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/tex/';
         const diffuseURL = `${baseURL}${texturePrefix}_color.png`;
         const pbrURL = `${baseURL}${texturePrefix}_other.png`;

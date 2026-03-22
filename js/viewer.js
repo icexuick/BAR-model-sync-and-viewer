@@ -40,7 +40,7 @@
         ssaoMaxDist: 5.5,
 
         exportWidth: 4096,
-        initialZoomMultiplier: 0.55,
+        initialZoomMultiplier: 0.70,
         cameraHeightFactor: 0.8
     };
 

@@ -336,7 +336,56 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
 
         loop_blocks = _parse_frame_blocks(while_body)
         if not loop_blocks:
-            continue
+            # No //Frame: markers — try sleep-based parsing (cornecro-style)
+            clean_while = _strip_comments(while_body)
+            # Detect animSpeed-based sleeps: ((N*animSpeed) -K)
+            # Use the pre-body fixed sleep (e.g. 'sleep 131') as the per-keyframe
+            # duration since the animSpeed formula scales with unit speed at runtime.
+            _ANIMSPEED_SLEEP_RE = re.compile(
+                r'\bsleep\s+\(\s*\(\s*\d+\s*\*\s*animSpeed', re.IGNORECASE)
+            uses_animspeed = bool(_ANIMSPEED_SLEEP_RE.search(clean_while))
+            pre_sleep_ms: Optional[float] = None
+            if uses_animspeed:
+                # Use the fixed-value sleep from anywhere in the Walk() body as the
+                # per-keyframe timing (e.g. 'sleep 131' = the pre-loop frame duration).
+                clean_body = _strip_comments(body)
+                simple_sleep = re.search(r'\bsleep\s+(\d+)', clean_body, re.IGNORECASE)
+                if simple_sleep:
+                    pre_sleep_ms = float(simple_sleep.group(1))
+
+            segments = re.split(_SLEEP_RE, clean_while)
+            if len(segments) >= 3:
+                time_ms = 0.0
+                sleep_blocks: List[Tuple[int, Dict[Tuple, float]]] = []
+                i = 0
+                kf_index = 0
+                while i < len(segments):
+                    block_text = segments[i]
+                    cmds: Dict[Tuple, float] = {}
+                    for m in _TURN_RE.finditer(block_text):
+                        key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+                        cmds[key] = float(m.group(3))
+                    for m in _MOVE_RE.finditer(block_text):
+                        key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+                        cmds[key] = float(m.group(3))
+                    if cmds:
+                        if pre_sleep_ms is not None:
+                            sleep_blocks.append((int(kf_index * pre_sleep_ms), cmds))
+                        else:
+                            sleep_blocks.append((int(time_ms), cmds))
+                        kf_index += 1
+                    if i + 1 < len(segments):
+                        try:
+                            time_ms += float(segments[i + 1])
+                        except (ValueError, IndexError):
+                            pass
+                    i += 2
+                if len(sleep_blocks) >= 2:
+                    # Convert ms timestamps to frame numbers (ms * FPS / 1000) so the
+                    # frame-based duration calculation (step_size / FPS) works correctly.
+                    loop_blocks = [(int(t_ms * FPS / 1000), cmds) for t_ms, cmds in sleep_blocks]
+            if not loop_blocks:
+                continue
 
         # Determine step_size from most common diff between consecutive frame numbers.
         # Frame numbers may wrap (e.g. 10,15,20,25,30,5), so use modulo.
@@ -575,7 +624,10 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
     return None
 
 
-_SLEEP_RE = re.compile(r'\bsleep\s+(\d+)', re.IGNORECASE)
+_SLEEP_RE = re.compile(
+    r'\bsleep\s+(?:\(\s*\(\s*)?(\d+)(?:\s*\*\s*animSpeed\s*\)\s*[+-]\s*\d+\s*\))?',
+    re.IGNORECASE
+)
 
 
 def extract_activate_loop_animation(bos_content: str) -> Optional[List[Tuple[str, List[BosTrack]]]]:
