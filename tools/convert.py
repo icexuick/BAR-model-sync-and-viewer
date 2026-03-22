@@ -768,17 +768,6 @@ def convert_with_weapons(
                 now_rots = parse_create_now_rotations(bos_content)
                 if now_rots:
                     builder.apply_now_rotations(now_rots, node_name_to_idx)
-                    # Hide pieces that move underground after Activate (factory doors).
-                    # Check: if Activate moves a piece to a negative y-position, mark hidden.
-                    for (piece, axis, is_rot), val in now_rots.items():
-                        if not is_rot and axis == 1:  # y-axis move
-                            base_y = piece_offsets.get(piece, (0, 0, 0))[1]
-                            final_y = base_y + val
-                            if final_y < -2.0:
-                                node_idx = node_name_to_idx.get(piece)
-                                if node_idx is not None:
-                                    builder.nodes[node_idx].setdefault('extras', {})['hide'] = True
-                                    print(f"  Hiding {piece}: moved underground (y={final_y:.1f})")
 
             # Always try spin animation — some units have BOTH walk and spin
             # (e.g. factories with a dish + opening animation).
@@ -841,6 +830,31 @@ def convert_with_weapons(
             # Toggle animations (Open/Close or MMStatus) — always check, independent of spin
             toggle_clips = [] if unit_name.lower() in _TOGGLE_SKIP else extract_toggle_animations(bos_content)
             if toggle_clips:
+                # Find Open clip; generate Close as time-reversed Open if no valid Close exists
+                open_tracks = next((t for n, t in toggle_clips if n == 'ActivateOpen'), None)
+                close_tracks = next((t for n, t in toggle_clips if n == 'ActivateClose'), None)
+                if open_tracks:
+                    # Check if Close is a no-op (all keyframe values identical = broken BOS parse)
+                    def _is_noop(tracks):
+                        for tr in tracks:
+                            vals = [k.value for k in tr.keyframes]
+                            if len(set(round(v, 4) for v in vals)) > 1:
+                                return False
+                        return True
+                    if close_tracks is None or _is_noop(close_tracks):
+                        # Build reversed Close from Open: reverse time axis
+                        from bos_animator import BosTrack, BosKeyframe
+                        dur = max(k.time for tr in open_tracks for k in tr.keyframes)
+                        rev_tracks = []
+                        for tr in open_tracks:
+                            rev_kfs = [BosKeyframe(time=dur - k.time, value=k.value)
+                                       for k in reversed(tr.keyframes)]
+                            rev_tracks.append(BosTrack(piece=tr.piece, axis=tr.axis,
+                                                       is_rotation=tr.is_rotation,
+                                                       keyframes=rev_kfs))
+                        toggle_clips = [('ActivateOpen', open_tracks),
+                                        ('ActivateClose', rev_tracks)]
+                        print(f"  ActivateClose auto-reversed from Open ({dur:.2f}s)")
                 for clip_name, clip_tracks in toggle_clips:
                     builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
                                           piece_offsets)
