@@ -746,6 +746,24 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
             clips.append((clip_name, [track]))
 
         if clips:
+            # Also scan FireWeapon*/FirePrimary/FireSecondary for additional spin pieces
+            # (e.g. armcir spindle that spins only during firing but is visually always spinning)
+            existing_pieces = {c[0].split('_', 1)[1] for c in clips}
+            fire_funcs = [m.group(1) for m in re.finditer(
+                r'\b(Fire(?:Weapon\d*|Primary|Secondary|Tertiary))\s*\(', bos_content, re.IGNORECASE)]
+            extra_spins: Dict[Tuple[str, int], float] = {}
+            for ff in fire_funcs:
+                for k, v in _collect_spin_commands(bos_content, ff).items():
+                    if k[0] not in existing_pieces and _is_interesting(k[0]):
+                        extra_spins[k] = v
+            for (piece, axis), speed in extra_spins.items():
+                duration = abs(360.0 / speed)
+                sign = 1.0 if speed > 0 else -1.0
+                n = 8
+                kfs = [BosKeyframe(time=duration * i / n, value=sign * 360.0 * i / n) for i in range(n)]
+                track = BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs)
+                clips.append((f"{func_name}_{piece}", [track]))
+
             pieces = [c[0].split('_', 1)[1] for c in clips]
             print(f"  Spin animation '{func_name}': {len(clips)} spinning pieces: {', '.join(pieces)}")
             return clips
@@ -860,54 +878,101 @@ def _parse_turn_move_to_tracks(body: str, start_pose: Optional[Dict[Tuple, float
                                 ) -> Tuple[List[BosTrack], float]:
     """
     Parse 'turn piece to axis <deg> speed <spd>' and 'move piece to axis [val] speed [spd]'
-    commands from a BOS function body.  Duration = max(|target - start| / speed) over all pieces.
+    commands from a BOS function body, respecting wait-for-turn/wait-for-move as phase barriers.
 
-    Returns (tracks, duration_seconds).  Each track has two keyframes: t=0 (start pose or 0)
-    and t=duration (target value).
+    Returns (tracks, duration_seconds).  Each track has keyframes at the correct phase offsets.
     """
     clean = _strip_comments(body)
-    targets: Dict[Tuple, float] = {}
-    speeds: Dict[Tuple, float] = {}
 
-    for m in _TURN_RE.finditer(clean):
-        key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
-        targets[key] = float(m.group(3))
-        # speed follows the angle value: 'speed <N>'
-        spd_m = re.search(r'speed\s*<([\d.]+)>', clean[m.start():m.start()+200], re.IGNORECASE)
-        if spd_m:
-            speeds[key] = float(spd_m.group(1))
+    _WAIT_RE = re.compile(
+        r'\bwait-for-(turn|move)\s+(\w+)\s+(?:around|along)\s+([xyz])-axis',
+        re.IGNORECASE
+    )
 
-    for m in _MOVE_RE.finditer(clean):
-        key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
-        targets[key] = float(m.group(3))
-        spd_m = re.search(r'speed\s*\[([\d.]+)\]', clean[m.start():m.start()+200], re.IGNORECASE)
-        if spd_m:
-            speeds[key] = float(spd_m.group(1))
+    # Split body into phases at each wait-for-* boundary
+    # Each phase is a slice of text; commands in a phase run in parallel
+    phase_texts: List[str] = []
+    prev = 0
+    for wm in _WAIT_RE.finditer(clean):
+        phase_texts.append(clean[prev:wm.end()])
+        prev = wm.end()
+    phase_texts.append(clean[prev:])  # final phase after last wait
 
-    if not targets:
+    # For each phase: collect commands and compute phase duration
+    # current_pose tracks the running position of each piece
+    current_pose: Dict[Tuple, float] = dict(start_pose) if start_pose else {}
+    track_kfs: Dict[Tuple, List[BosKeyframe]] = {}
+    t_cursor = 0.0
+
+    for phase_text in phase_texts:
+        phase_cmds: Dict[Tuple, float] = {}
+        phase_spds: Dict[Tuple, float] = {}
+
+        for m in _TURN_RE.finditer(phase_text):
+            key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+            phase_cmds[key] = float(m.group(3))
+            spd_m = re.search(r'speed\s*<([\d.]+)>', phase_text[m.start():m.start()+200], re.IGNORECASE)
+            if spd_m:
+                phase_spds[key] = float(spd_m.group(1))
+
+        for m in _MOVE_RE.finditer(phase_text):
+            key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+            phase_cmds[key] = float(m.group(3))
+            spd_m = re.search(r'speed\s*\[([\d.]+)\]', phase_text[m.start():m.start()+200], re.IGNORECASE)
+            if spd_m:
+                phase_spds[key] = float(spd_m.group(1))
+
+        if not phase_cmds:
+            continue
+
+        # Phase duration = slowest command in this phase
+        phase_dur = 0.0
+        for key, target in phase_cmds.items():
+            speed = phase_spds.get(key, 60.0)
+            start_val = current_pose.get(key, 0.0)
+            delta = abs(target - start_val)
+            if speed > 0:
+                phase_dur = max(phase_dur, delta / speed)
+
+        if phase_dur < 0.001:
+            phase_dur = 0.0
+
+        # Write keyframes: start of phase and end of phase for each moving piece
+        for key, target in phase_cmds.items():
+            piece, axis, is_rot = key
+            start_val = current_pose.get(key, 0.0)
+            if key not in track_kfs:
+                track_kfs[key] = [BosKeyframe(time=0.0, value=start_val)]
+            else:
+                # Ensure there's a keyframe at t_cursor (hold previous value)
+                last_kf = track_kfs[key][-1]
+                if last_kf.time < t_cursor - 0.001:
+                    track_kfs[key].append(BosKeyframe(time=t_cursor, value=last_kf.value))
+            if phase_dur > 0.001:
+                track_kfs[key].append(BosKeyframe(time=t_cursor + phase_dur, value=target))
+            else:
+                track_kfs[key].append(BosKeyframe(time=t_cursor, value=target))
+            current_pose[key] = target
+
+        t_cursor += phase_dur
+
+    if not track_kfs:
         return [], 0.0
 
-    # Duration = slowest piece (degrees/speed for rotations, units/speed for moves)
-    duration = 0.0
-    for key, target in targets.items():
-        speed = speeds.get(key, 60.0)
-        start_val = (start_pose or {}).get(key, 0.0)
-        delta = abs(target - start_val)
-        if speed > 0:
-            duration = max(duration, delta / speed)
-
-    if duration < 0.01:
-        duration = 1.0  # fallback
+    total_duration = t_cursor if t_cursor > 0.01 else 1.0
 
     tracks: List[BosTrack] = []
-    for key, target in targets.items():
+    for key, kfs in track_kfs.items():
         piece, axis, is_rot = key
-        start_val = (start_pose or {}).get(key, 0.0)
-        kfs = [BosKeyframe(time=0.0, value=start_val),
-               BosKeyframe(time=duration, value=target)]
+        if len(kfs) < 2:
+            continue
+        # Close off any tracks that ended before total_duration
+        last = kfs[-1]
+        if last.time < total_duration - 0.001:
+            kfs.append(BosKeyframe(time=total_duration, value=last.value))
         tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot, keyframes=kfs))
 
-    return tracks, duration
+    return tracks, total_duration
 
 
 def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List[BosTrack]]]]:
