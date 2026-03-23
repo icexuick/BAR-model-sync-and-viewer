@@ -656,7 +656,7 @@ def convert_with_weapons(
     # Maps piece_name.lower() → S3O rest offset (x, y, z)
     piece_offsets: Dict[str, tuple] = {}
 
-    _NO_MESH_FRAGMENTS = ('flare', 'aimpoint', 'fire', 'emit', 'wake', 'nano',
+    _NO_MESH_FRAGMENTS = ('flare', 'aimpoint', 'fire', 'emit', 'wake',
                           'blink', 'glow')
 
     def add_piece_with_extras(piece: S3OPiece, parent_idx=None) -> int:
@@ -1017,7 +1017,16 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
         bos_hides = parse_create_hide_pieces(_bos)
         if bos_hides:
             piece_verts = {p.name.lower(): len(p.vertices) for p in model.all_pieces()}
-            hide_pieces |= {p for p in bos_hides if piece_verts.get(p, 0) == 0}
+            # Hide BOS-hidden pieces: always hide zero-vertex pieces, and also
+            # hide pieces with geometry if they contain 'nano' (nanolathe arms
+            # that start hidden and are shown during StartBuilding).
+            # Don't hide aim pieces with geometry (aimy1 etc.) as their children
+            # (turrets) must stay visible.
+            for p in bos_hides:
+                if piece_verts.get(p, 0) == 0:
+                    hide_pieces.add(p)
+                elif 'nano' in p:
+                    hide_pieces.add(p)
 
     # Expand hide_pieces to include all descendants of fragment-matched pieces only
     # (e.g. crown subtree). BOS-hidden aim-pivots (aimy1, aimx*) have important
