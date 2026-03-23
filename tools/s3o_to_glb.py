@@ -364,12 +364,11 @@ class GLBBuilder:
                                  for kf in tr.keyframes})
             vecs = []
             for t in all_times:
-                # BOS 'move piece to axis [value]' is an absolute position in
-                # parent-space — same space as the S3O rest offset. For animated
-                # axes use the BOS value directly; for unanimated axes keep rest.
-                x = _interp(axis_tracks, 0, t) if 0 in axis_tracks else rest[0]
-                y = _interp(axis_tracks, 1, t) if 1 in axis_tracks else rest[1]
-                z = _interp(axis_tracks, 2, t) if 2 in axis_tracks else rest[2]
+                # BOS 'move piece to axis [value]' is a DELTA from the S3O rest
+                # offset. Add to rest for animated axes; keep rest for unanimated.
+                x = (rest[0] + _interp(axis_tracks, 0, t)) if 0 in axis_tracks else rest[0]
+                y = (rest[1] + _interp(axis_tracks, 1, t)) if 1 in axis_tracks else rest[1]
+                z = (rest[2] + _interp(axis_tracks, 2, t)) if 2 in axis_tracks else rest[2]
                 vecs.extend([x, y, z])
             s = _add_sampler(all_times, vecs, "VEC3")
             channels.append({"sampler": s, "target": {"node": node_idx, "path": "translation"}})

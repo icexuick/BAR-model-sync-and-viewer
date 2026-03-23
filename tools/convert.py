@@ -856,25 +856,7 @@ def convert_with_weapons(
                         toggle_clips = [('ActivateOpen', open_tracks),
                                         ('ActivateClose', rev_tracks)]
                         print(f"  ActivateClose auto-reversed from Open ({dur:.2f}s)")
-                # Patch toggle clip endpoints to match S3O rest offsets.
-                # BOS closed_pose comes from Deactivate() targets (e.g. x=0) but
-                # the S3O rest position may differ (e.g. corvp doorl x=-8.5).
-                # The node default is the S3O rest, so:
-                #   ActivateOpen  t=0   must equal S3O rest (animation starts at closed)
-                #   ActivateClose t=end must equal S3O rest (animation ends at closed)
-                from bos_animator import BosKeyframe
                 for clip_name, clip_tracks in toggle_clips:
-                    for tr in clip_tracks:
-                        if tr.is_rotation or not tr.keyframes:
-                            continue
-                        rest_val = piece_offsets.get(tr.piece.lower(), (0.0, 0.0, 0.0))[tr.axis]
-                        if clip_name == 'ActivateOpen' and tr.keyframes[0].time == 0.0:
-                            if abs(tr.keyframes[0].value - rest_val) > 0.01:
-                                tr.keyframes[0] = BosKeyframe(time=0.0, value=rest_val)
-                        elif clip_name == 'ActivateClose':
-                            last = tr.keyframes[-1]
-                            if abs(last.value - rest_val) > 0.01:
-                                tr.keyframes[-1] = BosKeyframe(time=last.time, value=rest_val)
                     builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
                                           piece_offsets)
                 if model.root_piece:
