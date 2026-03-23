@@ -1226,9 +1226,15 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
     # --- Pattern 2b: AimWeapon open/close (missile launchers like armmerl, corvroc, corhrk) ---
     # These units open in AimWeapon (turn pieces to firing position) and close
     # in ExecuteRestoreAfterDelay or RestoreAfterDelay (return to rest).
+    # Combine all AimWeaponN bodies so multi-weapon units (e.g. legfort with
+    # left+right plasma rails) get the full deploy animation.
     aim_body = _extract_function_body(bos_content, 'AimWeapon1')
     if not aim_body:
         aim_body = _extract_function_body(bos_content, 'AimPrimary')
+    for _aw_i in range(2, 10):
+        _aw_body = _extract_function_body(bos_content, f'AimWeapon{_aw_i}')
+        if _aw_body and aim_body:
+            aim_body = aim_body + '\n' + _aw_body
     # Prefer RestoreAfterDelay over ExecuteRestoreAfterDelay when it has more
     # turn/move commands (e.g. legbar: ExecuteRestore only resets aim, while
     # RestoreAfterDelay also moves turret/barrel/cover back).
