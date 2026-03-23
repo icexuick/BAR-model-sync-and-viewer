@@ -16,7 +16,7 @@
     import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
     import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
-    import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
 
     const VIEWER_CONFIG = {
         autoRotationSpeed: 0.22,
@@ -71,8 +71,6 @@
     }
     window.addEventListener('load', function() {
     setTimeout(function() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const isEditorMode = urlParams.has('editor');
         const container = document.getElementById('model-container');
         const animToggleButton = document.getElementById('anim-toggle-button');
         const animToggleWrapper = document.getElementById('anim-toggle-wrapper');
@@ -84,6 +82,8 @@
         const movementToggleWrap = movementToggle ? movementToggle.closest('.toggle-switch') : null;
         if (!container) return;
         container.style.display = 'block';
+
+        const loader = document.getElementById('model-loader');
 
         container.style.opacity = '0';
         container.style.transform = 'scale(0.5)';
@@ -144,6 +144,7 @@
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = performanceSettings.shadowMapType;
         container.appendChild(renderer.domElement);
+        renderer.domElement.style.webkitTapHighlightColor = 'transparent';
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true; controls.dampingFactor = 0.05;
         controls.enableZoom = true; controls.rotateSpeed = VIEWER_CONFIG.mouseRotateSpeed;
@@ -175,12 +176,6 @@
         const textureLoader = new THREE.TextureLoader();
         const gltfLoader = new GLTFLoader();
         const rgbeLoader = new RGBELoader();
-        const loadHDR = (url) => {
-            rgbeLoader.load(url, (texture) => {
-                texture.mapping = THREE.EquirectangularReflectionMapping;
-                scene.environment = texture; scene.background = null;
-            }, undefined, (err) => { console.error("HDR Error:", err); alert("Kon HDR niet laden."); });
-        };
         Promise.all([
             rgbeLoader.loadAsync(selectedHdrUrl).then(t => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; return t; }),
             textureLoader.loadAsync(diffuseURL), textureLoader.loadAsync(pbrURL),
@@ -191,6 +186,7 @@
             if (fallbackImageBlock) fallbackImageBlock.style.display = 'none';
 
             setTimeout(() => {
+                if (loader) { loader.style.transition = 'opacity 0.3s ease-out'; loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
                 container.style.transition = 'opacity 0.45s ease-out, transform 0.7s ease-out';
                 container.style.opacity = '1';
                 container.style.transform = 'scale(1)';
@@ -206,200 +202,18 @@
 
             const highlightUniform = { value: 0.0 };
             const dimUniform = { value: 0.0 };
-            material.onBeforeCompile = (shader) => {
-                shader.defines.USE_ENVMAP_ROTATION = '1';
-                shader.uniforms.pbrMap = { value: pbrMap };
-                shader.uniforms.teamColor = { value: teamColor };
-                shader.uniforms.teamMap = { value: teamMap };
-                shader.uniforms.pbrEmissiveIntensity = { value: pbrEmissiveIntensityValue };
-                shader.uniforms.time = timeUniform;
-                shader.uniforms.roughnessOffset = { value: VIEWER_CONFIG.roughnessOffset };
-                shader.uniforms.highlightStrength = highlightUniform;
-                shader.uniforms.dimStrength = dimUniform;
-                if (!shader.uniforms.envMapRotation) shader.uniforms.envMapRotation = { value: new THREE.Matrix3() };
-                shader.vertexShader = 'varying vec2 vUv;\n' + shader.vertexShader;
-                shader.vertexShader = shader.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\n vUv = uv;');
-                const header = [
-                    'precision highp float;',
-                    'varying vec2 vUv;',
-                    'uniform sampler2D pbrMap;',
-                    'uniform vec3 teamColor;',
-                    'uniform sampler2D teamMap;',
-                    'uniform float pbrEmissiveIntensity;',
-                    'uniform float time;',
-                    'uniform float roughnessOffset;',
-                    'uniform float highlightStrength;',
-                    'uniform float dimStrength;',
-                    '#define USE_TEAMMAP'
-                ].join('\n');
-                shader.fragmentShader = header + '\n' + shader.fragmentShader;
-                shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>', `float roughnessFactor = roughness + roughnessOffset; vec4 texelRoughness = texture2D( pbrMap, vUv ); roughnessFactor *= texelRoughness.b; roughnessFactor = clamp(roughnessFactor, 0.05, 1.0);`);
-                shader.fragmentShader = shader.fragmentShader.replace('#include <metalnessmap_fragment>', `float metalnessFactor = metalness; vec4 texelMetalness = texture2D( pbrMap, vUv ); metalnessFactor *= texelMetalness.g;`);
-                shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>\n #ifdef USE_TEAMMAP\n float S_teamMask = texture2D( teamMap, vUv ).r; float S_blendFactor = step(0.35, S_teamMask); vec3 targetColor = mix(diffuseColor.rgb, teamColor, 0.75); diffuseColor.rgb = mix(diffuseColor.rgb, targetColor, S_blendFactor); \n #endif`);
-                shader.fragmentShader = shader.fragmentShader.replace('#include <tonemapping_fragment>', `
-                    vec3 S_pbrBoost = vec3(0.0);
-                    #ifdef USE_MAP
-                        float S_emissionAmount = texture2D( pbrMap, vUv ).r;
-                        if (S_emissionAmount > 0.01) {
-                            float S_pulse = (sin(time * 3.14159) * 0.5 + 0.5) * (${pulseMaxValue.toFixed(2)} - 0.01) + 0.01;
-                            vec4 S_diff = texture2D( map, vUv );
-                            S_pbrBoost = pow(S_diff.rgb, vec3(2.2)) * S_emissionAmount * pbrEmissiveIntensity * S_pulse;
-                        }
-                    #endif
-                    vec3 S_combinedLight = outgoingLight + totalEmissiveRadiance + S_pbrBoost;
-                    S_combinedLight = S_combinedLight * (1.0 + highlightStrength * 2.2);
-                    S_combinedLight = S_combinedLight * (1.0 - dimStrength * 0.85);
-                    #ifdef USE_TONEMAPPING
-                        gl_FragColor.rgb = toneMapping( S_combinedLight );
-                    #else
-                        gl_FragColor.rgb = S_combinedLight;
-                    #endif
-                    gl_FragColor.a = diffuseColor.a;
-                `);
-                shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', '');
-                material.userData.shader = shader;
-            };
+            window._barShaderSetup(THREE, material, {
+                pbrMap, teamColor, teamMap, pbrEmissiveIntensityValue, pulseMaxValue,
+                roughnessOffset: VIEWER_CONFIG.roughnessOffset, timeUniform, highlightUniform, dimUniform
+            });
             modelScene = gltf.scene;
 
             const weaponSummary = {};
-            let unitRole = null;
-            let isToggleable = false;
-            modelScene.traverse(node => {
-                if (node.userData && node.userData.weapon_summary) {
-                    Object.assign(weaponSummary, node.userData.weapon_summary);
-                }
-                if (node.userData && node.userData.unit_role) {
-                    unitRole = node.userData.unit_role;
-                }
-                if (node.userData && node.userData.toggleable) {
-                    isToggleable = true;
-                }
+            const wpnResult = window._barWeaponsSetup(THREE, {
+                modelScene, unitName, material, camera, renderer, lightGroup,
+                shouldHideMesh, weaponSummaryOut: weaponSummary
             });
-
-            const meshWeaponMap = new Map();
-            const visualMeshesByWeapon = new Map();
-            modelScene.traverse(node => {
-                if (!node.isMesh) return;
-                const weapons = node.userData && node.userData.weapons;
-                const roles = node.userData && node.userData.weapon_roles;
-                if (!weapons || !weapons.length || !roles || !roles.length) return;
-                if (!roles.includes('visual')) return;
-
-                if (shouldHideMesh(node.name)) return;
-                const wnum = weapons[0];
-                const summary = weaponSummary[String(wnum)];
-                meshWeaponMap.set(node.uuid, {
-                    num: wnum,
-                    def: summary ? summary.def : null,
-                });
-
-                for (const wn of weapons) {
-                    if (!visualMeshesByWeapon.has(wn)) visualMeshesByWeapon.set(wn, []);
-                    visualMeshesByWeapon.get(wn).push(node);
-                }
-            });
-
-            let spinPieceNames = null;
-            modelScene.traverse(node => {
-                if (node.userData && node.userData.spin_pieces) {
-                    spinPieceNames = new Set(node.userData.spin_pieces.map(n => n.toLowerCase()));
-                }
-            });
-
-
-            const unitRoleMeshMap = new Map();
-            if (unitRole && meshWeaponMap.size === 0 && !isToggleable) {
-                const ROLE_LABELS = {
-                    'RADAR': 'Radar',
-                    'JAMMER': 'Jamming Device',
-                    'SONAR': 'Sonar',
-                    'RADAR_JAMMER': 'Radar / Jammer',
-                };
-                const roleLabel = ROLE_LABELS[unitRole] || unitRole;
-                if (spinPieceNames) {
-
-                    modelScene.traverse(node => {
-                        if (!node.isMesh || !node.visible) return;
-                        if (shouldHideMesh(node.name)) return;
-                        if (spinPieceNames.has(node.name.toLowerCase())) {
-                            unitRoleMeshMap.set(node.uuid, roleLabel);
-                        } else if (node.parent && spinPieceNames.has(node.parent.name.toLowerCase())) {
-                            unitRoleMeshMap.set(node.uuid, roleLabel);
-                        }
-                    });
-                } else {
-                    modelScene.traverse(node => {
-                        if (!node.isMesh || !node.visible) return;
-                        if (shouldHideMesh(node.name)) return;
-                        unitRoleMeshMap.set(node.uuid, roleLabel);
-                    });
-                }
-            }
-
-
-            function getDomWeaponNames() {
-                const map = new Map();
-                document.querySelectorAll('.uw-item-flex[data-wpn-slug]').forEach(el => {
-                    const slug = el.getAttribute('data-wpn-slug');
-                    const name = el.querySelector('[wpn-cat-link]')?.textContent.trim() || '';
-                    const desc = el.getAttribute('data-wpn-description') || '';
-                    console.log('[wpn-desc] slug=', slug, 'name=', name, 'desc=', desc);
-                    if (slug) map.set(slug, { name, desc });
-                });
-                return map;
-            }
-            function getWeaponInfo(winfo) {
-                if (winfo.def) {
-                    const slug = `${unitName}-${winfo.def.replace(/_/g, '-')}`;
-                    const names = getDomWeaponNames();
-                    if (names.has(slug)) return names.get(slug);
-                    return null;
-                }
-                return null;
-            }
-
-            const tooltip = document.createElement('div');
-            tooltip.style.cssText = [
-                'position:fixed','pointer-events:none','display:none',
-                'background:rgba(0,0,0,0.78)','color:#fff',
-                'font-size:14px',"font-family:'Poppins',sans-serif",'font-weight:300',
-                'padding:8px 14px','border-radius:5px',
-                'border:1px solid rgba(255,255,255,0.18)',
-                'white-space:nowrap','z-index:9999',
-                'transform:translateZ(0)','will-change:transform',
-                '-webkit-font-smoothing:antialiased',
-                'letter-spacing:-0.3px',
-            ].join(';');
-            const tooltipName = document.createElement('div');
-            tooltipName.style.cssText = 'text-transform:uppercase;letter-spacing:-0.7px;font-size:16px;font-weight:300';
-            const tooltipDesc = document.createElement('div');
-            tooltipDesc.style.cssText = 'font-size:12px;font-weight:400;color:rgba(255,255,255,0.6);margin-top:1px;-webkit-font-smoothing:antialiased;letter-spacing:-0.3px';
-            tooltip.appendChild(tooltipName);
-            tooltip.appendChild(tooltipDesc);
-            document.body.appendChild(tooltip);
-            const raycaster = new THREE.Raycaster();
-            const pointer = new THREE.Vector2();
-            let tooltipHideTimer = null;
-            function showTooltip(x, y, winfo) {
-                const info = getWeaponInfo(winfo);
-                if (!info) return;
-                tooltipName.textContent = info.name;
-                tooltipDesc.textContent = info.desc;
-                tooltipDesc.style.display = info.desc ? 'block' : 'none';
-                tooltip.style.display = 'block';
-                tooltip.style.left = Math.round(x + 14) + 'px';
-                tooltip.style.top  = Math.round(y - 8) + 'px';
-            }
-            function showRoleTooltip(x, y, roleLabel) {
-                tooltipName.textContent = roleLabel;
-                tooltipDesc.style.display = 'none';
-                tooltip.style.display = 'block';
-                tooltip.style.left = Math.round(x + 14) + 'px';
-                tooltip.style.top  = Math.round(y - 8) + 'px';
-            }
-            function hideTooltip() {
-                tooltip.style.display = 'none';
-            }
+            const { spinPieceNames, initFireAnims } = wpnResult;
             modelScene.traverse(child => {
                 if (child.isMesh) {
                     child.material = material;
@@ -457,12 +271,21 @@
             });
 
             // Restore original transforms so the intro animation plays from closed
+            // Also compute a default-pose bounding box for ground/clipping plane
+            let defaultBox = box;
             if (savedTransforms) {
                 modelScene.traverse(n => {
                     const s = savedTransforms.get(n);
                     if (s) { n.position.copy(s.pos); n.quaternion.copy(s.rot); n.scale.copy(s.scl); }
                 });
                 modelScene.updateWorldMatrix(true, true);
+                defaultBox = new THREE.Box3();
+                modelScene.traverse(child => {
+                    if (child.isMesh && child.visible) {
+                        child.geometry.computeBoundingBox();
+                        defaultBox.union(child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld));
+                    }
+                });
             }
 
             const center = box.getCenter(new THREE.Vector3());
@@ -486,7 +309,8 @@
             const groundMat = new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.4 });
             groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(maxDim*10, maxDim*10), groundMat);
             groundMesh.rotation.x = -Math.PI / 2;
-            groundMesh.position.y = box.min.y - center.y - 0.01;
+            const groundBox = autoplayOpenForBox ? box : defaultBox;
+            groundMesh.position.y = groundBox.min.y - center.y - 0.01;
             groundMesh.receiveShadow = true;
             scene.add(groundMesh);
             renderer.localClippingEnabled = true;
@@ -538,7 +362,7 @@
                 }
 
                 const toggleClipNames = new Set(['ActivateOpen', 'ActivateClose']);
-                const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c) && !toggleClipNames.has(c.name));
+                const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c) && !toggleClipNames.has(c.name) && !c.name.startsWith('Fire_'));
                 const walkClip = nonSpinClips.find(c => c.name.toLowerCase() === 'walk') || nonSpinClips[0];
                 if (walkClip) {
                     const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
@@ -564,6 +388,7 @@
                 if (animToggleWrapper) animToggleWrapper.style.display = 'none';
                 renderer.domElement.style.cursor = '';
             }
+            if (mixer && initFireAnims) initFireAnims(THREE, mixer, gltf.animations);
             const renderTarget = new THREE.WebGLRenderTarget(container.offsetWidth, container.offsetHeight, {
                 minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat,
                 alpha: true, type: THREE.HalfFloatType, samples: isMobile ? 0 : 4
@@ -582,42 +407,7 @@
             composer.addPass(smaaPass);
             outputPass = new OutputPass();
             composer.addPass(outputPass);
-            if (isEditorMode) {
-                const gui = new GUI({ title: 'Unit Lab' });
-                const fGen = gui.addFolder('General');
-                fGen.add(VIEWER_CONFIG, 'mouseRotateSpeed', 0.1, 2.0).onChange(v => controls.rotateSpeed = v);
-                fGen.add(VIEWER_CONFIG, 'autoRotationSpeed', 0, 2.0);
-                fGen.addColor(VIEWER_CONFIG, 'teamColor').onChange(v => { if (material.userData.shader) material.userData.shader.uniforms.teamColor.value.set(v); });
-                fGen.add(VIEWER_CONFIG, 'hdrUrl').onFinishChange(v => loadHDR(v));
-                fGen.add(VIEWER_CONFIG, 'envMapIntensity', 0, 5).onChange(v => material.envMapIntensity = v);
-                fGen.add(VIEWER_CONFIG, 'toneMappingExposure', 0.1, 4.0).onChange(v => renderer.toneMappingExposure = v);
-                const fLights = gui.addFolder('Lights Setup');
-                const fKey = fLights.addFolder('Key Light (Shadows)');
-                fKey.addColor(VIEWER_CONFIG, 'keyLightColor').onChange(v => directionalLight.color.set(v));
-                fKey.add(VIEWER_CONFIG, 'keyLightIntensity', 0, 5).onChange(v => directionalLight.intensity = v);
-                fKey.add(VIEWER_CONFIG, 'keyLightX', -10, 10).onChange(v => directionalLight.position.x = v);
-                fKey.add(VIEWER_CONFIG, 'keyLightY', -10, 10).onChange(v => directionalLight.position.y = v);
-                fKey.add(VIEWER_CONFIG, 'keyLightZ', -10, 10).onChange(v => directionalLight.position.z = v);
-                fKey.add(VIEWER_CONFIG, 'shadowRadius', 0, 25).onChange(v => directionalLight.shadow.radius = v);
-                fKey.add(VIEWER_CONFIG, 'shadowBlurSamples', 0, 25).step(1).onChange(v => directionalLight.shadow.blurSamples = v);
-                const fFill = fLights.addFolder('Fill Light');
-                fFill.addColor(VIEWER_CONFIG, 'fillLightColor').onChange(v => directionalLight2.color.set(v));
-                fFill.add(VIEWER_CONFIG, 'fillLightIntensity', 0, 5).onChange(v => directionalLight2.intensity = v);
-                fFill.add(VIEWER_CONFIG, 'fillLightX', -10, 10).onChange(v => directionalLight2.position.x = v);
-                fFill.add(VIEWER_CONFIG, 'fillLightY', -10, 10).onChange(v => directionalLight2.position.y = v);
-                fFill.add(VIEWER_CONFIG, 'fillLightZ', -10, 10).onChange(v => directionalLight2.position.z = v);
-                const fAmb = fLights.addFolder('Ambient Light');
-                fAmb.addColor(VIEWER_CONFIG, 'ambientLightColor').onChange(v => ambientLight.color.set(v));
-                fAmb.add(VIEWER_CONFIG, 'ambientLightIntensity', 0, 2).onChange(v => ambientLight.intensity = v);
-                const fPost = gui.addFolder('Post Processing');
-                fPost.add(VIEWER_CONFIG, 'ssaoEnabled').onChange(v => ssaoPass.enabled = v);
-                fPost.add(VIEWER_CONFIG, 'ssaoRadius', 0, 64).onChange(v => ssaoPass.kernelRadius = v);
-                fPost.add(VIEWER_CONFIG, 'ssaoMinDist', 0.001, 0.1).onChange(v => ssaoPass.minDistance = v);
-                fPost.add(VIEWER_CONFIG, 'ssaoMaxDist', 0.1, 10).onChange(v => ssaoPass.maxDistance = v);
-                const fExtra = gui.addFolder('Extras');
-                fExtra.add(VIEWER_CONFIG, 'roughnessOffset', -1, 1).onChange(v => { if(material.userData.shader) material.userData.shader.uniforms.roughnessOffset.value = v; });
-                fExtra.add({ toggleShadow: () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; }}, 'toggleShadow');
-            }
+            window._editorCtx = { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2, ambientLight, ssaoPass, groundMesh, areShadowsVisible, scene, camera, composer, smaaPass, loadHDR: (url) => { rgbeLoader.load(url, (t) => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; }, undefined, (e) => console.error('HDR Error:', e)); } };
             function exportHighResPNG(w, h) {
                 const origW = container.offsetWidth, origH = container.offsetHeight;
                 const origPR = renderer.getPixelRatio();
@@ -650,112 +440,10 @@
                 exportHighResPNG(VIEWER_CONFIG.exportWidth, Math.round(VIEWER_CONFIG.exportWidth / aspect));
             });
             window.addEventListener('keydown', (e) => {
-                if (e.key === 'Alt') { e.preventDefault(); isAltDown = true; container.style.cursor = 'move'; controls.enabled = false; }
+                if (e.key === 'Alt') { e.preventDefault(); isAltDown = true; window._barViewerAltDown = true; container.style.cursor = 'move'; controls.enabled = false; }
                 if (e.code === 'Space' && mixer && currentAction && !e.repeat) currentAction.paused = !currentAction.paused;
             });
-            window.addEventListener('keyup', (e) => { if (e.key === 'Alt') { isAltDown = false; container.style.cursor = 'grab'; controls.enabled = true; } });
-            let hoveredWeaponNum = null;
-
-            const slugToWnum = new Map();
-            for (const [wnum, summary] of Object.entries(weaponSummary)) {
-                if (!summary || !summary.def) continue;
-                const fullSlug = `${unitName}-${summary.def.replace(/_/g, '-')}`;
-                slugToWnum.set(fullSlug, parseInt(wnum));
-            }
-            let activeDomEl = null;
-
-            document.addEventListener('mouseover', (e) => {
-                const el = e.target.closest('.uw-item-flex[data-wpn-slug]');
-                if (!el) return;
-                const slug = el.getAttribute('data-wpn-slug');
-                const wnum = slugToWnum.get(slug);
-                console.log('[wpn] mouseover slug=', slug, 'wnum=', wnum, 'slugToWnum size=', slugToWnum.size);
-                if (wnum !== undefined && visualMeshesByWeapon.has(wnum)) setWeaponHighlight(wnum);
-            });
-            document.addEventListener('mouseout', (e) => {
-                const el = e.target.closest('.uw-item-flex[data-wpn-slug]');
-                if (!el) return;
-                if (!el.contains(e.relatedTarget)) setWeaponHighlight(null);
-            });
-            function setWeaponHighlight(wnum) {
-                if (wnum === hoveredWeaponNum) return;
-                hoveredWeaponNum = wnum;
-
-                let wnumsToHighlight = new Set();
-                if (wnum !== null) {
-                    const hovDef = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
-                    for (const [wn, summary] of Object.entries(weaponSummary)) {
-                        if (hovDef ? summary.def === hovDef : parseInt(wn) === wnum)
-                            wnumsToHighlight.add(parseInt(wn));
-                    }
-                }
-                const highlightedMeshes = wnum !== null
-                    ? new Set([...wnumsToHighlight].flatMap(wn => (visualMeshesByWeapon.get(wn) || []).map(m => m.uuid)))
-                    : new Set();
-                modelScene.traverse(child => {
-                    if (!child.isMesh) return;
-                    if (highlightedMeshes.has(child.uuid)) {
-                        child.userData._targetHighlight = 1.0;
-                        child.userData._targetDim = 0.0;
-                    } else {
-                        child.userData._targetHighlight = 0.0;
-                        child.userData._targetDim = wnum !== null ? 1.0 : 0.0;
-                    }
-                });
-
-                if (activeDomEl) { activeDomEl.classList.remove('is-hovered'); activeDomEl = null; }
-                if (wnum !== null) {
-                    const summary = weaponSummary[String(wnum)];
-                    if (summary && summary.def) {
-                        const fullSlug = `${unitName}-${summary.def.replace(/_/g, '-')}`;
-                        const domEl = document.querySelector(`.uw-item-flex[data-wpn-slug="${fullSlug}"]`);
-                        if (domEl) { domEl.classList.add('is-hovered'); activeDomEl = domEl; }
-                    }
-                }
-            }
-            window.addEventListener('mousemove', (e) => {
-                if (isAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); setWeaponHighlight(null); return; }
-                if (meshWeaponMap.size === 0 && unitRoleMeshMap.size === 0) return;
-                const rect = renderer.domElement.getBoundingClientRect();
-                if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
-                    hideTooltip();
-                    if (!e.target.closest('.uw-item-flex[data-wpn-slug]')) setWeaponHighlight(null);
-                    return;
-                }
-                pointer.x = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
-                pointer.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
-                raycaster.setFromCamera(pointer, camera);
-                const hits = raycaster.intersectObject(modelScene, true);
-                const hit = hits.find(h => meshWeaponMap.has(h.object.uuid) || unitRoleMeshMap.has(h.object.uuid));
-                if (hit) {
-                    if (meshWeaponMap.has(hit.object.uuid)) {
-                        const winfo = meshWeaponMap.get(hit.object.uuid);
-                        showTooltip(e.clientX, e.clientY, winfo);
-                        setWeaponHighlight(winfo.num);
-                    } else {
-                        showRoleTooltip(e.clientX, e.clientY, unitRoleMeshMap.get(hit.object.uuid));
-                        setWeaponHighlight(null);
-                    }
-                } else {
-                    hideTooltip();
-                    setWeaponHighlight(null);
-                }
-            });
-            renderer.domElement.addEventListener('touchstart', (e) => {
-                if (meshWeaponMap.size === 0 || e.touches.length !== 1) return;
-                const touch = e.touches[0];
-                const rect = renderer.domElement.getBoundingClientRect();
-                pointer.x = ((touch.clientX - rect.left) / rect.width)  * 2 - 1;
-                pointer.y = -((touch.clientY - rect.top)  / rect.height) * 2 + 1;
-                raycaster.setFromCamera(pointer, camera);
-                const hits = raycaster.intersectObject(modelScene, true);
-                const hit = hits.find(h => meshWeaponMap.has(h.object.uuid));
-                if (hit) {
-                    showTooltip(touch.clientX, touch.clientY, meshWeaponMap.get(hit.object.uuid));
-                    clearTimeout(tooltipHideTimer);
-                    tooltipHideTimer = setTimeout(hideTooltip, 2000);
-                }
-            }, { passive: true });
+            window.addEventListener('keyup', (e) => { if (e.key === 'Alt') { isAltDown = false; window._barViewerAltDown = false; container.style.cursor = 'grab'; controls.enabled = true; } });
 
             function triggerToggle() {
                 if (!toggleOpenClip || !toggleCloseClip || toggleAnimating) return;
@@ -852,6 +540,7 @@
             requestAnimationFrame(animate);
         }).catch(err => {
             console.error("LOAD ERROR:", err);
+            if (loader) loader.remove();
             if(noticeElement) { noticeElement.textContent = "Error loading model."; noticeElement.style.display = 'block'; }
         });
     }, 900);

@@ -1,0 +1,63 @@
+<script>
+window._barShaderSetup = function(THREE, material, opts) {
+    const { pbrMap, teamColor, teamMap, pbrEmissiveIntensityValue, pulseMaxValue,
+            roughnessOffset, timeUniform, highlightUniform, dimUniform } = opts;
+    material.onBeforeCompile = (shader) => {
+        shader.defines.USE_ENVMAP_ROTATION = '1';
+        shader.uniforms.pbrMap = { value: pbrMap };
+        shader.uniforms.teamColor = { value: teamColor };
+        shader.uniforms.teamMap = { value: teamMap };
+        shader.uniforms.pbrEmissiveIntensity = { value: pbrEmissiveIntensityValue };
+        shader.uniforms.time = timeUniform;
+        shader.uniforms.roughnessOffset = { value: roughnessOffset };
+        shader.uniforms.highlightStrength = highlightUniform;
+        shader.uniforms.dimStrength = dimUniform;
+        if (!shader.uniforms.envMapRotation) shader.uniforms.envMapRotation = { value: new THREE.Matrix3() };
+        shader.vertexShader = 'varying vec2 vUv;\n' + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\n vUv = uv;');
+        const header = [
+            'precision highp float;',
+            'varying vec2 vUv;',
+            'uniform sampler2D pbrMap;',
+            'uniform vec3 teamColor;',
+            'uniform sampler2D teamMap;',
+            'uniform float pbrEmissiveIntensity;',
+            'uniform float time;',
+            'uniform float roughnessOffset;',
+            'uniform float highlightStrength;',
+            'uniform float dimStrength;',
+            '#define USE_TEAMMAP'
+        ].join('\n');
+        shader.fragmentShader = header + '\n' + shader.fragmentShader;
+        shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>',
+            'float roughnessFactor = roughness + roughnessOffset; vec4 texelRoughness = texture2D( pbrMap, vUv ); roughnessFactor *= texelRoughness.b; roughnessFactor = clamp(roughnessFactor, 0.05, 1.0);');
+        shader.fragmentShader = shader.fragmentShader.replace('#include <metalnessmap_fragment>',
+            'float metalnessFactor = metalness; vec4 texelMetalness = texture2D( pbrMap, vUv ); metalnessFactor *= texelMetalness.g;');
+        shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>',
+            '#include <color_fragment>\n #ifdef USE_TEAMMAP\n float S_teamMask = texture2D( teamMap, vUv ).r; float S_blendFactor = step(0.35, S_teamMask); vec3 targetColor = mix(diffuseColor.rgb, teamColor, 0.75); diffuseColor.rgb = mix(diffuseColor.rgb, targetColor, S_blendFactor); \n #endif');
+        var pulseStr = pulseMaxValue.toFixed(2);
+        shader.fragmentShader = shader.fragmentShader.replace('#include <tonemapping_fragment>', [
+            'vec3 S_pbrBoost = vec3(0.0);',
+            '#ifdef USE_MAP',
+            'float S_emissionAmount = texture2D( pbrMap, vUv ).r;',
+            'if (S_emissionAmount > 0.01) {',
+            'float S_pulse = (sin(time * 3.14159) * 0.5 + 0.5) * (' + pulseStr + ' - 0.01) + 0.01;',
+            'vec4 S_diff = texture2D( map, vUv );',
+            'S_pbrBoost = pow(S_diff.rgb, vec3(2.2)) * S_emissionAmount * pbrEmissiveIntensity * S_pulse;',
+            '}',
+            '#endif',
+            'vec3 S_combinedLight = outgoingLight + totalEmissiveRadiance + S_pbrBoost;',
+            'S_combinedLight = S_combinedLight * (1.0 + highlightStrength * 2.2);',
+            'S_combinedLight = S_combinedLight * (1.0 - dimStrength * 0.85);',
+            '#ifdef USE_TONEMAPPING',
+            'gl_FragColor.rgb = toneMapping( S_combinedLight );',
+            '#else',
+            'gl_FragColor.rgb = S_combinedLight;',
+            '#endif',
+            'gl_FragColor.a = diffuseColor.a;'
+        ].join('\n'));
+        shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', '');
+        material.userData.shader = shader;
+    };
+};
+</script>

@@ -1,0 +1,58 @@
+<script type="module">
+    import GUI from 'https://unpkg.com/three@0.160.0/examples/jsm/libs/lil-gui.module.min.js';
+
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('editor')) {
+        function waitForCtx() {
+            if (window._editorCtx) initEditor(window._editorCtx);
+            else setTimeout(waitForCtx, 200);
+        }
+        waitForCtx();
+    }
+
+    function initEditor(ctx) {
+        const { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2,
+                ambientLight, ssaoPass, groundMesh, loadHDR } = ctx;
+        let areShadowsVisible = true;
+
+        const gui = new GUI({ title: 'Unit Lab' });
+        const fGen = gui.addFolder('General');
+        fGen.add(VIEWER_CONFIG, 'mouseRotateSpeed', 0.1, 2.0).onChange(v => controls.rotateSpeed = v);
+        fGen.add(VIEWER_CONFIG, 'autoRotationSpeed', 0, 2.0);
+        fGen.addColor(VIEWER_CONFIG, 'teamColor').onChange(v => { if (material.userData.shader) material.userData.shader.uniforms.teamColor.value.set(v); });
+        fGen.add(VIEWER_CONFIG, 'hdrUrl').onFinishChange(v => loadHDR(v));
+        fGen.add(VIEWER_CONFIG, 'envMapIntensity', 0, 5).onChange(v => material.envMapIntensity = v);
+        fGen.add(VIEWER_CONFIG, 'toneMappingExposure', 0.1, 4.0).onChange(v => renderer.toneMappingExposure = v);
+
+        const fLights = gui.addFolder('Lights Setup');
+        const fKey = fLights.addFolder('Key Light (Shadows)');
+        fKey.addColor(VIEWER_CONFIG, 'keyLightColor').onChange(v => directionalLight.color.set(v));
+        fKey.add(VIEWER_CONFIG, 'keyLightIntensity', 0, 5).onChange(v => directionalLight.intensity = v);
+        fKey.add(VIEWER_CONFIG, 'keyLightX', -10, 10).onChange(v => directionalLight.position.x = v);
+        fKey.add(VIEWER_CONFIG, 'keyLightY', -10, 10).onChange(v => directionalLight.position.y = v);
+        fKey.add(VIEWER_CONFIG, 'keyLightZ', -10, 10).onChange(v => directionalLight.position.z = v);
+        fKey.add(VIEWER_CONFIG, 'shadowRadius', 0, 25).onChange(v => directionalLight.shadow.radius = v);
+        fKey.add(VIEWER_CONFIG, 'shadowBlurSamples', 0, 25).step(1).onChange(v => directionalLight.shadow.blurSamples = v);
+
+        const fFill = fLights.addFolder('Fill Light');
+        fFill.addColor(VIEWER_CONFIG, 'fillLightColor').onChange(v => directionalLight2.color.set(v));
+        fFill.add(VIEWER_CONFIG, 'fillLightIntensity', 0, 5).onChange(v => directionalLight2.intensity = v);
+        fFill.add(VIEWER_CONFIG, 'fillLightX', -10, 10).onChange(v => directionalLight2.position.x = v);
+        fFill.add(VIEWER_CONFIG, 'fillLightY', -10, 10).onChange(v => directionalLight2.position.y = v);
+        fFill.add(VIEWER_CONFIG, 'fillLightZ', -10, 10).onChange(v => directionalLight2.position.z = v);
+
+        const fAmb = fLights.addFolder('Ambient Light');
+        fAmb.addColor(VIEWER_CONFIG, 'ambientLightColor').onChange(v => ambientLight.color.set(v));
+        fAmb.add(VIEWER_CONFIG, 'ambientLightIntensity', 0, 2).onChange(v => ambientLight.intensity = v);
+
+        const fPost = gui.addFolder('Post Processing');
+        fPost.add(VIEWER_CONFIG, 'ssaoEnabled').onChange(v => ssaoPass.enabled = v);
+        fPost.add(VIEWER_CONFIG, 'ssaoRadius', 0, 64).onChange(v => ssaoPass.kernelRadius = v);
+        fPost.add(VIEWER_CONFIG, 'ssaoMinDist', 0.001, 0.1).onChange(v => ssaoPass.minDistance = v);
+        fPost.add(VIEWER_CONFIG, 'ssaoMaxDist', 0.1, 10).onChange(v => ssaoPass.maxDistance = v);
+
+        const fExtra = gui.addFolder('Extras');
+        fExtra.add(VIEWER_CONFIG, 'roughnessOffset', -1, 1).onChange(v => { if(material.userData.shader) material.userData.shader.uniforms.roughnessOffset.value = v; });
+        fExtra.add({ toggleShadow: () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; }}, 'toggleShadow');
+    }
+</script>
