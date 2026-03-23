@@ -312,7 +312,11 @@
             groundMesh.rotation.x = -Math.PI / 2;
             let canFly = false;
             modelScene.traverse(n => { if (n.userData && n.userData.can_fly) canFly = true; });
-            let groundY = defaultBox.min.y - center.y - 0.01;
+            // Use whichever box has the higher min.y for the ground plane.
+            // Defenses that deploy upward: open-pose min.y > closed min.y → use open box.
+            // Units whose parts swing down when open: closed min.y > open min.y → use closed box.
+            const groundBox = (box.min.y > defaultBox.min.y) ? box : defaultBox;
+            let groundY = groundBox.min.y - center.y - 0.01;
             if (canFly) groundY -= objectRadius * 0.66;
             groundMesh.position.y = groundY;
             groundMesh.receiveShadow = true;
