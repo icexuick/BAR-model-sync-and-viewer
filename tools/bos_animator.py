@@ -1150,72 +1150,63 @@ _FIRE_LEGACY = {'FirePrimary': 1, 'FireSecondary': 2, 'FireTertiary': 3}
 _SLEEP_RE = re.compile(r'\bsleep\s+(\d+)\s*;', re.IGNORECASE)
 
 
-def _strip_if_branches(body: str) -> Tuple[str, Optional[Tuple[str, int, float, float]]]:
+def _extract_branch_block(body: str, start_pos: int) -> Tuple[str, int]:
+    """Extract a { ... } block starting from start_pos, return (content, end_pos)."""
+    brace_start = body.index('{', start_pos)
+    depth, i = 0, brace_start
+    while i < len(body):
+        if body[i] == '{': depth += 1
+        elif body[i] == '}':
+            depth -= 1
+            if depth == 0: break
+        i += 1
+    return body[brace_start + 1:i], i + 1
+
+
+def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int, float, float]]]:
     """
     For fire functions with if(gun==N) branches (gatling guns, alternating barrels),
-    extract only the first branch's body.  This gives us a single representative
-    fire cycle rather than concatenating all branches into one broken sequence.
+    sequence ALL branches into one continuous animation cycle.
 
-    If no gun/barrel counter branches found, return (body, None).
-
-    Also detects rotary advance patterns in post-branch code like:
-        turn spindle to x-axis <60> * gun_1 speed <360>;
-    Returns (stripped_body, (piece, axis, step_degrees, speed)) if found.
+    Returns (sequenced_body, num_branches, rotary_info).
+    num_branches = 0 means no branching detected (body unchanged).
+    rotary_info is (piece, axis, step_degrees, speed) for gatling-style advance, or None.
     """
-    # Detect patterns like: if( gun_1 == 0 ) { ... } if( gun_1 == 1 ) { ... }
     gun_pattern = re.compile(
         r'\bif\s*\(\s*(\w+)\s*==\s*(\d+)\s*\)', re.IGNORECASE
     )
     matches = list(gun_pattern.finditer(body))
     if len(matches) < 2:
-        return body, None  # no branching
+        return body, 0, None
 
-    # Check these are sequential branches of the same var (values 0,1,2,... or 1,2,3,...)
     counter_var = matches[0].group(1)
     values = [int(m.group(2)) for m in matches]
     start_val = values[0]
     if start_val not in (0, 1) or values != list(range(start_val, start_val + len(values))):
-        return body, None  # not a sequential counter pattern
+        return body, 0, None
 
-    # Extract code before first branch + first branch body + code after last branch
     pre_branch = body[:matches[0].start()]
 
-    # Find the first branch's { ... } block
-    brace_start = body.index('{', matches[0].end())
-    depth = 0
-    i = brace_start
-    while i < len(body):
-        if body[i] == '{':
-            depth += 1
-        elif body[i] == '}':
-            depth -= 1
-            if depth == 0:
-                break
-        i += 1
-    first_branch_body = body[brace_start + 1:i]
+    # Extract ALL branch bodies, skip branches without move/turn (reset-only branches)
+    move_turn_re = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
+    branch_bodies = []
+    for m in matches:
+        branch_body, _ = _extract_branch_block(body, m.end())
+        if move_turn_re.search(branch_body):
+            branch_bodies.append(branch_body)
+    if not branch_bodies:
+        return body, 0, None
+    num_branches = len(branch_bodies)
 
-    # Find end of last branch block
-    last_match = matches[-1]
-    brace_start2 = body.index('{', last_match.end())
-    depth = 0
-    i = brace_start2
-    while i < len(body):
-        if body[i] == '{':
-            depth += 1
-        elif body[i] == '}':
-            depth -= 1
-            if depth == 0:
-                break
-        i += 1
-    post_branch = body[i + 1:]
+    # Find post-branch code (after the last branch block)
+    _, last_end = _extract_branch_block(body, matches[-1].end())
+    post_branch = body[last_end:]
 
-    # Detect rotary advance — could be in post-branch or inside branch body
-    # Pattern 1: turn PIECE to AXIS <ANGLE> * counter_var speed <SPD>  (cortrem style)
-    # Pattern 2: turn PIECE to AXIS <ANGLE> speed <...>*variable  (armvulc style — fixed angle, variable speed)
+    # Detect rotary advance in post-branch or first branch
     rotary_info = None
-    search_text = post_branch + '\n' + first_branch_body
+    search_text = post_branch + '\n' + branch_bodies[0]
 
-    # Pattern 1: angle multiplied by counter (with optional parens around counter var)
+    # Pattern 1: angle multiplied by counter (with optional parens)
     rotary_re1 = re.compile(
         r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>\s*\*\s*\(?\s*' + re.escape(counter_var)
         + r'\s*\)?[^;]*speed\s+<([\d.]+)>', re.IGNORECASE
@@ -1224,15 +1215,14 @@ def _strip_if_branches(body: str) -> Tuple[str, Optional[Tuple[str, int, float, 
     if rm:
         step_deg = float(rm.group(3))
         raw_speed = float(rm.group(4))
-        # Check if speed has a variable multiplier (e.g. <1>*spin_speed) — use default
         speed_pos = rm.end(4)
         after_speed = search_text[speed_pos:speed_pos + 30]
         if re.match(r'>\s*\*\s*\w+', after_speed):
-            raw_speed = 360.0  # variable speed, use default
+            raw_speed = 360.0
         rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
                         step_deg, raw_speed)
 
-    # Pattern 2: fixed angle with variable speed (e.g. speed <1>*spin_speed)
+    # Pattern 2: fixed angle with variable speed
     if not rotary_info:
         rotary_re2 = re.compile(
             r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>[^;]*speed\s+<[\d.]+>\s*\*\s*\w+',
@@ -1240,12 +1230,16 @@ def _strip_if_branches(body: str) -> Tuple[str, Optional[Tuple[str, int, float, 
         )
         rm = rotary_re2.search(search_text)
         if rm:
-            step_deg = float(rm.group(3))
-            default_speed = 360.0
             rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
-                            step_deg, default_speed)
+                            float(rm.group(3)), 360.0)
 
-    return pre_branch + first_branch_body + post_branch, rotary_info
+    # Concatenate: pre_branch + branch1 + SEPARATOR + branch2 + ... + post_branch
+    # Use a special sleep marker between branches so the parser advances time
+    BRANCH_GAP_MS = 150  # gap between branches in the sequence
+    separator = f'\n sleep {BRANCH_GAP_MS};\n'
+    sequenced = pre_branch + separator.join(branch_bodies) + post_branch
+
+    return sequenced, num_branches, rotary_info
 
 
 def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
@@ -1262,8 +1256,8 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
     commit pending commands as keyframes.  After all commands, ensure pieces
     return to 0 (rest) if not already there.
     """
-    # Handle if(gun==N) branching by taking only the first branch
-    body, rotary_info = _strip_if_branches(body)
+    # Handle if(gun==N) branching — sequence all branches into one cycle
+    body, num_branches, rotary_info = _sequence_if_branches(body)
 
     # Also detect rotary patterns directly (for scripts without if(gun==N) branches)
     # Pattern: turn PIECE to AXIS <ANGLE> * VAR speed <SPD>
@@ -1394,14 +1388,21 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
     if rotary_info:
         r_piece, r_axis, step_deg, r_speed = rotary_info
         r_key = (r_piece, r_axis, True)
-        # Start rotating after barrel recoil, duration = step_deg / speed
-        r_start = t_cursor  # after all barrel commands
-        r_dur = step_deg / max(r_speed, 1.0)
-        r_kfs = [
-            BosKeyframe(time=0.0, value=0.0),
-            BosKeyframe(time=r_start, value=0.0),
-            BosKeyframe(time=r_start + r_dur, value=step_deg),
-        ]
+        # For sequenced branches: rotate N steps spread across the total duration
+        # For single branch: rotate 1 step at the end
+        n_steps = max(num_branches, 1)
+        total_rot = step_deg * n_steps
+        # Spread rotary steps evenly across the animation duration
+        if t_cursor > 0.01 and n_steps > 1:
+            step_interval = t_cursor / n_steps
+        else:
+            step_interval = t_cursor
+        r_dur_per_step = step_deg / max(r_speed, 1.0)
+        r_kfs = [BosKeyframe(time=0.0, value=0.0)]
+        for s in range(n_steps):
+            r_start = step_interval * s
+            r_kfs.append(BosKeyframe(time=r_start, value=step_deg * s))
+            r_kfs.append(BosKeyframe(time=r_start + r_dur_per_step, value=step_deg * (s + 1)))
         track_kfs[r_key] = r_kfs
 
     # Compute total duration
@@ -1421,6 +1422,11 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
             continue
         piece, axis, is_rot = key
         tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot, keyframes=kfs))
+
+    # Adjust rotary info to reflect total rotation in this clip (not per-step)
+    if rotary_info and num_branches > 1:
+        r_piece, r_axis, r_step, r_speed = rotary_info
+        rotary_info = (r_piece, r_axis, r_step * num_branches, r_speed)
 
     return tracks, total_duration, rotary_info
 
