@@ -12,9 +12,10 @@ De website draait op Webflow (beyondallreason.info). Modellen worden getoond met
 - `js/` — Webflow embed scripts (.html bestanden)
 
 ## Workflow regels
-1. **GLB bestanden altijd in `glb/`** — gebruik `--output-dir glb/` bij convert.py. De viewer laadt van `glb/{unitName}.glb`.
-2. **Na conversie altijd committen en pushen** — zodat de live viewer de nieuwe GLB kan laden van GitHub.
-3. **Nooit GLBs in de repo root committen.**
+1. **Nooit `.glb` bestanden in de repo root** — ook niet tijdelijk.
+2. **Tijdelijke/test GLBs → `glb-output/`** — voor tussentijdse output tijdens conversie.
+3. **Definitieve GLBs → `glb/`** — altijd gevolgd door een commit + push zodat de live viewer ze kan laden.
+4. Gebruik `--output-dir glb/` bij convert.py voor definitieve output.
 
 ## S3O → GLB Converter (tools/s3o_to_glb/)
 Converteert Spring engine S3O modellen naar standaard glTF 2.0 Binary (GLB).

@@ -231,6 +231,14 @@ window._barWeaponsSetup = function(THREE, opts) {
     var fireActions = {};  // weapon num → THREE.AnimationAction
     var fireAnimPlaying = false;
 
+    // Read fire_rotary metadata from model extras (gatling spindle advance)
+    var fireRotary = null;
+    modelScene.traverse(function(node) {
+        if (node.userData && node.userData.fire_rotary) {
+            fireRotary = node.userData.fire_rotary;
+        }
+    });
+
     function initFireAnims(THREE, mixer, animations) {
         if (!mixer || !animations) return;
         for (var i = 0; i < animations.length; i++) {
@@ -244,6 +252,27 @@ window._barWeaponsSetup = function(THREE, opts) {
             fireActions[wnum] = action;
         }
         if (Object.keys(fireActions).length === 0) return;
+
+        // Resolve rotary piece nodes for accumulative rotation
+        var rotaryNodes = {};  // clip_name → { node, axis, stepRad, accumRad }
+        if (fireRotary) {
+            var axisMap = { x: 'x', y: 'y', z: 'z' };
+            for (var clipName in fireRotary) {
+                var info = fireRotary[clipName];
+                var targetNode = null;
+                modelScene.traverse(function(n) {
+                    if (n.name && n.name.toLowerCase() === info.piece.toLowerCase()) targetNode = n;
+                });
+                if (targetNode) {
+                    rotaryNodes[clipName] = {
+                        node: targetNode,
+                        axis: info.axis,
+                        stepRad: info.step_deg * Math.PI / 180,
+                        accumRad: 0
+                    };
+                }
+            }
+        }
 
         // Mark weapon meshes that have fire anims with pointer cursor
         meshWeaponMap.forEach(function(winfo) {
@@ -274,6 +303,13 @@ window._barWeaponsSetup = function(THREE, opts) {
                 if (e.action === action) {
                     fireAnimPlaying = false;
                     action.stop();
+                    // Apply accumulative rotary advance (gatling spindle)
+                    var clipName = action.getClip().name;
+                    var rot = rotaryNodes[clipName];
+                    if (rot) {
+                        rot.accumRad += rot.stepRad;
+                        rot.node.rotation[rot.axis] = rot.accumRad;
+                    }
                     mixer.removeEventListener('finished', onDone);
                 }
             });

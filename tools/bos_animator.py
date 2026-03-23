@@ -1150,26 +1150,31 @@ _FIRE_LEGACY = {'FirePrimary': 1, 'FireSecondary': 2, 'FireTertiary': 3}
 _SLEEP_RE = re.compile(r'\bsleep\s+(\d+)\s*;', re.IGNORECASE)
 
 
-def _strip_if_branches(body: str) -> str:
+def _strip_if_branches(body: str) -> Tuple[str, Optional[Tuple[str, int, float, float]]]:
     """
     For fire functions with if(gun==N) branches (gatling guns, alternating barrels),
     extract only the first branch's body.  This gives us a single representative
     fire cycle rather than concatenating all branches into one broken sequence.
 
-    If no gun/barrel counter branches found, return body unchanged.
+    If no gun/barrel counter branches found, return (body, None).
+
+    Also detects rotary advance patterns in post-branch code like:
+        turn spindle to x-axis <60> * gun_1 speed <360>;
+    Returns (stripped_body, (piece, axis, step_degrees, speed)) if found.
     """
     # Detect patterns like: if( gun_1 == 0 ) { ... } if( gun_1 == 1 ) { ... }
     gun_pattern = re.compile(
-        r'\bif\s*\(\s*\w+\s*==\s*(\d+)\s*\)', re.IGNORECASE
+        r'\bif\s*\(\s*(\w+)\s*==\s*(\d+)\s*\)', re.IGNORECASE
     )
     matches = list(gun_pattern.finditer(body))
     if len(matches) < 2:
-        return body  # no branching
+        return body, None  # no branching
 
     # Check these are sequential branches of the same var (values 0, 1, 2, ...)
-    values = [int(m.group(1)) for m in matches]
+    counter_var = matches[0].group(1)
+    values = [int(m.group(2)) for m in matches]
     if values[0] != 0 or values != list(range(len(values))):
-        return body  # not a sequential counter pattern
+        return body, None  # not a sequential counter pattern
 
     # Extract code before first branch + first branch body + code after last branch
     pre_branch = body[:matches[0].start()]
@@ -1203,7 +1208,21 @@ def _strip_if_branches(body: str) -> str:
         i += 1
     post_branch = body[i + 1:]
 
-    return pre_branch + first_branch_body + post_branch
+    # Detect rotary advance in post-branch: turn PIECE to AXIS <ANGLE> * counter_var speed <SPD>
+    rotary_info = None
+    rotary_re = re.compile(
+        r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>\s*\*\s*' + re.escape(counter_var)
+        + r'[^;]*speed\s+<([\d.]+)>', re.IGNORECASE
+    )
+    rm = rotary_re.search(post_branch)
+    if rm:
+        piece = rm.group(1).lower()
+        axis = AXIS_INDEX[rm.group(2).lower()]
+        step_deg = float(rm.group(3))
+        speed = float(rm.group(4))
+        rotary_info = (piece, axis, step_deg, speed)
+
+    return pre_branch + first_branch_body + post_branch, rotary_info
 
 
 def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
@@ -1221,7 +1240,24 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
     return to 0 (rest) if not already there.
     """
     # Handle if(gun==N) branching by taking only the first branch
-    body = _strip_if_branches(body)
+    body, rotary_info = _strip_if_branches(body)
+
+    # Also detect rotary patterns directly (for scripts without if(gun==N) branches)
+    # Pattern: turn PIECE to AXIS <ANGLE> * VAR speed <SPD>
+    if not rotary_info:
+        clean_pre = _strip_comments(body)
+        rm_direct = re.search(
+            r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>\s*\*\s*\w+[^;]*speed\s+<([\d.]+)>',
+            clean_pre, re.IGNORECASE
+        )
+        if rm_direct:
+            rotary_info = (
+                rm_direct.group(1).lower(),
+                AXIS_INDEX[rm_direct.group(2).lower()],
+                float(rm_direct.group(3)),
+                float(rm_direct.group(4))
+            )
+
     clean = _strip_comments(body)
 
     # Tokenize into: (type, data) where type is 'move', 'turn', 'sleep', 'wait'
@@ -1266,8 +1302,8 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
         elif m.group('wait'):
             tokens.append(('wait',))
 
-    if not tokens:
-        return [], 0.0
+    if not tokens and not rotary_info:
+        return [], 0.0, None
 
     # Walk tokens, build keyframes
     current_pose: Dict[Tuple, float] = {}
@@ -1311,8 +1347,8 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
 
     flush_pending()
 
-    if not track_kfs:
-        return [], 0.0
+    if not track_kfs and not rotary_info:
+        return [], 0.0, None
 
     # Ensure all tracks return to 0 at the end (rest pose)
     for key, kfs in track_kfs.items():
@@ -1329,8 +1365,25 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
             kfs.append(BosKeyframe(time=t_cursor_end, value=last_val))
             kfs.append(BosKeyframe(time=t_cursor_end + return_dur, value=0.0))
 
+    # Add rotary advance track if detected (e.g. gatling spindle rotation)
+    if rotary_info:
+        r_piece, r_axis, step_deg, r_speed = rotary_info
+        r_key = (r_piece, r_axis, True)
+        # Start rotating after barrel recoil, duration = step_deg / speed
+        r_start = t_cursor  # after all barrel commands
+        r_dur = step_deg / max(r_speed, 1.0)
+        r_kfs = [
+            BosKeyframe(time=0.0, value=0.0),
+            BosKeyframe(time=r_start, value=0.0),
+            BosKeyframe(time=r_start + r_dur, value=step_deg),
+        ]
+        track_kfs[r_key] = r_kfs
+
     # Compute total duration
-    total_duration = max(kf.time for kfs in track_kfs.values() for kf in kfs)
+    if track_kfs:
+        total_duration = max(kf.time for kfs in track_kfs.values() for kf in kfs)
+    else:
+        total_duration = 0.5
     if total_duration < 0.01:
         total_duration = 0.5
 
@@ -1344,21 +1397,26 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
         piece, axis, is_rot = key
         tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot, keyframes=kfs))
 
-    return tracks, total_duration
+    return tracks, total_duration, rotary_info
 
 
-def extract_fire_animations(bos_content: str) -> Optional[List[Tuple[str, List[BosTrack]]]]:
+# Return type for fire animations: list of (clip_name, tracks, rotary_info) triples
+FireClipInfo = Tuple[str, List[BosTrack], Optional[Tuple[str, int, float, float]]]
+
+
+def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
     """
     Extract weapon fire/recoil animations from BOS scripts.
 
     Looks for FireWeapon1(), FireWeapon2(), ..., FirePrimary(), FireSecondary(), etc.
     Inlines call-script references (e.g. call-script fireCommon()).
 
-    Returns list of (clip_name, tracks) pairs where clip_name = 'Fire_1', 'Fire_2', etc.
+    Returns list of (clip_name, tracks, rotary_info) triples.
+    rotary_info is (piece, axis, step_degrees, speed) for gatling-style advance, or None.
     Returns None if no fire animations with actual movement found.
     """
     bos_content = _expand_macros(bos_content)
-    clips: List[Tuple[str, List[BosTrack]]] = []
+    clips: List[FireClipInfo] = []
     seen_weapons: set = set()
 
     # Try FireWeapon1..FireWeapon16
@@ -1368,13 +1426,14 @@ def extract_fire_animations(bos_content: str) -> Optional[List[Tuple[str, List[B
         if not body:
             continue
         body = _inline_call_scripts(body, bos_content)
-        tracks, dur = _parse_fire_body_to_tracks(body)
+        tracks, dur, rotary = _parse_fire_body_to_tracks(body)
         if tracks:
             clip_name = f'Fire_{n}'
             pieces = sorted({t.piece for t in tracks})
+            rotary_str = f", rotary: {rotary[0]} +{rotary[2]}°" if rotary else ""
             print(f"  Fire animation '{clip_name}': {len(tracks)} tracks, "
-                  f"{dur:.2f}s, pieces: {', '.join(pieces)}")
-            clips.append((clip_name, tracks))
+                  f"{dur:.2f}s, pieces: {', '.join(pieces)}{rotary_str}")
+            clips.append((clip_name, tracks, rotary))
             seen_weapons.add(n)
 
     # Try legacy names
@@ -1385,12 +1444,13 @@ def extract_fire_animations(bos_content: str) -> Optional[List[Tuple[str, List[B
         if not body:
             continue
         body = _inline_call_scripts(body, bos_content)
-        tracks, dur = _parse_fire_body_to_tracks(body)
+        tracks, dur, rotary = _parse_fire_body_to_tracks(body)
         if tracks:
             clip_name = f'Fire_{wnum}'
             pieces = sorted({t.piece for t in tracks})
+            rotary_str = f", rotary: {rotary[0]} +{rotary[2]}°" if rotary else ""
             print(f"  Fire animation '{clip_name}' (from {legacy_name}): {len(tracks)} tracks, "
-                  f"{dur:.2f}s, pieces: {', '.join(pieces)}")
-            clips.append((clip_name, tracks))
+                  f"{dur:.2f}s, pieces: {', '.join(pieces)}{rotary_str}")
+            clips.append((clip_name, tracks, rotary))
 
     return clips if clips else None

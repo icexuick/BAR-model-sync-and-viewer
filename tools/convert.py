@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Tuple
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
-from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose, extract_activate_loop_animation, extract_toggle_animations
+from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose, extract_activate_loop_animation, extract_toggle_animations, extract_fire_animations
 
 
 
@@ -902,6 +902,25 @@ def convert_with_weapons(
                     if not starts_closed:
                         extras["autoplay_open"] = True
                         builder.apply_animation_t0_as_default_pose('ActivateOpen')
+
+            # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
+            fire_clips = extract_fire_animations(bos_content)
+            if fire_clips:
+                fire_rotary = {}
+                for clip_name, clip_tracks, rotary in fire_clips:
+                    builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
+                                          piece_offsets)
+                    if rotary:
+                        piece, axis, step_deg, _ = rotary
+                        axis_name = ['x', 'y', 'z'][axis]
+                        fire_rotary[clip_name] = {
+                            "piece": piece, "axis": axis_name,
+                            "step_deg": step_deg
+                        }
+                if fire_rotary and model.root_piece:
+                    root_idx = builder.scenes[0]["nodes"][0]
+                    root_extras = builder.nodes[root_idx].setdefault("extras", {})
+                    root_extras["fire_rotary"] = fire_rotary
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
