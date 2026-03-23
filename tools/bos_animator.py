@@ -1170,10 +1170,11 @@ def _strip_if_branches(body: str) -> Tuple[str, Optional[Tuple[str, int, float, 
     if len(matches) < 2:
         return body, None  # no branching
 
-    # Check these are sequential branches of the same var (values 0, 1, 2, ...)
+    # Check these are sequential branches of the same var (values 0,1,2,... or 1,2,3,...)
     counter_var = matches[0].group(1)
     values = [int(m.group(2)) for m in matches]
-    if values[0] != 0 or values != list(range(len(values))):
+    start_val = values[0]
+    if start_val not in (0, 1) or values != list(range(start_val, start_val + len(values))):
         return body, None  # not a sequential counter pattern
 
     # Extract code before first branch + first branch body + code after last branch
@@ -1208,19 +1209,35 @@ def _strip_if_branches(body: str) -> Tuple[str, Optional[Tuple[str, int, float, 
         i += 1
     post_branch = body[i + 1:]
 
-    # Detect rotary advance in post-branch: turn PIECE to AXIS <ANGLE> * counter_var speed <SPD>
+    # Detect rotary advance — could be in post-branch or inside branch body
+    # Pattern 1: turn PIECE to AXIS <ANGLE> * counter_var speed <SPD>  (cortrem style)
+    # Pattern 2: turn PIECE to AXIS <ANGLE> speed <...>*variable  (armvulc style — fixed angle, variable speed)
     rotary_info = None
-    rotary_re = re.compile(
+    search_text = post_branch + '\n' + first_branch_body
+
+    # Pattern 1: angle multiplied by counter
+    rotary_re1 = re.compile(
         r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>\s*\*\s*' + re.escape(counter_var)
         + r'[^;]*speed\s+<([\d.]+)>', re.IGNORECASE
     )
-    rm = rotary_re.search(post_branch)
+    rm = rotary_re1.search(search_text)
     if rm:
-        piece = rm.group(1).lower()
-        axis = AXIS_INDEX[rm.group(2).lower()]
-        step_deg = float(rm.group(3))
-        speed = float(rm.group(4))
-        rotary_info = (piece, axis, step_deg, speed)
+        rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
+                        float(rm.group(3)), float(rm.group(4)))
+
+    # Pattern 2: fixed angle with variable speed (e.g. speed <1>*spin_speed)
+    if not rotary_info:
+        rotary_re2 = re.compile(
+            r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>\s+speed\s+<[\d.]+>\s*\*\s*\w+',
+            re.IGNORECASE
+        )
+        rm = rotary_re2.search(search_text)
+        if rm:
+            step_deg = float(rm.group(3))
+            # Use a reasonable default speed for the animation
+            default_speed = 360.0  # degrees/sec
+            rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
+                            step_deg, default_speed)
 
     return pre_branch + first_branch_body + post_branch, rotary_info
 
@@ -1316,12 +1333,6 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
         nonlocal t_cursor
         if not pending_cmds:
             return
-        # All pending commands start at t_cursor; compute max duration
-        phase_dur = 0.0
-        for key, target, speed in pending_cmds:
-            start_val = current_pose.get(key, 0.0)
-            if speed > 0:
-                phase_dur = max(phase_dur, abs(target - start_val) / speed)
         for key, target, speed in pending_cmds:
             start_val = current_pose.get(key, 0.0)
             if key not in track_kfs:
@@ -1330,7 +1341,15 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
                 last = track_kfs[key][-1]
                 if last.time < t_cursor - 0.001:
                     track_kfs[key].append(BosKeyframe(time=t_cursor, value=last.value))
-            end_t = t_cursor + phase_dur if phase_dur > 0.001 else t_cursor
+            # Each command uses its own duration based on speed
+            if speed >= 1e5:
+                # 'now' = instant
+                end_t = t_cursor
+            elif speed > 0:
+                cmd_dur = abs(target - start_val) / speed
+                end_t = t_cursor + cmd_dur
+            else:
+                end_t = t_cursor
             track_kfs[key].append(BosKeyframe(time=end_t, value=target))
             current_pose[key] = target
         pending_cmds.clear()
