@@ -419,6 +419,34 @@
             });
             scene.add(modelScene);
             modelScene.updateWorldMatrix(true, true);
+
+            // For autoplay_open units (defenses): compute bounding box at the
+            // OPEN (end) pose so the camera frames the deployed state, not the
+            // closed state with parts buried underground.
+            let autoplayOpenForBox = false;
+            modelScene.traverse(n => { if (n.userData && n.userData.autoplay_open) autoplayOpenForBox = true; });
+            const openClipForBox = autoplayOpenForBox && gltf.animations
+                ? gltf.animations.find(c => c.name === 'ActivateOpen') : null;
+            let savedTransforms = null;
+            if (openClipForBox) {
+                // Save current node transforms, seek to end of open clip, update
+                savedTransforms = new Map();
+                modelScene.traverse(n => {
+                    savedTransforms.set(n, {
+                        pos: n.position.clone(),
+                        rot: n.quaternion.clone(),
+                        scl: n.scale.clone()
+                    });
+                });
+                const tmpMixer = new THREE.AnimationMixer(modelScene);
+                const tmpAction = tmpMixer.clipAction(openClipForBox);
+                tmpAction.setLoop(THREE.LoopOnce, 1);
+                tmpAction.clampWhenFinished = true;
+                tmpAction.play();
+                tmpMixer.update(openClipForBox.duration);
+                modelScene.updateWorldMatrix(true, true);
+            }
+
             const box = new THREE.Box3();
             modelScene.traverse(child => {
                 if (child.isMesh && child.visible) {
@@ -427,6 +455,16 @@
                     box.union(meshBox);
                 }
             });
+
+            // Restore original transforms so the intro animation plays from closed
+            if (savedTransforms) {
+                modelScene.traverse(n => {
+                    const s = savedTransforms.get(n);
+                    if (s) { n.position.copy(s.pos); n.quaternion.copy(s.rot); n.scale.copy(s.scl); }
+                });
+                modelScene.updateWorldMatrix(true, true);
+            }
+
             const center = box.getCenter(new THREE.Vector3());
             modelScene.position.sub(center);
             const boundingSphere = new THREE.Sphere();
