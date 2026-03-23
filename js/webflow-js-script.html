@@ -46,7 +46,8 @@
         initialZoomMultiplier: 0.72,
         cameraHeightFactor: 0.8,
         zoomReferenceRadius: 18,
-        zoomExponent: 0.72
+        zoomExponent: 0.72,
+        zoomExponentFactories: 0.85
     };
     function isMobileDevice() {
         const ua = navigator.userAgent.toLowerCase();
@@ -294,7 +295,9 @@
             const objectRadius = boundingSphere.radius;
             const fovVertical = camera.fov * (Math.PI / 180);
             const refR = VIEWER_CONFIG.zoomReferenceRadius;
-            const exp = VIEWER_CONFIG.zoomExponent;
+            let isFactory = false;
+            modelScene.traverse(n => { if (n.userData && n.userData.is_factory) isFactory = true; });
+            const exp = isFactory ? VIEWER_CONFIG.zoomExponentFactories : VIEWER_CONFIG.zoomExponent;
             let distance = Math.abs(refR / Math.sin(fovVertical / 2)) * Math.pow(objectRadius / refR, exp);
             const aspect = container.offsetWidth / container.offsetHeight;
             if (aspect < 1) { distance = distance / aspect; }

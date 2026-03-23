@@ -205,7 +205,6 @@ window._barWeaponsSetup = function(THREE, opts) {
 
     // Fire animation support — called later once mixer + animations are available
     var fireActions = {};  // weapon num → THREE.AnimationAction
-    var fireAnimPlaying = false;
 
     // Read fire_rotary metadata from model extras (gatling spindle advance)
     var fireRotary = null;
@@ -274,15 +273,25 @@ window._barWeaponsSetup = function(THREE, opts) {
             return actions;
         }
 
+        var _fireTimers = {};  // def → [timeoutIds] for pending stagger timers
+
         function playFire(wnum) {
             var actions = getFireActions(wnum);
-            if (actions.length === 0 || fireAnimPlaying) return;
-            fireAnimPlaying = true;
+            if (actions.length === 0) return;
+            var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : ('w' + wnum);
+            // Cancel any pending stagger timers for this weapon def
+            if (_fireTimers[def]) {
+                _fireTimers[def].forEach(function(t) { clearTimeout(t); });
+            }
+            _fireTimers[def] = [];
+            // Stop and reset all actions for this def immediately
+            for (var j = 0; j < actions.length; j++) {
+                actions[j].stop().reset();
+            }
             var STAGGER_MS = 400;  // delay between sequential barrel fires
-            var pending = actions.length;
             for (var i = 0; i < actions.length; i++) {
                 (function(action, delay) {
-                    setTimeout(function() {
+                    var tid = setTimeout(function() {
                         action.reset().play();
                         mixer.addEventListener('finished', function onDone(e) {
                             if (e.action === action) {
@@ -294,11 +303,10 @@ window._barWeaponsSetup = function(THREE, opts) {
                                     rot.node.rotation[rot.axis] = rot.accumRad;
                                 }
                                 mixer.removeEventListener('finished', onDone);
-                                pending--;
-                                if (pending <= 0) fireAnimPlaying = false;
                             }
                         });
                     }, delay);
+                    _fireTimers[def].push(tid);
                 })(actions[i], i * STAGGER_MS);
             }
         }

@@ -172,8 +172,11 @@ def convert_with_weapons(
     unit_role: Optional[str] = None,
     unit_name: str = '',
     can_fly: bool = False,
+    merge_map: Optional[Dict[int, int]] = None,
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata, walk/spin animation, and unit role."""
+    if merge_map is None:
+        merge_map = {}
     builder = GLBBuilder()
     mat_idx = builder.add_default_material()
 
@@ -354,6 +357,42 @@ def convert_with_weapons(
                                 + ([wm2.aim_from_piece] if wm2.aim_from_piece else [])
                     if ap.lower() not in own_pieces_lower  # only if not shared with us
                 }
+                # Extend other_weapon_pieces with sub-weapon branch geometry:
+                # for each other weapon's fire_point that is a descendant of one
+                # of our aim_pieces, walk up and add each ancestor's subtree
+                # until we reach our aim_set or a shared parent.  This ensures
+                # sub-weapon housings (e.g. minigunHousingR/L on legapopupdef)
+                # are excluded from the parent weapon's visual tagging.
+                if aim_set:
+                    _own_fps = set()
+                    for fp_own in (wmap.query_pieces if wmap.query_pieces else
+                                   ([wmap.query_piece] if wmap.query_piece else [])):
+                        _own_fps.add(fp_own.lower())
+                    for wn2, wm2 in weapon_info.weapons.items():
+                        if wn2 == wnum:
+                            continue
+                        for fp2 in (wm2.query_pieces if wm2.query_pieces else
+                                    ([wm2.query_piece] if wm2.query_piece else [])):
+                            fp2_low = fp2.lower()
+                            # Only proceed if fp2 is a descendant of one of our aim pieces
+                            is_descendant = False
+                            check = parent_map.get(fp2_low)
+                            while check is not None:
+                                if check in aim_set:
+                                    is_descendant = True
+                                    break
+                                check = parent_map.get(check)
+                            if not is_descendant:
+                                continue
+                            cur_fp = parent_map.get(fp2_low)
+                            while cur_fp is not None and cur_fp not in aim_set:
+                                sub = _collect_subtree(cur_fp, children_map)
+                                # Stop if this node's subtree contains our own fire points
+                                if any(sp in _own_fps for sp in sub):
+                                    break
+                                for sp in sub:
+                                    other_weapon_pieces.add(sp)
+                                cur_fp = parent_map.get(cur_fp)
 
                 def _mirror(name: str) -> str:
                     """Swap leading l/r prefix, trailing l/r suffix, or trailing 1/2 suffix."""
@@ -607,7 +646,13 @@ def convert_with_weapons(
                         for piece_key in s:
                             if (not _is_dummy_piece(piece_key)
                                     and (piece_key == visual_root or not _is_limb_joint(piece_key))
-                                    and (piece_key == visual_root or piece_key not in other_aim_pieces)):
+                                    and (piece_key == visual_root or piece_key not in other_aim_pieces)
+                                    and piece_key not in other_weapon_pieces
+                                    # Skip shared parent nodes whose children include
+                                    # other weapons' pieces (e.g. riotcannonHousing
+                                    # that parents both riotCannon and minigunHousings)
+                                    and not any(ch in other_weapon_pieces
+                                                for ch in children_map.get(piece_key, []))):
                                 _add_to_lookup(piece_key, wnum, "visual")
 
                     # Also tag ancestors of the visual root that are part of the weapon mount:
@@ -717,7 +762,7 @@ def convert_with_weapons(
         root_extras["s3o_midpoint"] = list(model.midpoint)
         if weapon_info and weapon_info.weapons:
             root_extras["weapon_count"] = len(weapon_info.weapons)
-            root_extras["weapon_summary"] = {
+            ws = {
                 str(wnum): {
                     "def": (weapon_defs or {}).get(wnum),
                     "fire_point": wmap.query_piece,
@@ -726,6 +771,12 @@ def convert_with_weapons(
                 }
                 for wnum, wmap in weapon_info.weapons.items()
             }
+            # Add shadow entries for merged weapons so that Fire_N clips
+            # can find their def via weaponSummary (e.g. Fire_3 → weapon 2 def).
+            for src_wnum, dst_wnum in merge_map.items():
+                if str(dst_wnum) in ws and str(src_wnum) not in ws:
+                    ws[str(src_wnum)] = dict(ws[str(dst_wnum)])
+            root_extras["weapon_summary"] = ws
         if unit_role:
             root_extras["unit_role"] = unit_role
         if can_fly:
@@ -907,6 +958,8 @@ def convert_with_weapons(
                         create_body = bos_content[cm.start():ci]
                     # Factories use OpenYard/CloseYard (older) or FACTORY_OPEN_BUILD macro (newer)
                     is_factory = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
+                    if is_factory:
+                        builder.nodes[root_idx].setdefault("extras", {})["is_factory"] = True
                     starts_closed = (
                         unit_name.lower() not in _FORCE_AUTOPLAY_OPEN and
                         (
@@ -1147,7 +1200,18 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly)
+    # For animation extraction, prefer a .bos script even when the unitdef
+    # specifies a .lua script (our BOS animator can extract walk/fire/toggle
+    # animations from BOS but not from Lua).
+    anim_script_path = script_path
+    if script_path and script_path.lower().endswith('.lua'):
+        bos_dir = os.path.dirname(script_path)
+        bos_candidate = os.path.join(bos_dir, unit_name + '.bos')
+        if os.path.isfile(bos_candidate):
+            anim_script_path = bos_candidate
+            print(f"  Animation script (BOS fallback): {bos_candidate}")
+
+    glb_data = convert_with_weapons(model, weapon_info, anim_script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly, merge_map)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -1373,16 +1437,26 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
         _download(s3o_url, s3o_local)
 
         script_ok = False
-        # Try scripts/Units/ first, then scripts/
-        for script_subpath_try in [f"scripts/Units/{script_base}", f"scripts/{script_base}"]:
-            try:
-                script_url = f"{BAR_RAW}/{script_subpath_try}"
-                print(f"  Downloading {script_url} ...")
-                _download(script_url, script_local)
-                script_ok = True
+        # If the unitdef specifies a Lua script, prefer the .bos fallback
+        # (our parser can extract walk/weapon animations from BOS but not Lua).
+        # Try .bos first, then fall back to the unitdef script.
+        script_candidates = [script_base]
+        if script_base.endswith('.lua'):
+            script_candidates = [f"{unit_name}.bos", script_base]
+        for script_try_name in script_candidates:
+            script_local = os.path.join(tmpdir, script_try_name)
+            for script_subpath_try in [f"scripts/Units/{script_try_name}", f"scripts/{script_try_name}"]:
+                try:
+                    script_url = f"{BAR_RAW}/{script_subpath_try}"
+                    print(f"  Downloading {script_url} ...")
+                    _download(script_url, script_local)
+                    script_ok = True
+                    script_base = script_try_name
+                    break
+                except Exception:
+                    pass
+            if script_ok:
                 break
-            except Exception:
-                pass
         if not script_ok:
             print("  Warning: script not found, converting without weapon metadata")
             script_local = None
