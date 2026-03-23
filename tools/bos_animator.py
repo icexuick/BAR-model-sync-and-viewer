@@ -1151,6 +1151,42 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
             clips.append(('ActivateClose', close_tracks))
             return clips
 
+    # --- Pattern 2b: AimWeapon open/close (missile launchers like armmerl, corvroc, corhrk) ---
+    # These units open in AimWeapon (turn pieces to firing position) and close
+    # in ExecuteRestoreAfterDelay or RestoreAfterDelay (return to rest).
+    aim_body = _extract_function_body(bos_content, 'AimWeapon1')
+    if not aim_body:
+        aim_body = _extract_function_body(bos_content, 'AimPrimary')
+    restore_body = _extract_function_body(bos_content, 'ExecuteRestoreAfterDelay')
+    if aim_body and restore_body:
+        aim_body = _inline_call_scripts(aim_body, bos_content)
+        restore_body = _inline_call_scripts(restore_body, bos_content)
+        aim_clean = _strip_comments(aim_body)
+        restore_clean = _strip_comments(restore_body)
+        # Only use this pattern if AimWeapon has turn/move commands with wait-for
+        # (indicating a deliberate open animation, not just aiming)
+        has_open_wait = bool(re.search(r'wait-for-(turn|move)', aim_clean, re.IGNORECASE))
+        has_open_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', aim_clean, re.IGNORECASE))
+        has_close_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', restore_clean, re.IGNORECASE))
+        # Don't conflict with existing Open()/Close() pattern
+        has_open_close_fn = bool(_extract_function_body(bos_content, 'Open') and
+                                 _extract_function_body(bos_content, 'Close'))
+        if has_open_wait and has_open_moves and has_close_moves and not has_open_close_fn:
+            # Parse close first to get closed pose (= rest position targets)
+            close_tracks_raw, _ = _parse_turn_move_to_tracks(restore_body)
+            closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                           for t in close_tracks_raw}
+            open_tracks, open_dur = _parse_turn_move_to_tracks(aim_body, start_pose=closed_pose)
+            open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                         for t in open_tracks}
+            close_tracks, close_dur = _parse_turn_move_to_tracks(restore_body, start_pose=open_pose)
+            if open_tracks and close_tracks and open_dur >= 0.15:
+                print(f"  Toggle animation 'ActivateOpen' (from AimWeapon): {len(open_tracks)} tracks, {open_dur:.2f}s")
+                print(f"  Toggle animation 'ActivateClose' (from Restore): {len(close_tracks)} tracks, {close_dur:.2f}s")
+                clips.append(('ActivateOpen', open_tracks))
+                clips.append(('ActivateClose', close_tracks))
+                return clips
+
     # --- Pattern 3: MMStatus(State) with if(State) / else branches ---
     mm_body = _extract_function_body(bos_content, 'MMStatus')
     if not mm_body:
