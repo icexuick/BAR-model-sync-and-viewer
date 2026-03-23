@@ -1574,4 +1574,48 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
                   f"{dur:.2f}s, pieces: {', '.join(pieces)}{rotary_str}")
             clips.append((clip_name, tracks, rotary))
 
+    # Detect barrel spins in AimWeapon functions and add to fire clips.
+    # Minigun-style units (armraz, etc.) spin barrels during aiming/firing.
+    if clips:
+        _SPIN_CMD_RE = re.compile(
+            r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+<([-\d.]+)>',
+            re.IGNORECASE
+        )
+        for n in range(1, 17):
+            aim_body = _extract_function_body(bos_content, f'AimWeapon{n}')
+            if not aim_body:
+                aim_body = _extract_function_body(bos_content, 'AimPrimary') if n == 1 else None
+            if not aim_body:
+                continue
+            aim_body = _strip_comments(aim_body)
+            spins = list(_SPIN_CMD_RE.finditer(aim_body))
+            if not spins:
+                continue
+            # Find the Fire_N clip for this weapon (or Fire_1 for AimPrimary)
+            clip_idx = None
+            for ci, (cname, ctracks, crotary) in enumerate(clips):
+                if cname == f'Fire_{n}':
+                    clip_idx = ci
+                    break
+            if clip_idx is None:
+                continue
+            cname, ctracks, crotary = clips[clip_idx]
+            clip_dur = max((kf.time for t in ctracks for kf in t.keyframes), default=0.5)
+            added = []
+            for sm in spins:
+                piece = sm.group(1).lower()
+                axis = AXIS_INDEX[sm.group(2).lower()]
+                speed_deg = float(sm.group(3))  # degrees per second (can be negative)
+                # Create a spin track for the full clip duration
+                total_deg = speed_deg * clip_dur
+                spin_kfs = [
+                    BosKeyframe(time=0.0, value=0.0),
+                    BosKeyframe(time=clip_dur, value=total_deg),
+                ]
+                ctracks.append(BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=spin_kfs))
+                added.append(piece)
+            if added:
+                print(f"  Fire '{cname}': added barrel spin for {', '.join(added)}")
+                clips[clip_idx] = (cname, ctracks, crotary)
+
     return clips if clips else None
