@@ -765,7 +765,9 @@ def convert_with_weapons(
                 # No walk animation — collect rest-pose rotations (Create() now + fly pose).
                 # Apply them as static node rotations so aircraft show in fly pose.
                 # They are also baked into spin animation keyframes below.
-                now_rots = parse_create_now_rotations(bos_content)
+                # Factories use Activate() for door movement, not fly pose — skip it.
+                _is_factory_unit = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
+                now_rots = parse_create_now_rotations(bos_content, skip_activate_flypose=_is_factory_unit)
                 if now_rots:
                     builder.apply_now_rotations(now_rots, node_name_to_idx)
 
@@ -855,7 +857,25 @@ def convert_with_weapons(
                         toggle_clips = [('ActivateOpen', open_tracks),
                                         ('ActivateClose', rev_tracks)]
                         print(f"  ActivateClose auto-reversed from Open ({dur:.2f}s)")
+                # Patch toggle clip endpoints to match S3O rest offsets.
+                # BOS closed_pose comes from Deactivate() targets (e.g. x=0) but
+                # the S3O rest position may differ (e.g. corvp doorl x=-8.5).
+                # The node default is the S3O rest, so:
+                #   ActivateOpen  t=0   must equal S3O rest (animation starts at closed)
+                #   ActivateClose t=end must equal S3O rest (animation ends at closed)
+                from bos_animator import BosKeyframe
                 for clip_name, clip_tracks in toggle_clips:
+                    for tr in clip_tracks:
+                        if tr.is_rotation or not tr.keyframes:
+                            continue
+                        rest_val = piece_offsets.get(tr.piece.lower(), (0.0, 0.0, 0.0))[tr.axis]
+                        if clip_name == 'ActivateOpen' and tr.keyframes[0].time == 0.0:
+                            if abs(tr.keyframes[0].value - rest_val) > 0.01:
+                                tr.keyframes[0] = BosKeyframe(time=0.0, value=rest_val)
+                        elif clip_name == 'ActivateClose':
+                            last = tr.keyframes[-1]
+                            if abs(last.value - rest_val) > 0.01:
+                                tr.keyframes[-1] = BosKeyframe(time=last.time, value=rest_val)
                     builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
                                           piece_offsets)
                 if model.root_piece:
@@ -867,9 +887,9 @@ def convert_with_weapons(
                     # S3O rest pose as the deployed/open state.
                     # Exception: units whose BOS Create() explicitly starts closed.
                     # Units that are known to start open despite no explicit BOS open call
-                    _FORCE_AUTOPLAY_OPEN = {'armpb'}
+                    _FORCE_AUTOPLAY_OPEN = {'armpb', 'corasy'}
                     # Units that are known to start closed despite no explicit BOS closed call
-                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo'}
+                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'corgant'}
                     _CLOSED_IN_CREATE = [
                         r'start-script\s+OpenCloseAnim\s*\(\s*0\s*\)',
                         r'start-script\s+Stop\b',
@@ -886,10 +906,15 @@ def convert_with_weapons(
                             elif bos_content[ci] == '}': depth -= 1
                             ci += 1
                         create_body = bos_content[cm.start():ci]
+                    # Factories use OpenYard/CloseYard (older) or FACTORY_OPEN_BUILD macro (newer)
+                    is_factory = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
                     starts_closed = (
-                        unit_name.lower() in _FORCE_STARTS_CLOSED or
-                        (unit_name.lower() not in _FORCE_AUTOPLAY_OPEN and
-                         any(re.search(p, create_body, re.IGNORECASE) for p in _CLOSED_IN_CREATE))
+                        unit_name.lower() not in _FORCE_AUTOPLAY_OPEN and
+                        (
+                            unit_name.lower() in _FORCE_STARTS_CLOSED or
+                            is_factory or
+                            any(re.search(p, create_body, re.IGNORECASE) for p in _CLOSED_IN_CREATE)
+                        )
                     )
                     if not starts_closed:
                         extras["autoplay_open"] = True

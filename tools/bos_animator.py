@@ -260,7 +260,7 @@ def parse_create_hide_pieces(bos_content: str) -> set:
     return {m.group(1).lower() for m in re.finditer(r'\bhide\s+(\w+)', clean, re.IGNORECASE)}
 
 
-def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
+def parse_create_now_rotations(bos_content: str, skip_activate_flypose: bool = False) -> Dict[Tuple, float]:
     """
     Parse rest-pose transforms for pieces. Tries two sources in order:
     1. 'turn/move piece to axis <value> now' in Create() — explicit immediate pose
@@ -268,6 +268,7 @@ def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
     Returns {(piece, axis, is_rotation): value}
       is_rotation=True  → degrees (turn)
       is_rotation=False → engine units (move)
+    skip_activate_flypose: if True, skip the Activate() fly-pose scan (use for factories).
     """
     result: Dict[Tuple, float] = {}
 
@@ -288,7 +289,7 @@ def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
     # Last value per (piece, axis) wins (the final target angle).
     # Applied unconditionally (not blocked by Create() now_rots) so that e.g. armthund
     # can have both thrust hide-turns from Create() AND wing fly-pose from activatescr.
-    for _fly_func in ('activatescr', 'Activate'):
+    for _fly_func in (() if skip_activate_flypose else ('activatescr', 'Activate')):
         body = _extract_function_body(bos_content, _fly_func)
         if not body:
             continue
@@ -299,11 +300,8 @@ def parse_create_now_rotations(bos_content: str) -> Dict[Tuple, float]:
             if abs(val) > 15.0:
                 key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
                 candidate[key] = val  # last value wins = final target angle
-        for m in _MOVE_RE.finditer(stripped):
-            val = float(m.group(3))
-            if abs(val) > 0.0:
-                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
-                candidate[key] = val
+        # Note: move (translation) commands are intentionally excluded from fly-pose.
+        # Activate() translations are factory-door movements, not aircraft fly poses.
         if candidate:
             result.update(candidate)
             print(f"  Using {_fly_func}() as fly pose ({len(candidate)} transforms)")
@@ -389,7 +387,8 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
     matches what the Spring engine sets up via Create().
     """
     bos_content = _expand_macros(bos_content)
-    now_rots = parse_create_now_rotations(bos_content)
+    _is_factory = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
+    now_rots = parse_create_now_rotations(bos_content, skip_activate_flypose=_is_factory)
 
     for func_name in ['Walk', 'StartMoving', 'Move', 'DoTheWalking', 'movelegs', 'walkscr', 'Movement']:
         body = _extract_function_body(bos_content, func_name)
