@@ -43,10 +43,10 @@
         ssaoMinDist: 0.001,
         ssaoMaxDist: 5.5,
         exportWidth: 4096,
-        initialZoomMultiplier: 0.70,
+        initialZoomMultiplier: 0.72,
         cameraHeightFactor: 0.8,
-        zoomReferenceRadius: 14,
-        zoomExponent: 0.74
+        zoomReferenceRadius: 18,
+        zoomExponent: 0.72
     };
     function isMobileDevice() {
         const ua = navigator.userAgent.toLowerCase();
@@ -312,8 +312,7 @@
             groundMesh.rotation.x = -Math.PI / 2;
             let canFly = false;
             modelScene.traverse(n => { if (n.userData && n.userData.can_fly) canFly = true; });
-            const groundBox = autoplayOpenForBox ? box : defaultBox;
-            let groundY = groundBox.min.y - center.y - 0.01;
+            let groundY = defaultBox.min.y - center.y - 0.01;
             if (canFly) groundY -= objectRadius * 0.5;
             groundMesh.position.y = groundY;
             groundMesh.receiveShadow = true;
