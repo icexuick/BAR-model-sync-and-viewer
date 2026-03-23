@@ -1140,3 +1140,257 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         return clips
 
     return None
+
+
+# ── Fire / recoil animation extraction ──────────────────────────────
+
+# Maps legacy names → weapon number
+_FIRE_LEGACY = {'FirePrimary': 1, 'FireSecondary': 2, 'FireTertiary': 3}
+
+_SLEEP_RE = re.compile(r'\bsleep\s+(\d+)\s*;', re.IGNORECASE)
+
+
+def _strip_if_branches(body: str) -> str:
+    """
+    For fire functions with if(gun==N) branches (gatling guns, alternating barrels),
+    extract only the first branch's body.  This gives us a single representative
+    fire cycle rather than concatenating all branches into one broken sequence.
+
+    If no gun/barrel counter branches found, return body unchanged.
+    """
+    # Detect patterns like: if( gun_1 == 0 ) { ... } if( gun_1 == 1 ) { ... }
+    gun_pattern = re.compile(
+        r'\bif\s*\(\s*\w+\s*==\s*(\d+)\s*\)', re.IGNORECASE
+    )
+    matches = list(gun_pattern.finditer(body))
+    if len(matches) < 2:
+        return body  # no branching
+
+    # Check these are sequential branches of the same var (values 0, 1, 2, ...)
+    values = [int(m.group(1)) for m in matches]
+    if values[0] != 0 or values != list(range(len(values))):
+        return body  # not a sequential counter pattern
+
+    # Extract code before first branch + first branch body + code after last branch
+    pre_branch = body[:matches[0].start()]
+
+    # Find the first branch's { ... } block
+    brace_start = body.index('{', matches[0].end())
+    depth = 0
+    i = brace_start
+    while i < len(body):
+        if body[i] == '{':
+            depth += 1
+        elif body[i] == '}':
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    first_branch_body = body[brace_start + 1:i]
+
+    # Find end of last branch block
+    last_match = matches[-1]
+    brace_start2 = body.index('{', last_match.end())
+    depth = 0
+    i = brace_start2
+    while i < len(body):
+        if body[i] == '{':
+            depth += 1
+        elif body[i] == '}':
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    post_branch = body[i + 1:]
+
+    return pre_branch + first_branch_body + post_branch
+
+
+def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
+    """
+    Parse a fire function body into animation tracks.
+
+    Fire functions use a mix of:
+      - move/turn commands (recoil + return)
+      - sleep N  (delay in ms)
+      - wait-for-move / wait-for-turn  (phase barriers)
+
+    Strategy: walk through the body linearly, collecting move/turn commands.
+    When a sleep or wait-for is encountered, advance the time cursor and
+    commit pending commands as keyframes.  After all commands, ensure pieces
+    return to 0 (rest) if not already there.
+    """
+    # Handle if(gun==N) branching by taking only the first branch
+    body = _strip_if_branches(body)
+    clean = _strip_comments(body)
+
+    # Tokenize into: (type, data) where type is 'move', 'turn', 'sleep', 'wait'
+    tokens = []
+    for m in re.finditer(
+        r'(?:'
+        r'(?P<turn>\bturn\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*)?<[-\d.]+>[^;]*;)'
+        r'|(?P<move>\bmove\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*\(\s*)?\[[-\d.]+\][^;]*;)'
+        r'|(?P<sleep>\bsleep\s+\d+\s*;)'
+        r'|(?P<wait>\bwait-for-(?:turn|move)\s+\w+\s+(?:around|along)\s+[xyz]-axis\s*;)'
+        r')',
+        clean, re.IGNORECASE
+    ):
+        if m.group('turn'):
+            tm = _TURN_RE.search(m.group('turn'))
+            if tm:
+                # Skip turn commands with variable expressions (e.g. <60> * gun_1)
+                after_angle = m.group('turn')[m.group('turn').index('>') + 1:]
+                if re.search(r'\*\s*\w+', after_angle):
+                    continue
+                spd_m = re.search(r'speed\s*<([\d.]+)>', m.group('turn'), re.IGNORECASE)
+                spd = float(spd_m.group(1)) if spd_m else 60.0
+                tokens.append(('cmd', (tm.group(1).lower(), AXIS_INDEX[tm.group(2).lower()], True),
+                               float(tm.group(3)), spd))
+        elif m.group('move'):
+            mm = _MOVE_RE.search(m.group('move'))
+            if mm:
+                txt = m.group('move')
+                # 'now' keyword = instant move (infinite speed)
+                is_now = bool(re.search(r'\]\s*now\s*;', txt, re.IGNORECASE))
+                if is_now:
+                    spd = 1e6  # effectively instant
+                else:
+                    spd_m = re.search(r'speed\s*\[([\d.]+)\]', txt, re.IGNORECASE)
+                    spd = float(spd_m.group(1)) if spd_m else 10.0
+                tokens.append(('cmd', (mm.group(1).lower(), AXIS_INDEX[mm.group(2).lower()], False),
+                               float(mm.group(3)), spd))
+        elif m.group('sleep'):
+            sm = _SLEEP_RE.search(m.group('sleep'))
+            if sm:
+                tokens.append(('sleep', int(sm.group(1))))
+        elif m.group('wait'):
+            tokens.append(('wait',))
+
+    if not tokens:
+        return [], 0.0
+
+    # Walk tokens, build keyframes
+    current_pose: Dict[Tuple, float] = {}
+    track_kfs: Dict[Tuple, List[BosKeyframe]] = {}
+    t_cursor = 0.0
+    pending_cmds: List[Tuple] = []  # (key, target, speed)
+
+    def flush_pending():
+        """Commit pending commands as keyframes at t_cursor."""
+        nonlocal t_cursor
+        if not pending_cmds:
+            return
+        # All pending commands start at t_cursor; compute max duration
+        phase_dur = 0.0
+        for key, target, speed in pending_cmds:
+            start_val = current_pose.get(key, 0.0)
+            if speed > 0:
+                phase_dur = max(phase_dur, abs(target - start_val) / speed)
+        for key, target, speed in pending_cmds:
+            start_val = current_pose.get(key, 0.0)
+            if key not in track_kfs:
+                track_kfs[key] = [BosKeyframe(time=0.0, value=start_val)]
+            else:
+                last = track_kfs[key][-1]
+                if last.time < t_cursor - 0.001:
+                    track_kfs[key].append(BosKeyframe(time=t_cursor, value=last.value))
+            end_t = t_cursor + phase_dur if phase_dur > 0.001 else t_cursor
+            track_kfs[key].append(BosKeyframe(time=end_t, value=target))
+            current_pose[key] = target
+        pending_cmds.clear()
+
+    for tok in tokens:
+        if tok[0] == 'cmd':
+            _, key, target, speed = tok
+            pending_cmds.append((key, target, speed))
+        elif tok[0] == 'sleep':
+            flush_pending()
+            t_cursor += tok[1] / 1000.0
+        elif tok[0] == 'wait':
+            flush_pending()
+
+    flush_pending()
+
+    if not track_kfs:
+        return [], 0.0
+
+    # Ensure all tracks return to 0 at the end (rest pose)
+    for key, kfs in track_kfs.items():
+        last_val = kfs[-1].value
+        if abs(last_val) > 0.001:
+            # Compute return time based on the last speed used
+            return_dur = abs(last_val) / 10.0  # default slow return
+            # Look for the last cmd that targeted 0 to get its speed
+            for tok in reversed(tokens):
+                if tok[0] == 'cmd' and tok[1] == key and abs(tok[2]) < 0.001:
+                    return_dur = abs(last_val) / max(tok[3], 0.1)
+                    break
+            t_cursor_end = kfs[-1].time + 0.01  # small gap
+            kfs.append(BosKeyframe(time=t_cursor_end, value=last_val))
+            kfs.append(BosKeyframe(time=t_cursor_end + return_dur, value=0.0))
+
+    # Compute total duration
+    total_duration = max(kf.time for kfs in track_kfs.values() for kf in kfs)
+    if total_duration < 0.01:
+        total_duration = 0.5
+
+    tracks: List[BosTrack] = []
+    for key, kfs in track_kfs.items():
+        if len(kfs) < 2:
+            continue
+        # Skip tracks where all keyframes have value 0 (no-op)
+        if all(abs(kf.value) < 0.001 for kf in kfs):
+            continue
+        piece, axis, is_rot = key
+        tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot, keyframes=kfs))
+
+    return tracks, total_duration
+
+
+def extract_fire_animations(bos_content: str) -> Optional[List[Tuple[str, List[BosTrack]]]]:
+    """
+    Extract weapon fire/recoil animations from BOS scripts.
+
+    Looks for FireWeapon1(), FireWeapon2(), ..., FirePrimary(), FireSecondary(), etc.
+    Inlines call-script references (e.g. call-script fireCommon()).
+
+    Returns list of (clip_name, tracks) pairs where clip_name = 'Fire_1', 'Fire_2', etc.
+    Returns None if no fire animations with actual movement found.
+    """
+    bos_content = _expand_macros(bos_content)
+    clips: List[Tuple[str, List[BosTrack]]] = []
+    seen_weapons: set = set()
+
+    # Try FireWeapon1..FireWeapon16
+    for n in range(1, 17):
+        func_name = f'FireWeapon{n}'
+        body = _extract_function_body(bos_content, func_name)
+        if not body:
+            continue
+        body = _inline_call_scripts(body, bos_content)
+        tracks, dur = _parse_fire_body_to_tracks(body)
+        if tracks:
+            clip_name = f'Fire_{n}'
+            pieces = sorted({t.piece for t in tracks})
+            print(f"  Fire animation '{clip_name}': {len(tracks)} tracks, "
+                  f"{dur:.2f}s, pieces: {', '.join(pieces)}")
+            clips.append((clip_name, tracks))
+            seen_weapons.add(n)
+
+    # Try legacy names
+    for legacy_name, wnum in _FIRE_LEGACY.items():
+        if wnum in seen_weapons:
+            continue
+        body = _extract_function_body(bos_content, legacy_name)
+        if not body:
+            continue
+        body = _inline_call_scripts(body, bos_content)
+        tracks, dur = _parse_fire_body_to_tracks(body)
+        if tracks:
+            clip_name = f'Fire_{wnum}'
+            pieces = sorted({t.piece for t in tracks})
+            print(f"  Fire animation '{clip_name}' (from {legacy_name}): {len(tracks)} tracks, "
+                  f"{dur:.2f}s, pieces: {', '.join(pieces)}")
+            clips.append((clip_name, tracks))
+
+    return clips if clips else None
