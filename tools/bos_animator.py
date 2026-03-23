@@ -1212,7 +1212,11 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
                      for t in open_tracks}
         close_tracks, close_dur = _parse_turn_move_to_tracks(build_close, start_pose=open_pose)
-        if open_tracks and close_tracks and open_dur >= 0.15:
+        # Skip if all animated pieces are aim/turret pieces — that's builder
+        # nanolathe aiming (e.g. cornecro, corfast), not a real toggle.
+        _aim_re = re.compile(r'^(aim|turret)', re.IGNORECASE)
+        _all_aim = open_tracks and all(_aim_re.match(t.piece) for t in open_tracks)
+        if open_tracks and close_tracks and open_dur >= 0.15 and not _all_aim:
             print(f"  Toggle animation 'ActivateOpen' (from StartBuilding): {len(open_tracks)} tracks, {open_dur:.2f}s")
             print(f"  Toggle animation 'ActivateClose' (from StopBuilding): {len(close_tracks)} tracks, {close_dur:.2f}s")
             clips.append(('ActivateOpen', open_tracks))
