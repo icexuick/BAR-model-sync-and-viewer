@@ -1333,6 +1333,7 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
         nonlocal t_cursor
         if not pending_cmds:
             return
+        max_end_t = t_cursor
         for key, target, speed in pending_cmds:
             start_val = current_pose.get(key, 0.0)
             if key not in track_kfs:
@@ -1343,8 +1344,9 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
                     track_kfs[key].append(BosKeyframe(time=t_cursor, value=last.value))
             # Each command uses its own duration based on speed
             if speed >= 1e5:
-                # 'now' = instant
-                end_t = t_cursor
+                # 'now' = instant — use tiny epsilon so the step is visible
+                # (two keyframes at identical times get collapsed by interpolation)
+                end_t = t_cursor + 0.001
             elif speed > 0:
                 cmd_dur = abs(target - start_val) / speed
                 end_t = t_cursor + cmd_dur
@@ -1352,7 +1354,12 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
                 end_t = t_cursor
             track_kfs[key].append(BosKeyframe(time=end_t, value=target))
             current_pose[key] = target
+            if end_t > max_end_t:
+                max_end_t = end_t
         pending_cmds.clear()
+        # Advance cursor to the latest completion time so subsequent
+        # sleeps/commands don't overlap with unfinished motions
+        t_cursor = max_end_t
 
     for tok in tokens:
         if tok[0] == 'cmd':
