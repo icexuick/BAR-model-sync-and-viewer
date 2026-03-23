@@ -46,30 +46,6 @@ window._barWeaponsSetup = function(THREE, opts) {
     });
 
     var unitRoleMeshMap = new Map();
-    if (unitRole && meshWeaponMap.size === 0 && !isToggleable) {
-        var ROLE_LABELS = {
-            'RADAR': 'Radar', 'JAMMER': 'Jamming Device',
-            'SONAR': 'Sonar', 'RADAR_JAMMER': 'Radar / Jammer',
-        };
-        var roleLabel = ROLE_LABELS[unitRole] || unitRole;
-        if (spinPieceNames) {
-            modelScene.traverse(function(node) {
-                if (!node.isMesh || !node.visible) return;
-                if (shouldHideMesh(node.name)) return;
-                if (spinPieceNames.has(node.name.toLowerCase())) {
-                    unitRoleMeshMap.set(node.uuid, roleLabel);
-                } else if (node.parent && spinPieceNames.has(node.parent.name.toLowerCase())) {
-                    unitRoleMeshMap.set(node.uuid, roleLabel);
-                }
-            });
-        } else {
-            modelScene.traverse(function(node) {
-                if (!node.isMesh || !node.visible) return;
-                if (shouldHideMesh(node.name)) return;
-                unitRoleMeshMap.set(node.uuid, roleLabel);
-            });
-        }
-    }
 
     function getDomWeaponNames() {
         var map = new Map();
