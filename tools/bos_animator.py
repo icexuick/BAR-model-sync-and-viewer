@@ -877,95 +877,178 @@ def _parse_turn_move_to_tracks(body: str, start_pose: Optional[Dict[Tuple, float
                                 ) -> Tuple[List[BosTrack], float]:
     """
     Parse 'turn piece to axis <deg> speed <spd>' and 'move piece to axis [val] speed [spd]'
-    commands from a BOS function body, respecting wait-for-turn/wait-for-move as phase barriers.
+    commands from a BOS function body, respecting sleep and wait-for-turn/move as barriers.
 
-    Returns (tracks, duration_seconds).  Each track has keyframes at the correct phase offsets.
+    BOS semantics:
+    - Commands fire instantly and run in the background at the given speed.
+    - 'sleep N' pauses the script for N ms (background commands keep running).
+    - 'wait-for-turn/move' blocks until that specific command finishes.
+    - A new command on the same piece+axis interrupts the previous one.
+
+    Strategy: tokenize into commands / sleep / wait-for-* events. Walk linearly,
+    tracking in-flight commands. At each barrier, compute where each in-flight
+    command has reached, then advance time.
+
+    Returns (tracks, duration_seconds).
     """
     clean = _strip_comments(body)
 
-    _WAIT_RE = re.compile(
-        r'\bwait-for-(turn|move)\s+(\w+)\s+(?:around|along)\s+([xyz])-axis',
-        re.IGNORECASE
-    )
+    # Track in-flight commands: key → (start_time, start_val, target_val, speed)
+    InFlight = Tuple[float, float, float, float]  # t_start, v_start, v_target, speed
+    in_flight: Dict[Tuple, InFlight] = {}
 
-    # Split body into phases at each wait-for-* boundary
-    # Each phase is a slice of text; commands in a phase run in parallel
-    phase_texts: List[str] = []
-    prev = 0
-    for wm in _WAIT_RE.finditer(clean):
-        phase_texts.append(clean[prev:wm.end()])
-        prev = wm.end()
-    phase_texts.append(clean[prev:])  # final phase after last wait
-
-    # For each phase: collect commands and compute phase duration
-    # current_pose tracks the running position of each piece
     current_pose: Dict[Tuple, float] = dict(start_pose) if start_pose else {}
     track_kfs: Dict[Tuple, List[BosKeyframe]] = {}
     t_cursor = 0.0
 
-    for phase_text in phase_texts:
-        phase_cmds: Dict[Tuple, float] = {}
-        phase_spds: Dict[Tuple, float] = {}
+    def _get_inflight_value(key: Tuple, at_time: float) -> float:
+        """Get the value of a piece at a given time, accounting for in-flight commands."""
+        if key in in_flight:
+            t_start, v_start, v_target, spd = in_flight[key]
+            if spd <= 0:
+                return v_target
+            elapsed = at_time - t_start
+            total_dur = abs(v_target - v_start) / spd
+            if elapsed >= total_dur:
+                return v_target
+            frac = elapsed / total_dur if total_dur > 0 else 1.0
+            return v_start + (v_target - v_start) * frac
+        return current_pose.get(key, 0.0)
 
-        for m in _TURN_RE.finditer(phase_text):
-            key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
-            phase_cmds[key] = float(m.group(3))
-            spd_m = re.search(r'speed\s*<([\d.]+)>', phase_text[m.start():m.start()+200], re.IGNORECASE)
-            if spd_m:
-                phase_spds[key] = float(spd_m.group(1))
+    def _inflight_end_time(key: Tuple) -> float:
+        """When will the in-flight command for this key finish?"""
+        if key not in in_flight:
+            return 0.0
+        t_start, v_start, v_target, spd = in_flight[key]
+        if spd <= 0:
+            return t_start
+        return t_start + abs(v_target - v_start) / spd
 
-        for m in _MOVE_RE.finditer(phase_text):
-            key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
-            phase_cmds[key] = float(m.group(3))
-            spd_m = re.search(r'speed\s*\[([\d.]+)\]', phase_text[m.start():m.start()+200], re.IGNORECASE)
-            if spd_m:
-                phase_spds[key] = float(spd_m.group(1))
+    def _snapshot_key(key: Tuple, at_time: float):
+        """Record the current interpolated value of an in-flight key at the given time."""
+        val = _get_inflight_value(key, at_time)
+        if key not in track_kfs:
+            track_kfs[key] = [BosKeyframe(time=0.0, value=current_pose.get(key, 0.0))]
+        last = track_kfs[key][-1]
+        if at_time > last.time + 0.001 or abs(val - last.value) > 0.001:
+            if last.time < at_time - 0.001:
+                track_kfs[key].append(BosKeyframe(time=at_time, value=val))
+            elif abs(val - last.value) > 0.001:
+                track_kfs[key].append(BosKeyframe(time=at_time, value=val))
+        current_pose[key] = val
 
-        if not phase_cmds:
-            continue
+    def _start_command(key: Tuple, target: float, speed: float):
+        """Start a new command, interrupting any in-flight command on same key."""
+        # Snapshot current in-flight position before overwriting
+        if key in in_flight:
+            _snapshot_key(key, t_cursor)
+        cur_val = current_pose.get(key, 0.0)
+        in_flight[key] = (t_cursor, cur_val, target, speed)
 
-        # Phase duration = slowest command in this phase
-        phase_dur = 0.0
-        for key, target in phase_cmds.items():
-            speed = phase_spds.get(key, 60.0)
-            start_val = current_pose.get(key, 0.0)
-            delta = abs(target - start_val)
-            if speed > 0:
-                phase_dur = max(phase_dur, delta / speed)
+    def _complete_inflight(key: Tuple):
+        """Force-complete an in-flight command and record final keyframe."""
+        if key not in in_flight:
+            return
+        t_start, v_start, v_target, spd = in_flight[key]
+        end_t = _inflight_end_time(key)
+        if key not in track_kfs:
+            track_kfs[key] = [BosKeyframe(time=0.0, value=v_start)]
+        last = track_kfs[key][-1]
+        if end_t > last.time + 0.001 or abs(v_target - last.value) > 0.001:
+            if last.time < end_t - 0.001:
+                track_kfs[key].append(BosKeyframe(time=end_t, value=v_target))
+            elif abs(v_target - last.value) > 0.001:
+                track_kfs[key].append(BosKeyframe(time=end_t, value=v_target))
+        current_pose[key] = v_target
+        del in_flight[key]
 
-        if phase_dur < 0.001:
-            phase_dur = 0.0
+    # Tokenize into events
+    _BARRIER_RE = re.compile(
+        r'(?:'
+        r'(?P<turn>\bturn\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*)?<[-\d.]+>[^;]*;)'
+        r'|(?P<move>\bmove\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*\(\s*)?\[[-\d.]+\][^;]*;)'
+        r'|(?P<sleep>\bsleep\s+\d+\s*;)'
+        r'|(?P<wait>\bwait-for-(?:turn|move)\s+\w+\s+(?:around|along)\s+[xyz]-axis\s*;)'
+        r')',
+        re.IGNORECASE
+    )
 
-        # Write keyframes: start of phase and end of phase for each moving piece
-        for key, target in phase_cmds.items():
-            piece, axis, is_rot = key
-            start_val = current_pose.get(key, 0.0)
-            if key not in track_kfs:
-                track_kfs[key] = [BosKeyframe(time=0.0, value=start_val)]
-            else:
-                # Ensure there's a keyframe at t_cursor (hold previous value)
-                last_kf = track_kfs[key][-1]
-                if last_kf.time < t_cursor - 0.001:
-                    track_kfs[key].append(BosKeyframe(time=t_cursor, value=last_kf.value))
-            if phase_dur > 0.001:
-                track_kfs[key].append(BosKeyframe(time=t_cursor + phase_dur, value=target))
-            else:
-                track_kfs[key].append(BosKeyframe(time=t_cursor, value=target))
-            current_pose[key] = target
+    _WAIT_PARSE_RE = re.compile(
+        r'\bwait-for-(turn|move)\s+(\w+)\s+(?:around|along)\s+([xyz])-axis',
+        re.IGNORECASE
+    )
 
-        t_cursor += phase_dur
+    for m in _BARRIER_RE.finditer(clean):
+        if m.group('turn'):
+            tm = _TURN_RE.search(m.group('turn'))
+            if tm:
+                key = (tm.group(1).lower(), AXIS_INDEX[tm.group(2).lower()], True)
+                target = float(tm.group(3))
+                spd_m = re.search(r'speed\s*<([\d.]+)>', m.group('turn'), re.IGNORECASE)
+                spd = float(spd_m.group(1)) if spd_m else 60.0
+                _start_command(key, target, spd)
+        elif m.group('move'):
+            mm = _MOVE_RE.search(m.group('move'))
+            if mm:
+                key = (mm.group(1).lower(), AXIS_INDEX[mm.group(2).lower()], False)
+                target = float(mm.group(3))
+                txt = m.group('move')
+                is_now = bool(re.search(r'\]\s*now\s*;', txt, re.IGNORECASE))
+                if is_now:
+                    spd = 1e6
+                else:
+                    spd_m = re.search(r'speed\s*\[([\d.]+)\]', txt, re.IGNORECASE)
+                    spd = float(spd_m.group(1)) if spd_m else 10.0
+                _start_command(key, target, spd)
+        elif m.group('sleep'):
+            sm = _SLEEP_RE.search(m.group('sleep'))
+            if sm:
+                sleep_ms = int(sm.group(1))
+                t_cursor += sleep_ms / 1000.0
+        elif m.group('wait'):
+            wm = _WAIT_PARSE_RE.search(m.group('wait'))
+            if wm:
+                kind = wm.group(1).lower()  # 'turn' or 'move'
+                piece = wm.group(2).lower()
+                axis = AXIS_INDEX[wm.group(3).lower()]
+                is_rot = (kind == 'turn')
+                key = (piece, axis, is_rot)
+                # Block until this command finishes
+                end_t = _inflight_end_time(key)
+                if end_t > t_cursor:
+                    t_cursor = end_t
+                _complete_inflight(key)
+
+    # Complete remaining in-flight commands.
+    # Commands that would finish much later than the last script action
+    # get snapshotted at a reasonable cutoff (these are background moves
+    # that run during gameplay but shouldn't bloat the animation duration).
+    cutoff = t_cursor + 1.0  # 1s after last script action
+    for key in list(in_flight.keys()):
+        end_t = _inflight_end_time(key)
+        if end_t <= cutoff:
+            _complete_inflight(key)
+        else:
+            # Snapshot the interpolated value at the cutoff
+            _snapshot_key(key, cutoff)
+            del in_flight[key]
 
     if not track_kfs:
         return [], 0.0
 
-    total_duration = t_cursor if t_cursor > 0.01 else 1.0
+    total_duration = max(kf.time for kfs in track_kfs.values() for kf in kfs)
+    if total_duration < 0.01:
+        total_duration = 0.5
 
     tracks: List[BosTrack] = []
     for key, kfs in track_kfs.items():
         piece, axis, is_rot = key
         if len(kfs) < 2:
             continue
-        # Close off any tracks that ended before total_duration
+        # Skip no-op tracks (start and end at same value)
+        if abs(kfs[0].value - kfs[-1].value) < 0.001 and all(abs(kf.value - kfs[0].value) < 0.001 for kf in kfs):
+            continue
+        # Close off tracks that ended before total_duration
         last = kfs[-1]
         if last.time < total_duration - 0.001:
             kfs.append(BosKeyframe(time=total_duration, value=last.value))

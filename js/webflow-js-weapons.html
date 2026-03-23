@@ -257,38 +257,51 @@ window._barWeaponsSetup = function(THREE, opts) {
             }
         });
 
-        // Find which weapon nums share the same def (same weapon type = same fire anim)
-        function getFireAction(wnum) {
-            if (fireActions[wnum]) return fireActions[wnum];
-            // If this weapon number has no fire anim, check if another weapon with same def does
+        // Collect all fire actions that share the same weapon def as wnum
+        function getFireActions(wnum) {
             var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
-            if (!def) return null;
-            for (var wn in fireActions) {
-                var wnDef = weaponSummary[String(wn)] ? weaponSummary[String(wn)].def : null;
-                if (wnDef === def) return fireActions[wn];
+            // Gather all actions for this def (or just this wnum if no def match)
+            var actions = [];
+            if (def) {
+                // Collect in weapon-number order so barrels fire sequentially
+                var wnums = Object.keys(fireActions).map(Number).sort(function(a,b){return a-b;});
+                for (var i = 0; i < wnums.length; i++) {
+                    var wn = wnums[i];
+                    var wnDef = weaponSummary[String(wn)] ? weaponSummary[String(wn)].def : null;
+                    if (wnDef === def) actions.push(fireActions[wn]);
+                }
             }
-            return null;
+            if (actions.length === 0 && fireActions[wnum]) actions.push(fireActions[wnum]);
+            return actions;
         }
 
         function playFire(wnum) {
-            var action = getFireAction(wnum);
-            if (!action || fireAnimPlaying) return;
+            var actions = getFireActions(wnum);
+            if (actions.length === 0 || fireAnimPlaying) return;
             fireAnimPlaying = true;
-            action.reset().play();
-            mixer.addEventListener('finished', function onDone(e) {
-                if (e.action === action) {
-                    fireAnimPlaying = false;
-                    action.stop();
-                    // Apply accumulative rotary advance (gatling spindle)
-                    var clipName = action.getClip().name;
-                    var rot = rotaryNodes[clipName];
-                    if (rot) {
-                        rot.accumRad += rot.stepRad;
-                        rot.node.rotation[rot.axis] = rot.accumRad;
-                    }
-                    mixer.removeEventListener('finished', onDone);
-                }
-            });
+            var STAGGER_MS = 300;  // delay between sequential barrel fires
+            var pending = actions.length;
+            for (var i = 0; i < actions.length; i++) {
+                (function(action, delay) {
+                    setTimeout(function() {
+                        action.reset().play();
+                        mixer.addEventListener('finished', function onDone(e) {
+                            if (e.action === action) {
+                                action.stop();
+                                var clipName = action.getClip().name;
+                                var rot = rotaryNodes[clipName];
+                                if (rot) {
+                                    rot.accumRad += rot.stepRad;
+                                    rot.node.rotation[rot.axis] = rot.accumRad;
+                                }
+                                mixer.removeEventListener('finished', onDone);
+                                pending--;
+                                if (pending <= 0) fireAnimPlaying = false;
+                            }
+                        });
+                    }, delay);
+                })(actions[i], i * STAGGER_MS);
+            }
         }
 
         // Click on 3D weapon mesh → fire
@@ -302,7 +315,7 @@ window._barWeaponsSetup = function(THREE, opts) {
             var hit = hits.find(function(h) { return meshWeaponMap.has(h.object.uuid); });
             if (hit) {
                 var winfo = meshWeaponMap.get(hit.object.uuid);
-                if (getFireAction(winfo.num)) playFire(winfo.num);
+                if (getFireActions(winfo.num).length) playFire(winfo.num);
             }
         });
 
@@ -312,7 +325,7 @@ window._barWeaponsSetup = function(THREE, opts) {
             if (!el) return;
             var slug = el.getAttribute('data-wpn-slug');
             var wnum = slugToWnum.get(slug);
-            if (wnum !== undefined && getFireAction(wnum)) playFire(wnum);
+            if (wnum !== undefined && getFireActions(wnum).length) playFire(wnum);
         });
     }
 
