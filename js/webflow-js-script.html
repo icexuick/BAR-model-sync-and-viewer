@@ -451,9 +451,12 @@
             groundMesh.position.y = box.min.y - center.y - 0.01;
             groundMesh.receiveShadow = true;
             scene.add(groundMesh);
-            renderer.localClippingEnabled = true;
-            const floorClipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(groundMesh.position.y));
-            material.clippingPlanes = [floorClipPlane];
+            const hasWalkAnim = gltf.animations && gltf.animations.some(c => c.name.toLowerCase() === 'walk');
+            if (!hasWalkAnim) {
+                renderer.localClippingEnabled = true;
+                const floorClipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(groundMesh.position.y));
+                material.clippingPlanes = [floorClipPlane];
+            }
             if (gltf.animations && gltf.animations.length) {
                 mixer = new THREE.AnimationMixer(modelScene);
 
