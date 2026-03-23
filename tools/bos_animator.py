@@ -1329,13 +1329,55 @@ def _extract_branch_block(body: str, start_pos: int) -> Tuple[str, int]:
 
 def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int, float, float]]]:
     """
-    For fire functions with if(gun==N) branches (gatling guns, alternating barrels),
-    sequence ALL branches into one continuous animation cycle.
+    For fire functions with alternating barrel branches, split them so each
+    barrel's recoil starts independently at t=0.
+
+    Handles patterns:
+      - if(gun == 0) { ... } if(gun == 1) { ... }  (N branches)
+      - if(!gun_1) { ... } else { ... }             (2 branches)
+      - if(gun_1) { ... } else { ... }              (2 branches)
 
     Returns (sequenced_body, num_branches, rotary_info).
     num_branches = 0 means no branching detected (body unchanged).
     rotary_info is (piece, axis, step_degrees, speed) for gatling-style advance, or None.
     """
+    # --- Pattern A: if(!var) { ... } else { ... }  or  if(var) { ... } else { ... } ---
+    bool_pattern = re.compile(
+        r'\bif\s*\(\s*!?\s*(\w+)\s*\)\s*\{', re.IGNORECASE
+    )
+    bool_m = bool_pattern.search(body)
+    if bool_m:
+        counter_var = bool_m.group(1)
+        pre_branch = body[:bool_m.start()]
+        try:
+            branch1_body, branch1_end = _extract_branch_block(body, bool_m.start())
+        except (ValueError, IndexError):
+            branch1_body = None
+            branch1_end = 0
+        if branch1_body:
+            # Look for else { ... }
+            rest = body[branch1_end:]
+            else_m = re.match(r'\s*else\s*\{', rest, re.IGNORECASE)
+            if else_m:
+                try:
+                    branch2_body, branch2_end = _extract_branch_block(rest, else_m.start())
+                except (ValueError, IndexError):
+                    branch2_body = None
+                    branch2_end = 0
+                if branch2_body:
+                    post_branch = rest[branch2_end:]
+                    move_turn_re = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
+                    branch_bodies = []
+                    if move_turn_re.search(branch1_body):
+                        branch_bodies.append(branch1_body)
+                    if move_turn_re.search(branch2_body):
+                        branch_bodies.append(branch2_body)
+                    if len(branch_bodies) >= 2:
+                        BRANCH_RESET = '\n __BRANCH_RESET__;\n'
+                        sequenced = pre_branch + BRANCH_RESET.join(branch_bodies) + post_branch
+                        return sequenced, len(branch_bodies), None
+
+    # --- Pattern B: if(gun == 0) { ... } if(gun == 1) { ... } ... ---
     gun_pattern = re.compile(
         r'\bif\s*\(\s*(\w+)\s*==\s*(\d+)\s*\)', re.IGNORECASE
     )
@@ -1397,11 +1439,12 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
             rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
                             float(rm.group(3)), 360.0)
 
-    # Concatenate: pre_branch + branch1 + SEPARATOR + branch2 + ... + post_branch
-    # Use a special sleep marker between branches so the parser advances time
-    BRANCH_GAP_MS = 150  # gap between branches in the sequence
-    separator = f'\n sleep {BRANCH_GAP_MS};\n'
-    sequenced = pre_branch + separator.join(branch_bodies) + post_branch
+    # Each branch fires a different barrel — they are alternating, not sequential.
+    # Return branches joined so each starts at t=0 independently.
+    # We use a special BRANCH_RESET marker that the fire parser recognises to reset
+    # the time cursor back to 0.
+    BRANCH_RESET = '\n __BRANCH_RESET__;\n'
+    sequenced = pre_branch + BRANCH_RESET.join(branch_bodies) + post_branch
 
     return sequenced, num_branches, rotary_info
 
@@ -1449,6 +1492,7 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
         r'|(?P<move>\bmove\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*\(\s*)?\[[-\d.]+\][^;]*;)'
         r'|(?P<sleep>\bsleep\s+\d+\s*;)'
         r'|(?P<wait>\bwait-for-(?:turn|move)\s+\w+\s+(?:around|along)\s+[xyz]-axis\s*;)'
+        r'|(?P<branch_reset>__BRANCH_RESET__\s*;)'
         r')',
         clean, re.IGNORECASE
     ):
@@ -1485,6 +1529,8 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
                 tokens.append(('sleep', int(sm.group(1))))
         elif m.group('wait'):
             tokens.append(('wait',))
+        elif m.group('branch_reset'):
+            tokens.append(('branch_reset',))
 
     if not tokens and not rotary_info:
         return [], 0.0, None
@@ -1537,6 +1583,11 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
             t_cursor += tok[1] / 1000.0
         elif tok[0] == 'wait':
             flush_pending()
+        elif tok[0] == 'branch_reset':
+            # New alternating-barrel branch — reset time to 0 so this barrel
+            # starts its recoil independently from the previous branch.
+            flush_pending()
+            t_cursor = 0.0
 
     flush_pending()
 
