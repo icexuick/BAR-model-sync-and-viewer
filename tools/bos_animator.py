@@ -40,7 +40,7 @@ FPS = 30.0
 # Move:  move piece to y-axis [value] speed ...
 #   also: move piece to y-axis ((([value] *MOVESCALE)/100) ...) speed ...
 _TURN_RE = re.compile(
-    r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+(?:\(\s*\(\s*)?<([-\d.]+)>',
+    r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+(?:\(\s*\(\s*)?(?:<([-\d.]+)>|\[([-\d.]+)\])',
     re.IGNORECASE
 )
 _MOVE_RE = re.compile(
@@ -965,7 +965,7 @@ def _parse_turn_move_to_tracks(body: str, start_pose: Optional[Dict[Tuple, float
     # Tokenize into events
     _BARRIER_RE = re.compile(
         r'(?:'
-        r'(?P<turn>\bturn\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*)?<[-\d.]+>[^;]*;)'
+        r'(?P<turn>\bturn\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*)?(?:<[-\d.]+>|\[[-\d.]+\])[^;]*;)'
         r'|(?P<move>\bmove\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*\(\s*)?\[[-\d.]+\][^;]*;)'
         r'|(?P<sleep>\bsleep\s+\d+\s*;)'
         r'|(?P<wait>\bwait-for-(?:turn|move)\s+\w+\s+(?:around|along)\s+[xyz]-axis\s*;)'
@@ -983,7 +983,7 @@ def _parse_turn_move_to_tracks(body: str, start_pose: Optional[Dict[Tuple, float
             tm = _TURN_RE.search(m.group('turn'))
             if tm:
                 key = (tm.group(1).lower(), AXIS_INDEX[tm.group(2).lower()], True)
-                target = float(tm.group(3))
+                target = float(tm.group(3) or tm.group(4))
                 spd_m = re.search(r'speed\s*<([\d.]+)>', m.group('turn'), re.IGNORECASE)
                 spd = float(spd_m.group(1)) if spd_m else 60.0
                 _start_command(key, target, spd)
@@ -1152,9 +1152,21 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
             return clips
 
     # --- Pattern 2c: StartBuilding() / StopBuilding() (constructor nanolathe deploy) ---
+    # Skip if unit has Activate/Deactivate with turn/move commands — those are factories
+    # whose real open/close animation lives in Activate/Deactivate (Pattern 3).
     build_open = _extract_function_body(bos_content, 'StartBuilding')
     build_close = _extract_function_body(bos_content, 'StopBuilding')
-    if build_open and build_close:
+    _act_body_check = _extract_function_body(bos_content, 'Activate')
+    _deact_body_check = _extract_function_body(bos_content, 'Deactivate')
+    _has_activate_motion = False
+    if _act_body_check and _deact_body_check:
+        _act_inlined = _strip_comments(_inline_call_scripts(_act_body_check, bos_content))
+        _deact_inlined = _strip_comments(_inline_call_scripts(_deact_body_check, bos_content))
+        _has_activate_motion = (
+            bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', _act_inlined, re.IGNORECASE)) or
+            bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', _deact_inlined, re.IGNORECASE))
+        )
+    if build_open and build_close and not _has_activate_motion:
         build_open  = _inline_call_scripts(build_open,  bos_content)
         build_close = _inline_call_scripts(build_close, bos_content)
         # Cap large sleeps in StopBuilding (gameplay delay before folding back,
@@ -1217,8 +1229,18 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         act_body = _extract_function_body(bos_content, 'Activate')
         deact_body = _extract_function_body(bos_content, 'Deactivate')
         if act_body and deact_body:
-            open_tracks, open_dur = _parse_turn_move_to_tracks(act_body)
-            close_tracks, close_dur = _parse_turn_move_to_tracks(deact_body)
+            act_body  = _inline_call_scripts(act_body,  bos_content)
+            deact_body = _inline_call_scripts(deact_body, bos_content)
+            # Cap large sleeps in Deactivate (gameplay delay, e.g. "sleep 5000")
+            deact_body = re.sub(r'\bsleep\s+(\d+)', lambda m: f'sleep {min(int(m.group(1)), 200)}', deact_body)
+            # Parse close first to get closed pose (rest position)
+            close_tracks_raw, _ = _parse_turn_move_to_tracks(deact_body)
+            closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                           for t in close_tracks_raw}
+            open_tracks, open_dur = _parse_turn_move_to_tracks(act_body, start_pose=closed_pose)
+            open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                         for t in open_tracks}
+            close_tracks, close_dur = _parse_turn_move_to_tracks(deact_body, start_pose=open_pose)
             if open_tracks and close_tracks:
                 print(f"  Toggle animation 'ActivateOpen': {len(open_tracks)} tracks, {open_dur:.2f}s")
                 print(f"  Toggle animation 'ActivateClose': {len(close_tracks)} tracks, {close_dur:.2f}s")
@@ -1423,7 +1445,7 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
     tokens = []
     for m in re.finditer(
         r'(?:'
-        r'(?P<turn>\bturn\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*)?<[-\d.]+>[^;]*;)'
+        r'(?P<turn>\bturn\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*)?(?:<[-\d.]+>|\[[-\d.]+\])[^;]*;)'
         r'|(?P<move>\bmove\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*\(\s*)?\[[-\d.]+\][^;]*;)'
         r'|(?P<sleep>\bsleep\s+\d+\s*;)'
         r'|(?P<wait>\bwait-for-(?:turn|move)\s+\w+\s+(?:around|along)\s+[xyz]-axis\s*;)'
@@ -1434,13 +1456,16 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
             tm = _TURN_RE.search(m.group('turn'))
             if tm:
                 # Skip turn commands with variable expressions (e.g. <60> * gun_1)
-                after_angle = m.group('turn')[m.group('turn').index('>') + 1:]
-                if re.search(r'\*\s*\w+', after_angle):
-                    continue
-                spd_m = re.search(r'speed\s*<([\d.]+)>', m.group('turn'), re.IGNORECASE)
+                turn_txt = m.group('turn')
+                angle_end = turn_txt.find('>') if '>' in turn_txt else turn_txt.find(']')
+                if angle_end >= 0:
+                    after_angle = turn_txt[angle_end + 1:]
+                    if re.search(r'\*\s*\w+', after_angle):
+                        continue
+                spd_m = re.search(r'speed\s*<([\d.]+)>', turn_txt, re.IGNORECASE)
                 spd = float(spd_m.group(1)) if spd_m else 60.0
                 tokens.append(('cmd', (tm.group(1).lower(), AXIS_INDEX[tm.group(2).lower()], True),
-                               float(tm.group(3)), spd))
+                               float(tm.group(3) or tm.group(4)), spd))
         elif m.group('move'):
             mm = _MOVE_RE.search(m.group('move'))
             if mm:
