@@ -5,10 +5,16 @@ Online 3D model viewer voor Beyond All Reason (BAR), een open-source RTS game.
 De website draait op Webflow (beyondallreason.info). Modellen worden getoond met Three.js.
 
 ## Repo structuur
-- `*.glb` — Geconverteerde 3D modellen (GLB formaat) voor Three.js
+- `glb/` — **ALLE** geconverteerde GLB modellen komen hier. Nooit in de repo root.
 - `tex/` — Shared textures (arm_color.png, cor_color.png, etc.)
 - `hdr/` — HDR environment maps
-- `tools/s3o_to_glb/` — Python converter: S3O → GLB met weapon metadata
+- `tools/` — Python converter: S3O → GLB met weapon metadata
+- `js/` — Webflow embed scripts (.html bestanden)
+
+## Workflow regels
+1. **GLB bestanden altijd in `glb/`** — gebruik `--output-dir glb/` bij convert.py. De viewer laadt van `glb/{unitName}.glb`.
+2. **Na conversie altijd committen en pushen** — zodat de live viewer de nieuwe GLB kan laden van GitHub.
+3. **Nooit GLBs in de repo root committen.**
 
 ## S3O → GLB Converter (tools/s3o_to_glb/)
 Converteert Spring engine S3O modellen naar standaard glTF 2.0 Binary (GLB).
@@ -50,12 +56,4 @@ Belangrijke Three.js details:
 - Three.js v0.160.0 via unpkg importmap
 - GLTFLoader + OrbitControls + SSAO + SMAA postprocessing
 - Textures: `{faction}_color.png`, `{faction}_other.png`, `{faction}_normal.png`, `{faction}_team.png`
-- Models laden van: `https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/{unitname}.glb`
-
-## Status & Next steps
-- ✅ S3O → GLB conversie (getest met corjugg, werkt correct)
-- ✅ Weapon metadata extractie uit BOS scripts
-- ⬜ Batch conversie alle BAR units
-- ⬜ Webflow viewer: weapon hover highlighting
-- ⬜ Animatie export uit BOS scripts naar glTF animations
-- ⬜ Matching weapon pieces ↔ Webflow CMS "Unit Weapons" collectie
+- Models laden van: `https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/glb/{unitname}.glb`
