@@ -13,7 +13,9 @@
       "Read(//c/Games/Beyond-All-Reason/data/games/BAR.sdd/units/Legion/SeaPlanes/**)",
       "Read(//c/Games/Beyond-All-Reason/data/games/BAR.sdd/scripts/Units/**)",
       "Read(//d/BAR/BAR GL4 Lights-Distortions IceXuick/units/Legion/Seaconomy/**)",
-      "Read(//c/Users/icema/.claude/projects/d--BAR-BAR-modelviewer/memory/**)"
+      "Read(//c/Users/icema/.claude/projects/d--BAR-BAR-modelviewer/memory/**)",
+      "WebFetch(domain:www.beyondallreason.info)",
+      "WebFetch(domain:help.webflow.com)"
     ]
   }
 }
