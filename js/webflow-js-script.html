@@ -461,18 +461,26 @@
             function triggerToggle() {
                 if (!toggleOpenClip || !toggleCloseClip || toggleAnimating) return;
                 toggleAnimating = true;
-                const playClip   = toggleState ? toggleCloseClip : toggleOpenClip;
-                const resetClip  = toggleState ? toggleOpenClip  : toggleCloseClip;
+                const isClosing = toggleState; // going from open→closed
+                const playClip   = isClosing ? toggleCloseClip : toggleOpenClip;
+                const resetClip  = isClosing ? toggleOpenClip  : toggleCloseClip;
                 if (!toggleOpenAction)  { toggleOpenAction  = mixer.clipAction(toggleOpenClip);  toggleOpenAction.setLoop(THREE.LoopOnce, 1);  toggleOpenAction.clampWhenFinished  = true; }
                 if (!toggleCloseAction) { toggleCloseAction = mixer.clipAction(toggleCloseClip); toggleCloseAction.setLoop(THREE.LoopOnce, 1); toggleCloseAction.clampWhenFinished = true; }
-                const playAction  = toggleState ? toggleCloseAction : toggleOpenAction;
-                const resetAction = toggleState ? toggleOpenAction  : toggleCloseAction;
+                const playAction  = isClosing ? toggleCloseAction : toggleOpenAction;
+                const resetAction = isClosing ? toggleOpenAction  : toggleCloseAction;
+                // Stop walk when closing (folding legs for boat mode)
+                if (isClosing && currentAction) currentAction.weight = 0;
                 resetAction.stop();
                 playAction.reset().play();
                 toggleState = !toggleState;
                 mixer.addEventListener('finished', function onFinished(e) {
                     if (e.action === playAction) {
                         toggleAnimating = false;
+                        // Restart walk when opening (deploying legs for land mode)
+                        if (!isClosing && currentAction) {
+                            const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
+                            if (walkEnabled) currentAction.weight = 1;
+                        }
                         mixer.removeEventListener('finished', onFinished);
                     }
                 });

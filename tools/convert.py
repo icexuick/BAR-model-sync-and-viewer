@@ -162,6 +162,9 @@ _ANIM_DURATION_OVERRIDE: Dict[str, float] = {
 # (multi-phase sequential BOS with wait-for-turn sync points, corecont y-offsets, etc.)
 _TOGGLE_SKIP: set = {'legsolar', 'corlab'}
 
+# Units whose activate-loop animation should be skipped entirely
+# (e.g. FiringMode with 0.02s duration that jitters turret pieces)
+_LOOP_SKIP: set = {'leganavybattleship'}
 
 def convert_with_weapons(
     model: S3OModel,
@@ -863,7 +866,7 @@ def convert_with_weapons(
                         builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces + spin_clip_names
             # Activate-loop animations (e.g. armaser spinarms — while(TRUE) + turn-to + sleep)
             # These can coexist with spin clips (e.g. legmos has blades spin + wing flapping loop)
-            loop_clips = extract_activate_loop_animation(bos_content)
+            loop_clips = [] if unit_name.lower() in _LOOP_SKIP else extract_activate_loop_animation(bos_content)
             if loop_clips:
                 # Skip loop clips for pieces already covered by spin clips
                 existing_spin_pieces = set()
