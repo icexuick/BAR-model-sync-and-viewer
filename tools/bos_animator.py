@@ -1215,27 +1215,33 @@ def _strip_if_branches(body: str) -> Tuple[str, Optional[Tuple[str, int, float, 
     rotary_info = None
     search_text = post_branch + '\n' + first_branch_body
 
-    # Pattern 1: angle multiplied by counter
+    # Pattern 1: angle multiplied by counter (with optional parens around counter var)
     rotary_re1 = re.compile(
-        r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>\s*\*\s*' + re.escape(counter_var)
-        + r'[^;]*speed\s+<([\d.]+)>', re.IGNORECASE
+        r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>\s*\*\s*\(?\s*' + re.escape(counter_var)
+        + r'\s*\)?[^;]*speed\s+<([\d.]+)>', re.IGNORECASE
     )
     rm = rotary_re1.search(search_text)
     if rm:
+        step_deg = float(rm.group(3))
+        raw_speed = float(rm.group(4))
+        # Check if speed has a variable multiplier (e.g. <1>*spin_speed) — use default
+        speed_pos = rm.end(4)
+        after_speed = search_text[speed_pos:speed_pos + 30]
+        if re.match(r'>\s*\*\s*\w+', after_speed):
+            raw_speed = 360.0  # variable speed, use default
         rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
-                        float(rm.group(3)), float(rm.group(4)))
+                        step_deg, raw_speed)
 
     # Pattern 2: fixed angle with variable speed (e.g. speed <1>*spin_speed)
     if not rotary_info:
         rotary_re2 = re.compile(
-            r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>\s+speed\s+<[\d.]+>\s*\*\s*\w+',
+            r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<([\d.]+)>[^;]*speed\s+<[\d.]+>\s*\*\s*\w+',
             re.IGNORECASE
         )
         rm = rotary_re2.search(search_text)
         if rm:
             step_deg = float(rm.group(3))
-            # Use a reasonable default speed for the animation
-            default_speed = 360.0  # degrees/sec
+            default_speed = 360.0
             rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
                             step_deg, default_speed)
 
