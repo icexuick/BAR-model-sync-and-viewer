@@ -44,7 +44,9 @@
         ssaoMaxDist: 5.5,
         exportWidth: 4096,
         initialZoomMultiplier: 0.70,
-        cameraHeightFactor: 0.8
+        cameraHeightFactor: 0.8,
+        zoomReferenceRadius: 15,
+        zoomExponent: 0.85
     };
     function isMobileDevice() {
         const ua = navigator.userAgent.toLowerCase();
@@ -291,7 +293,9 @@
             box.getBoundingSphere(boundingSphere);
             const objectRadius = boundingSphere.radius;
             const fovVertical = camera.fov * (Math.PI / 180);
-            let distance = Math.abs(objectRadius / Math.sin(fovVertical / 2));
+            const refR = VIEWER_CONFIG.zoomReferenceRadius;
+            const exp = VIEWER_CONFIG.zoomExponent;
+            let distance = Math.abs(refR / Math.sin(fovVertical / 2)) * Math.pow(objectRadius / refR, exp);
             const aspect = container.offsetWidth / container.offsetHeight;
             if (aspect < 1) { distance = distance / aspect; }
             const finalDistance = distance * VIEWER_CONFIG.initialZoomMultiplier;
