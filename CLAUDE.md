@@ -16,6 +16,7 @@ De website draait op Webflow (beyondallreason.info). Modellen worden getoond met
 2. **Tijdelijke/test GLBs → `glb-output/`** — voor tussentijdse output tijdens conversie.
 3. **Definitieve GLBs → `glb/`** — altijd gevolgd door een commit + push zodat de live viewer ze kan laden.
 4. Gebruik `--output-dir glb/` bij convert.py voor definitieve output.
+5. **Na elke GLB update: direct committen + pushen** — dit mag altijd zonder te vragen.
 
 ## S3O → GLB Converter (tools/s3o_to_glb/)
 Converteert Spring engine S3O modellen naar standaard glTF 2.0 Binary (GLB).
