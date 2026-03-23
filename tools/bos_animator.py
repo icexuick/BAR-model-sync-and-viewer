@@ -1151,6 +1151,29 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
             clips.append(('ActivateClose', close_tracks))
             return clips
 
+    # --- Pattern 2c: StartBuilding() / StopBuilding() (constructor nanolathe deploy) ---
+    build_open = _extract_function_body(bos_content, 'StartBuilding')
+    build_close = _extract_function_body(bos_content, 'StopBuilding')
+    if build_open and build_close:
+        build_open  = _inline_call_scripts(build_open,  bos_content)
+        build_close = _inline_call_scripts(build_close, bos_content)
+        # Cap large sleeps in StopBuilding (gameplay delay before folding back,
+        # not needed in viewer — e.g. "sleep 6000" → "sleep 200")
+        build_close = re.sub(r'\bsleep\s+(\d+)', lambda m: f'sleep {min(int(m.group(1)), 200)}', build_close)
+        close_tracks_raw, _ = _parse_turn_move_to_tracks(build_close)
+        closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                       for t in close_tracks_raw}
+        open_tracks, open_dur = _parse_turn_move_to_tracks(build_open, start_pose=closed_pose)
+        open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                     for t in open_tracks}
+        close_tracks, close_dur = _parse_turn_move_to_tracks(build_close, start_pose=open_pose)
+        if open_tracks and close_tracks and open_dur >= 0.15:
+            print(f"  Toggle animation 'ActivateOpen' (from StartBuilding): {len(open_tracks)} tracks, {open_dur:.2f}s")
+            print(f"  Toggle animation 'ActivateClose' (from StopBuilding): {len(close_tracks)} tracks, {close_dur:.2f}s")
+            clips.append(('ActivateOpen', open_tracks))
+            clips.append(('ActivateClose', close_tracks))
+            return clips
+
     # --- Pattern 2b: AimWeapon open/close (missile launchers like armmerl, corvroc, corhrk) ---
     # These units open in AimWeapon (turn pieces to firing position) and close
     # in ExecuteRestoreAfterDelay or RestoreAfterDelay (return to rest).
