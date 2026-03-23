@@ -896,6 +896,8 @@ def convert_with_weapons(
                         r'start-script\s+RequestState\s*\(\s*1',
                         r'start-script\s+Deactivate\b',
                         r'\bsilo_state\s*=\s*0\b',
+                        r'\bisOpen\s*=\s*(?:FALSE|0)\b',
+                        r'\bstate\s*=\s*0\b',
                     ]
                     create_body = ''
                     cm = re.search(r'\bCreate\s*\(\s*\)\s*\{', bos_content, re.IGNORECASE)
