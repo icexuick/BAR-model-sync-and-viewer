@@ -253,8 +253,7 @@ class GLBBuilder:
             node = self.nodes[node_idx]
             # Start from the existing S3O base translation, add BOS move offset
             base = node.get("translation", [0.0, 0.0, 0.0])
-            # Note: unlike turn (rotation), move has NO axis negation in Spring.
-            dx = axes.get(0, 0.0)
+            dx = -axes.get(0, 0.0)
             dy = axes.get(1, 0.0)
             dz = axes.get(2, 0.0)
             new_trans = [base[0] + dx, base[1] + dy, base[2] + dz]
@@ -366,8 +365,8 @@ class GLBBuilder:
             for t in all_times:
                 # BOS 'move piece to axis [value]' is a DELTA from the S3O rest
                 # offset. Add to rest for animated axes; keep rest for unanimated.
-                # Note: unlike turn (rotation), move has NO axis negation in Spring.
-                x = (rest[0] + _interp(axis_tracks, 0, t)) if 0 in axis_tracks else rest[0]
+                # X-axis is negated (Spring coordinate convention).
+                x = (rest[0] - _interp(axis_tracks, 0, t)) if 0 in axis_tracks else rest[0]
                 y = (rest[1] + _interp(axis_tracks, 1, t)) if 1 in axis_tracks else rest[1]
                 z = (rest[2] + _interp(axis_tracks, 2, t)) if 2 in axis_tracks else rest[2]
                 vecs.extend([x, y, z])
@@ -480,52 +479,70 @@ class GLBBuilder:
                 cx*cz*cy + sx*sz*sy,
             ]
 
+        # Group tracks by piece so multi-axis spins produce a single rotation channel
+        from collections import defaultdict
+        piece_tracks: Dict[str, Dict[int, object]] = defaultdict(dict)
         for track in tracks:
             name_lower = track.piece.lower()
             if name_lower not in node_name_to_idx:
                 continue
-            node_idx = node_name_to_idx[name_lower]
+            piece_tracks[name_lower][track.axis] = track
 
-            # In Spring, 'spin piece around <axis>' adds to that piece's angle on
-            # that axis.  The full rotation at spin-angle θ is therefore:
-            #   _euler_to_quat(rx + θ*(axis==0), ry + θ*(axis==1), rz + θ*(axis==2))
-            # This correctly handles tilted/composite rest orientations (e.g. bladesl
-            # with x=-45,y=120 spinning around z).
+        for name_lower, axis_tracks in piece_tracks.items():
+            node_idx = node_name_to_idx[name_lower]
             rest = _rest_angles(name_lower)
 
-            # Build keyframes 0°..315° then add closing 360° frame.
-            # All quaternions in the same hemisphere so every slerp step
-            # (including the closing 315°→360° step) is +45° forward.
-            # The closing 360° frame equals 0° but is sign-matched to the
-            # previous frame — Three.js LoopRepeat then jumps from the
-            # closing frame back to kf[0] without interpolation (time reset),
-            # so the one-frame discontinuity in quaternion sign is invisible.
-            step = track.keyframes[1].time - track.keyframes[0].time if len(track.keyframes) > 1 else track.keyframes[-1].time
-            closing_time = track.keyframes[-1].time + step
+            # Collect all unique times across all axes, plus a closing frame
+            all_times_set = set()
+            for track in axis_tracks.values():
+                for kf in track.keyframes:
+                    all_times_set.add(kf.time)
+            all_times = sorted(all_times_set)
 
-            all_angles = [kf.value for kf in track.keyframes] + [track.keyframes[0].value + (360.0 if track.keyframes[-1].value > 0 else -360.0)]
-            all_times  = [kf.time  for kf in track.keyframes] + [closing_time]
+            # Add closing frame: one step past the last keyframe for seamless loop
+            any_track = next(iter(axis_tracks.values()))
+            step = any_track.keyframes[1].time - any_track.keyframes[0].time if len(any_track.keyframes) > 1 else any_track.keyframes[-1].time
+            closing_time = all_times[-1] + step
+            all_times.append(closing_time)
+
+            def _interp_track(track, t):
+                """Interpolate a track's value at time t."""
+                kfs = track.keyframes
+                if not kfs:
+                    return 0.0
+                if t <= kfs[0].time:
+                    return kfs[0].value
+                if t >= kfs[-1].time:
+                    # Beyond last keyframe: extrapolate (one more step for closing frame)
+                    if len(kfs) >= 2:
+                        dt = kfs[-1].time - kfs[-2].time
+                        dv = kfs[-1].value - kfs[-2].value
+                        if dt > 0 and (t - kfs[-1].time) <= dt * 1.5:
+                            return kfs[-1].value + dv * (t - kfs[-1].time) / dt
+                    return kfs[-1].value
+                for i in range(len(kfs) - 1):
+                    if kfs[i].time <= t <= kfs[i + 1].time:
+                        f = (t - kfs[i].time) / (kfs[i + 1].time - kfs[i].time)
+                        return kfs[i].value + f * (kfs[i + 1].value - kfs[i].value)
+                return kfs[-1].value
 
             quats = []
             prev = None
-            for angle in all_angles:
+            for t in all_times:
+                # Get angle for each axis at this time
+                ax = _interp_track(axis_tracks[0], t) if 0 in axis_tracks else 0.0
+                ay = _interp_track(axis_tracks[1], t) if 1 in axis_tracks else 0.0
+                az = _interp_track(axis_tracks[2], t) if 2 in axis_tracks else 0.0
+
                 if rest is not None:
-                    # Add spin angle to the appropriate Euler axis
-                    rx = rest[0] + (angle if track.axis == 0 else 0.0)
-                    ry = rest[1] + (angle if track.axis == 1 else 0.0)
-                    rz = rest[2] + (angle if track.axis == 2 else 0.0)
-                    q = _euler_to_quat_cobwtf(rx, ry, rz)
+                    rx = rest[0] + ax
+                    ry = rest[1] + ay
+                    rz = rest[2] + az
                 else:
-                    # No rest orientation — pure axis rotation
-                    angle_rad = math.radians(angle)
-                    half = angle_rad / 2.0
-                    c, s = math.cos(half), math.sin(half)
-                    if track.axis == 0:
-                        q = [s, 0.0, 0.0, c]
-                    elif track.axis == 1:
-                        q = [0.0, s, 0.0, c]
-                    else:
-                        q = [0.0, 0.0, s, c]
+                    rx, ry, rz = ax, ay, az
+
+                q = _euler_to_quat_cobwtf(rx, ry, rz)
+
                 if prev is not None and sum(a * b for a, b in zip(q, prev)) < 0:
                     q = [-v for v in q]
                 prev = q

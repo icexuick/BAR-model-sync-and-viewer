@@ -160,7 +160,7 @@ _ANIM_DURATION_OVERRIDE: Dict[str, float] = {
 
 # Units whose toggle animation is too complex for the current single-pass parser
 # (multi-phase sequential BOS with wait-for-turn sync points, corecont y-offsets, etc.)
-_TOGGLE_SKIP: set = {'legsolar'}
+_TOGGLE_SKIP: set = {'legsolar', 'corlab'}
 
 
 def convert_with_weapons(
@@ -795,38 +795,52 @@ def convert_with_weapons(
                 if filtered_clips:
                     spin_pieces = []
                     spin_clip_names = []
-                    # Each track gets its own GLB animation clip so they loop independently
-                    # at their own speed. Merging tracks with different durations into one
-                    # clip causes the faster piece to pause and wait for the slower one.
+                    # Each clip groups all axes for one piece so multi-axis spins
+                    # compose correctly via quaternion keyframes.
                     for clip_name, clip_tracks in filtered_clips:
-                        for track in clip_tracks:
-                            clip_n = f"Spin_{track.piece}"
-                            builder.add_spin_animation(clip_n, [track], node_name_to_idx,
-                                                       now_rots or None)
-                            spin_pieces.append(track.piece)
-                            spin_clip_names.append(clip_n)
+                        piece_name = clip_tracks[0].piece
+                        clip_n = f"Spin_{piece_name}"
+                        builder.add_spin_animation(clip_n, clip_tracks, node_name_to_idx,
+                                                   now_rots or None)
+                        spin_pieces.append(piece_name)
+                        spin_clip_names.append(clip_n)
                     # Store spin_pieces + clip names so viewer can identify spin clips by name
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
                         builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces + spin_clip_names
             # Activate-loop animations (e.g. armaser spinarms — while(TRUE) + turn-to + sleep)
-            if not spin_clips:
-                loop_clips = extract_activate_loop_animation(bos_content)
-                if loop_clips:
-                    _strip_trans = _STRIP_ANIM_TRANSLATION.get(unit_name.lower(), set())
-                    _strip_rot = _STRIP_ANIM_ROTATION.get(unit_name.lower(), set())
-                    for clip_name, clip_tracks in loop_clips:
-                        if _strip_trans:
-                            clip_tracks = [t for t in clip_tracks if not (not t.is_rotation and t.piece.lower() in _strip_trans)]
-                        if _strip_rot:
-                            clip_tracks = [t for t in clip_tracks if not (t.is_rotation and t.piece.lower() in _strip_rot)]
+            # These can coexist with spin clips (e.g. legmos has blades spin + wing flapping loop)
+            loop_clips = extract_activate_loop_animation(bos_content)
+            if loop_clips:
+                # Skip loop clips for pieces already covered by spin clips
+                existing_spin_pieces = set()
+                if spin_clips:
+                    for _, ct in spin_clips:
+                        for t in ct:
+                            existing_spin_pieces.add(t.piece.lower())
+                _strip_trans = _STRIP_ANIM_TRANSLATION.get(unit_name.lower(), set())
+                _strip_rot = _STRIP_ANIM_ROTATION.get(unit_name.lower(), set())
+                for clip_name, clip_tracks in loop_clips:
+                    # Skip if all tracks are already covered by spin clips
+                    clip_tracks = [t for t in clip_tracks if t.piece.lower() not in existing_spin_pieces]
+                    if not clip_tracks:
+                        continue
+                    if _strip_trans:
+                        clip_tracks = [t for t in clip_tracks if not (not t.is_rotation and t.piece.lower() in _strip_trans)]
+                    if _strip_rot:
+                        clip_tracks = [t for t in clip_tracks if not (t.is_rotation and t.piece.lower() in _strip_rot)]
+                    if clip_tracks:
                         builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
                                               piece_offsets)
-                    loop_pieces = [t.piece for _, ct in loop_clips for t in ct]
-                    loop_clip_names = [cn for cn, _ in loop_clips]
-                    if model.root_piece:
-                        root_idx = builder.scenes[0]["nodes"][0]
-                        builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = loop_pieces + loop_clip_names
+                loop_pieces = [t.piece for _, ct in loop_clips for t in ct
+                               if t.piece.lower() not in existing_spin_pieces]
+                loop_clip_names = [cn for cn, ct in loop_clips
+                                   if any(t.piece.lower() not in existing_spin_pieces for t in ct)]
+                if loop_pieces and model.root_piece:
+                    root_idx = builder.scenes[0]["nodes"][0]
+                    extras = builder.nodes[root_idx].setdefault("extras", {})
+                    existing = extras.get("spin_pieces", [])
+                    extras["spin_pieces"] = existing + loop_pieces + loop_clip_names
 
             # Toggle animations (Open/Close or MMStatus) — always check, independent of spin
             toggle_clips = [] if unit_name.lower() in _TOGGLE_SKIP else extract_toggle_animations(bos_content)

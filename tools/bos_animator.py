@@ -731,38 +731,64 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
         if not spins:
             continue
 
-        clips: List[Tuple[str, List[BosTrack]]] = []
+        # Also scan FireWeapon*/FirePrimary/FireSecondary for additional spin pieces
+        # (e.g. armcir spindle that spins only during firing but is visually always spinning)
+        existing_pieces = {k[0] for k in spins}
+        fire_funcs = [m.group(1) for m in re.finditer(
+            r'\b(Fire(?:Weapon\d*|Primary|Secondary|Tertiary))\s*\(', bos_content, re.IGNORECASE)]
+        for ff in fire_funcs:
+            for k, v in _collect_spin_commands(bos_content, ff).items():
+                if k[0] not in existing_pieces and _is_interesting(k[0]):
+                    spins[k] = v
+
+        # Group spins by piece so multi-axis spins merge into one clip
+        from collections import defaultdict as _dd
+        import math as _math
+        piece_axes: Dict[str, Dict[int, float]] = _dd(dict)
         for (piece, axis), speed in spins.items():
-            duration = abs(360.0 / speed)
-            sign = 1.0 if speed > 0 else -1.0
-            n = 8
-            kfs = [
-                BosKeyframe(time=duration * i / n, value=sign * 360.0 * i / n)
-                for i in range(n)
-            ]
-            track = BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs)
+            piece_axes[piece][axis] = speed
+
+        def _lcm_float(a: float, b: float) -> float:
+            """Least common multiple of two periods (positive floats)."""
+            from math import gcd
+            # Work in milliseconds to avoid float precision issues
+            a_ms = round(a * 1000)
+            b_ms = round(b * 1000)
+            if a_ms == 0 or b_ms == 0:
+                return max(a, b)
+            return (a_ms * b_ms // gcd(a_ms, b_ms)) / 1000.0
+
+        clips: List[Tuple[str, List[BosTrack]]] = []
+        for piece, axes in piece_axes.items():
+            # Compute individual periods and find LCM duration for seamless loop
+            periods = [abs(360.0 / spd) for spd in axes.values()]
+            duration = periods[0]
+            for p in periods[1:]:
+                duration = _lcm_float(duration, p)
+            # Cap at reasonable max to avoid huge clips
+            duration = min(duration, 24.0)
+
+            # Generate tracks for each axis with ≤120° keyframe steps
+            # (prevents quaternion shortest-path issues in Three.js)
+            piece_tracks: List[BosTrack] = []
+            STEP_DEG = 120.0
+            for axis, speed in axes.items():
+                sign = 1.0 if speed > 0 else -1.0
+                total_deg = speed * duration  # total rotation in degrees
+                n_steps = max(8, int(_math.ceil(abs(total_deg) / STEP_DEG)))
+                kfs = [
+                    BosKeyframe(
+                        time=round(duration * i / n_steps, 4),
+                        value=round(total_deg * i / n_steps, 2)
+                    )
+                    for i in range(n_steps)
+                ]
+                piece_tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs))
+
             clip_name = f"{func_name}_{piece}"
-            clips.append((clip_name, [track]))
+            clips.append((clip_name, piece_tracks))
 
         if clips:
-            # Also scan FireWeapon*/FirePrimary/FireSecondary for additional spin pieces
-            # (e.g. armcir spindle that spins only during firing but is visually always spinning)
-            existing_pieces = {c[0].split('_', 1)[1] for c in clips}
-            fire_funcs = [m.group(1) for m in re.finditer(
-                r'\b(Fire(?:Weapon\d*|Primary|Secondary|Tertiary))\s*\(', bos_content, re.IGNORECASE)]
-            extra_spins: Dict[Tuple[str, int], float] = {}
-            for ff in fire_funcs:
-                for k, v in _collect_spin_commands(bos_content, ff).items():
-                    if k[0] not in existing_pieces and _is_interesting(k[0]):
-                        extra_spins[k] = v
-            for (piece, axis), speed in extra_spins.items():
-                duration = abs(360.0 / speed)
-                sign = 1.0 if speed > 0 else -1.0
-                n = 8
-                kfs = [BosKeyframe(time=duration * i / n, value=sign * 360.0 * i / n) for i in range(n)]
-                track = BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs)
-                clips.append((f"{func_name}_{piece}", [track]))
-
             pieces = [c[0].split('_', 1)[1] for c in clips]
             print(f"  Spin animation '{func_name}': {len(clips)} spinning pieces: {', '.join(pieces)}")
             return clips
@@ -1020,18 +1046,22 @@ def _parse_turn_move_to_tracks(body: str, start_pose: Optional[Dict[Tuple, float
                 _complete_inflight(key)
 
     # Complete remaining in-flight commands.
-    # Commands that would finish much later than the last script action
-    # get snapshotted at a reasonable cutoff (these are background moves
-    # that run during gameplay but shouldn't bloat the animation duration).
-    cutoff = t_cursor + 1.0  # 1s after last script action
-    for key in list(in_flight.keys()):
-        end_t = _inflight_end_time(key)
-        if end_t <= cutoff:
+    # If the script had meaningful timing (sleeps/waits advanced t_cursor),
+    # cap background commands that would far outlast the script. Otherwise
+    # (t_cursor near 0), let all commands complete — the body likely has
+    # no waits and all commands should finish naturally.
+    if t_cursor > 0.1:
+        cutoff = t_cursor + 1.0  # 1s after last script action
+        for key in list(in_flight.keys()):
+            end_t = _inflight_end_time(key)
+            if end_t <= cutoff:
+                _complete_inflight(key)
+            else:
+                _snapshot_key(key, cutoff)
+                del in_flight[key]
+    else:
+        for key in list(in_flight.keys()):
             _complete_inflight(key)
-        else:
-            # Snapshot the interpolated value at the cutoff
-            _snapshot_key(key, cutoff)
-            del in_flight[key]
 
     if not track_kfs:
         return [], 0.0
@@ -1193,9 +1223,14 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
     if not aim_body:
         aim_body = _extract_function_body(bos_content, 'AimPrimary')
     restore_body = _extract_function_body(bos_content, 'ExecuteRestoreAfterDelay')
+    if not restore_body:
+        restore_body = _extract_function_body(bos_content, 'RestoreAfterDelay')
     if aim_body and restore_body:
         aim_body = _inline_call_scripts(aim_body, bos_content)
         restore_body = _inline_call_scripts(restore_body, bos_content)
+        # Strip leading sleeps from restore body — these are gameplay delays
+        # (wait before restoring), not part of the animation.
+        restore_body = re.sub(r'^\s*sleep\s+\d+\s*;', '', restore_body)
         aim_clean = _strip_comments(aim_body)
         restore_clean = _strip_comments(restore_body)
         # Only use this pattern if AimWeapon has turn/move commands with wait-for
@@ -1329,18 +1364,20 @@ def _extract_branch_block(body: str, start_pos: int) -> Tuple[str, int]:
 
 def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int, float, float]]]:
     """
-    For fire functions with alternating barrel branches, split them so each
-    barrel's recoil starts independently at t=0.
+    For fire functions with alternating barrel branches, detect them and merge
+    all branches into a single body so all barrels animate simultaneously.
 
     Handles patterns:
       - if(gun == 0) { ... } if(gun == 1) { ... }  (N branches)
       - if(!gun_1) { ... } else { ... }             (2 branches)
       - if(gun_1) { ... } else { ... }              (2 branches)
 
-    Returns (sequenced_body, num_branches, rotary_info).
-    num_branches = 0 means no branching detected (body unchanged).
+    Returns (merged_body, num_branches, rotary_info).
+    merged_body is pre_branch + all branch bodies concatenated + post_branch.
     rotary_info is (piece, axis, step_degrees, speed) for gatling-style advance, or None.
     """
+    move_turn_re = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
+
     # --- Pattern A: if(!var) { ... } else { ... }  or  if(var) { ... } else { ... } ---
     bool_pattern = re.compile(
         r'\bif\s*\(\s*!?\s*(\w+)\s*\)\s*\{', re.IGNORECASE
@@ -1355,7 +1392,6 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
             branch1_body = None
             branch1_end = 0
         if branch1_body:
-            # Look for else { ... }
             rest = body[branch1_end:]
             else_m = re.match(r'\s*else\s*\{', rest, re.IGNORECASE)
             if else_m:
@@ -1366,16 +1402,14 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
                     branch2_end = 0
                 if branch2_body:
                     post_branch = rest[branch2_end:]
-                    move_turn_re = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
                     branch_bodies = []
                     if move_turn_re.search(branch1_body):
                         branch_bodies.append(branch1_body)
                     if move_turn_re.search(branch2_body):
                         branch_bodies.append(branch2_body)
                     if len(branch_bodies) >= 2:
-                        BRANCH_RESET = '\n __BRANCH_RESET__;\n'
-                        sequenced = pre_branch + BRANCH_RESET.join(branch_bodies) + post_branch
-                        return sequenced, len(branch_bodies), None
+                        merged = pre_branch + '\n'.join(branch_bodies) + post_branch
+                        return merged, len(branch_bodies), None
 
     # --- Pattern B: if(gun == 0) { ... } if(gun == 1) { ... } ... ---
     gun_pattern = re.compile(
@@ -1394,7 +1428,6 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
     pre_branch = body[:matches[0].start()]
 
     # Extract ALL branch bodies, skip branches without move/turn (reset-only branches)
-    move_turn_re = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
     branch_bodies = []
     for m in matches:
         branch_body, _ = _extract_branch_block(body, m.end())
@@ -1439,14 +1472,61 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
             rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
                             float(rm.group(3)), 360.0)
 
-    # Each branch fires a different barrel — they are alternating, not sequential.
-    # Return branches joined so each starts at t=0 independently.
-    # We use a special BRANCH_RESET marker that the fire parser recognises to reset
-    # the time cursor back to 0.
-    BRANCH_RESET = '\n __BRANCH_RESET__;\n'
-    sequenced = pre_branch + BRANCH_RESET.join(branch_bodies) + post_branch
+    # Merge all branches into one body so all barrels animate simultaneously
+    merged = pre_branch + '\n'.join(branch_bodies) + post_branch
+    return merged, num_branches, rotary_info
 
-    return sequenced, num_branches, rotary_info
+
+_BARREL_SPIN_DUR = 4.0  # total barrel spin animation duration (seconds)
+_BARREL_SPIN_REVS = 5   # number of full revolutions during constant-speed phase
+
+
+def _make_barrel_spin_track(piece: str, axis: int, speed_deg: float) -> BosTrack:
+    """
+    Generate a barrel spin track: ramp-up, N revolutions at speed, ramp-down.
+
+    Keyframes are placed every 120° (max) so Three.js quaternion slerp
+    interpolates the correct direction (slerp takes shortest path, so
+    >180° jumps would reverse).
+    """
+    RAMP = 0.4  # ramp-up / ramp-down time
+    REVS = _BARREL_SPIN_REVS
+    DUR = _BARREL_SPIN_DUR
+    # Use a constant visual speed based on revolutions, ignoring BOS speed
+    # (BOS speeds vary wildly; we want a consistent nice-looking spin)
+    sign = 1.0 if speed_deg >= 0 else -1.0
+    total_spin_deg = sign * REVS * 360.0
+    constant_dur = DUR - 2 * RAMP
+    deg_per_sec = total_spin_deg / constant_dur if constant_dur > 0 else total_spin_deg
+
+    # Ramp-up phase: 0 → RAMP (accelerating, covers half the per-second distance)
+    ramp_deg = deg_per_sec * RAMP * 0.5
+    # Constant phase: RAMP → DUR-RAMP
+    constant_deg = deg_per_sec * constant_dur
+    # Ramp-down phase: last RAMP seconds (decelerating)
+    end_deg = ramp_deg + constant_deg + deg_per_sec * RAMP * 0.5
+
+    # Build keyframes with max 120° steps to avoid quaternion shortest-path issues
+    STEP_DEG = 120.0
+    kfs = [BosKeyframe(time=0.0, value=0.0)]
+
+    def _add_segment(t_start: float, t_end: float, v_start: float, v_end: float):
+        """Add keyframes for a segment, subdividing if the angular change > STEP_DEG."""
+        delta = abs(v_end - v_start)
+        if delta < 0.01:
+            return
+        n_steps = max(1, int(delta / STEP_DEG))
+        for i in range(1, n_steps + 1):
+            frac = i / n_steps
+            t = t_start + (t_end - t_start) * frac
+            v = v_start + (v_end - v_start) * frac
+            kfs.append(BosKeyframe(time=round(t, 4), value=round(v, 2)))
+
+    _add_segment(0.0, RAMP, 0.0, ramp_deg)
+    _add_segment(RAMP, DUR - RAMP, ramp_deg, ramp_deg + constant_deg)
+    _add_segment(DUR - RAMP, DUR, ramp_deg + constant_deg, end_deg)
+
+    return BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs)
 
 
 def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
@@ -1463,8 +1543,9 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
     commit pending commands as keyframes.  After all commands, ensure pieces
     return to 0 (rest) if not already there.
     """
-    # Handle if(gun==N) branching — sequence all branches into one cycle
-    body, num_branches, rotary_info = _sequence_if_branches(body)
+    # Handle if(gun==N) branching — merges all branches into one body
+    branch_result, num_branches, rotary_info = _sequence_if_branches(body)
+    body = branch_result
 
     # Also detect rotary patterns directly (for scripts without if(gun==N) branches)
     # Pattern: turn PIECE to AXIS <ANGLE> * VAR speed <SPD>
@@ -1492,7 +1573,6 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
         r'|(?P<move>\bmove\s+\w+\s+to\s+[xyz]-axis\s+(?:\(\s*\(\s*\(\s*)?\[[-\d.]+\][^;]*;)'
         r'|(?P<sleep>\bsleep\s+\d+\s*;)'
         r'|(?P<wait>\bwait-for-(?:turn|move)\s+\w+\s+(?:around|along)\s+[xyz]-axis\s*;)'
-        r'|(?P<branch_reset>__BRANCH_RESET__\s*;)'
         r')',
         clean, re.IGNORECASE
     ):
@@ -1529,8 +1609,23 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
                 tokens.append(('sleep', int(sm.group(1))))
         elif m.group('wait'):
             tokens.append(('wait',))
-        elif m.group('branch_reset'):
-            tokens.append(('branch_reset',))
+
+    # Detect spin commands (minigun/gatling barrels) — if no move/turn tokens
+    # were found, generate a multi-revolution spin animation.
+    _SPIN_FIRE_RE = re.compile(
+        r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+<([-\d.]+)>',
+        re.IGNORECASE
+    )
+    spin_cmds = list(_SPIN_FIRE_RE.finditer(clean))
+    if not tokens and spin_cmds:
+        spin_tracks: List[BosTrack] = []
+        for sm in spin_cmds:
+            piece = sm.group(1).lower()
+            axis = AXIS_INDEX[sm.group(2).lower()]
+            speed_deg = float(sm.group(3))
+            spin_tracks.append(_make_barrel_spin_track(piece, axis, speed_deg))
+        if spin_tracks:
+            return spin_tracks, _BARREL_SPIN_DUR, rotary_info
 
     if not tokens and not rotary_info:
         return [], 0.0, None
@@ -1583,11 +1678,6 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
             t_cursor += tok[1] / 1000.0
         elif tok[0] == 'wait':
             flush_pending()
-        elif tok[0] == 'branch_reset':
-            # New alternating-barrel branch — reset time to 0 so this barrel
-            # starts its recoil independently from the previous branch.
-            flush_pending()
-            t_cursor = 0.0
 
     flush_pending()
 
@@ -1709,39 +1799,57 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
                   f"{dur:.2f}s, pieces: {', '.join(pieces)}{rotary_str}")
             clips.append((clip_name, tracks, rotary))
 
-    # Detect barrel spins in AimWeapon functions and add to fire clips.
-    # Minigun-style units (armraz, etc.) spin barrels during aiming/firing.
-    if clips:
-        _SPIN_CMD_RE = re.compile(
-            r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+<([-\d.]+)>',
-            re.IGNORECASE
-        )
-        for n in range(1, 17):
-            aim_body = _extract_function_body(bos_content, f'AimWeapon{n}')
-            if not aim_body:
-                aim_body = _extract_function_body(bos_content, 'AimPrimary') if n == 1 else None
-            if not aim_body:
-                continue
-            aim_body = _strip_comments(aim_body)
-            spins = list(_SPIN_CMD_RE.finditer(aim_body))
-            if not spins:
-                continue
-            # Find the Fire_N clip for this weapon (or Fire_1 for AimPrimary)
-            clip_idx = None
-            for ci, (cname, ctracks, crotary) in enumerate(clips):
-                if cname == f'Fire_{n}':
-                    clip_idx = ci
-                    break
-            if clip_idx is None:
-                continue
+    # Detect barrel spins in AimWeapon/FireWeapon functions.
+    # For units with existing fire clips: add spin tracks to them.
+    # For units without fire clips (minigun-only): create a 3s spin animation.
+    _SPIN_CMD_RE = re.compile(
+        r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+<([-\d.]+)>',
+        re.IGNORECASE
+    )
+    for n in range(1, 17):
+        # Collect spins from AimWeapon, FireWeapon, and Shot (per-shot callback)
+        all_spins = []
+        for func in [f'AimWeapon{n}', f'FireWeapon{n}', f'Shot{n}']:
+            fb = _extract_function_body(bos_content, func)
+            if not fb:
+                if func == 'AimWeapon1':
+                    fb = _extract_function_body(bos_content, 'AimPrimary')
+                elif func == 'FireWeapon1':
+                    fb = _extract_function_body(bos_content, 'FirePrimary')
+            if fb:
+                fb = _strip_comments(_inline_call_scripts(fb, bos_content))
+                all_spins.extend(_SPIN_CMD_RE.finditer(fb))
+        if not all_spins:
+            continue
+
+        # Deduplicate by piece+axis (same barrel may appear in both Aim and Fire)
+        seen_spin_keys = set()
+        unique_spins = []
+        for sm in all_spins:
+            key = (sm.group(1).lower(), sm.group(2).lower())
+            if key not in seen_spin_keys:
+                seen_spin_keys.add(key)
+                unique_spins.append(sm)
+
+        # Find existing Fire_N clip for this weapon
+        clip_idx = None
+        for ci, (cname, ctracks, crotary) in enumerate(clips):
+            if cname == f'Fire_{n}':
+                clip_idx = ci
+                break
+
+        if clip_idx is not None:
+            # Add spin tracks to existing fire clip (skip pieces already animated)
             cname, ctracks, crotary = clips[clip_idx]
+            existing_keys = {(t.piece, t.axis) for t in ctracks}
             clip_dur = max((kf.time for t in ctracks for kf in t.keyframes), default=0.5)
             added = []
-            for sm in spins:
+            for sm in unique_spins:
                 piece = sm.group(1).lower()
                 axis = AXIS_INDEX[sm.group(2).lower()]
-                speed_deg = float(sm.group(3))  # degrees per second (can be negative)
-                # Create a spin track for the full clip duration
+                if (piece, axis) in existing_keys:
+                    continue  # already has animation on this piece+axis
+                speed_deg = float(sm.group(3))
                 total_deg = speed_deg * clip_dur
                 spin_kfs = [
                     BosKeyframe(time=0.0, value=0.0),
@@ -1752,5 +1860,21 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
             if added:
                 print(f"  Fire '{cname}': added barrel spin for {', '.join(added)}")
                 clips[clip_idx] = (cname, ctracks, crotary)
+        else:
+            # No existing fire clip — create a barrel spin animation (minigun/gatling)
+            spin_tracks = []
+            added = []
+            for sm in unique_spins:
+                piece = sm.group(1).lower()
+                axis = AXIS_INDEX[sm.group(2).lower()]
+                speed_deg = float(sm.group(3))
+                spin_tracks.append(_make_barrel_spin_track(piece, axis, speed_deg))
+                added.append(piece)
+            if spin_tracks:
+                clip_name = f'Fire_{n}'
+                print(f"  Fire animation '{clip_name}' (barrel spin): {len(spin_tracks)} tracks, "
+                      f"{_BARREL_SPIN_DUR:.1f}s, pieces: {', '.join(added)}")
+                clips.append((clip_name, spin_tracks, None))
+                seen_weapons.add(n)
 
     return clips if clips else None
