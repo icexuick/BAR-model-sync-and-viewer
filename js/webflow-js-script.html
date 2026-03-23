@@ -313,7 +313,7 @@
             let canFly = false;
             modelScene.traverse(n => { if (n.userData && n.userData.can_fly) canFly = true; });
             let groundY = defaultBox.min.y - center.y - 0.01;
-            if (canFly) groundY -= objectRadius * 0.45;
+            if (canFly) groundY -= objectRadius * 0.66;
             groundMesh.position.y = groundY;
             groundMesh.receiveShadow = true;
             scene.add(groundMesh);
