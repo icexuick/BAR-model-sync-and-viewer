@@ -1263,6 +1263,28 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         # (wait before restoring), not part of the animation.
         # Match both numeric sleeps (sleep 3000) and variable sleeps (sleep restore_delay).
         restore_body = re.sub(r'^\s*sleep\s+[\w]+\s*;', '', restore_body)
+        # Merge Activate/Deactivate move/turn commands into the aim/restore
+        # bodies so units like legfort get gear retract + rail deploy in one toggle.
+        _act_merge = _extract_function_body(bos_content, 'Activate')
+        _deact_merge = _extract_function_body(bos_content, 'Deactivate')
+        if _act_merge and _deact_merge:
+            _act_merge = _inline_call_scripts(_act_merge, bos_content)
+            _deact_merge = _inline_call_scripts(_deact_merge, bos_content)
+            _mt_re = re.compile(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
+            if _mt_re.search(_act_merge) and _mt_re.search(_deact_merge):
+                aim_body = aim_body + '\n' + _act_merge
+                restore_body = restore_body + '\n' + _deact_merge
+        # Merge MoveRate1 or MoveRate2 (flight pose — thruster rotations) into
+        # the open body, and MoveRate0 into close body.  This makes units like
+        # legfort tilt their thrusters as part of the deploy animation.
+        _mr_open = _extract_function_body(bos_content, 'MoveRate2') or \
+                   _extract_function_body(bos_content, 'MoveRate1')
+        _mr_close = _extract_function_body(bos_content, 'MoveRate0')
+        if _mr_open and _mr_close:
+            _mt_re2 = re.compile(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
+            if _mt_re2.search(_mr_open) and _mt_re2.search(_mr_close):
+                aim_body = aim_body + '\n' + _mr_open
+                restore_body = restore_body + '\n' + _mr_close
         aim_clean = _strip_comments(aim_body)
         restore_clean = _strip_comments(restore_body)
         # Only use this pattern if AimWeapon has turn/move commands with wait-for
