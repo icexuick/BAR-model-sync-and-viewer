@@ -171,6 +171,7 @@ def convert_with_weapons(
     hide_pieces: Optional[set] = None,
     unit_role: Optional[str] = None,
     unit_name: str = '',
+    can_fly: bool = False,
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata, walk/spin animation, and unit role."""
     builder = GLBBuilder()
@@ -764,10 +765,8 @@ def convert_with_weapons(
             else:
                 # No walk animation — collect rest-pose rotations (Create() now + fly pose).
                 # Apply them as static node rotations so aircraft show in fly pose.
-                # They are also baked into spin animation keyframes below.
-                # Factories use Activate() for door movement, not fly pose — skip it.
-                _is_factory_unit = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
-                now_rots = parse_create_now_rotations(bos_content, skip_activate_flypose=_is_factory_unit)
+                # Only use Activate() fly-pose scan for units that can actually fly.
+                now_rots = parse_create_now_rotations(bos_content, skip_activate_flypose=not can_fly)
                 if now_rots:
                     builder.apply_now_rotations(now_rots, node_name_to_idx)
 
@@ -927,6 +926,24 @@ def convert_with_weapons(
     return builder.build_glb()
 
 
+def unit_can_fly(bar_dir: str, unit_name: str) -> bool:
+    """Return True if the unit's def file contains canFly = true."""
+    units_dir = os.path.join(bar_dir, 'units')
+    for lua_path in [
+        os.path.join(units_dir, unit_name + '.lua'),
+        os.path.join(units_dir, unit_name.lower() + '.lua'),
+    ]:
+        if os.path.isfile(lua_path):
+            try:
+                with open(lua_path, 'r', errors='replace') as f:
+                    content = f.read()
+                if re.search(r'\bcanfly\s*=\s*true\b', content, re.IGNORECASE):
+                    return True
+            except Exception:
+                pass
+    return False
+
+
 def find_script_for_unit(bar_dir: str, unit_name: str) -> Optional[str]:
     """Find the BOS or Lua script for a given unit in the BAR directory."""
     scripts_dir = os.path.join(bar_dir, 'scripts', 'Units')
@@ -947,7 +964,8 @@ def find_script_for_unit(bar_dir: str, unit_name: str) -> Optional[str]:
 def convert_single(s3o_path: str, script_path: Optional[str] = None,
                    output_path: Optional[str] = None,
                    info_only: bool = False,
-                   weapon_defs: Optional[Dict[int, str]] = None) -> Optional[str]:
+                   weapon_defs: Optional[Dict[int, str]] = None,
+                   can_fly: bool = False) -> Optional[str]:
     """Convert a single S3O file to GLB."""
     model = parse_s3o(s3o_path)
     unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
@@ -1101,7 +1119,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs, hide_pieces, unit_role, unit_name)
+    glb_data = convert_with_weapons(model, weapon_info, script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -1153,9 +1171,10 @@ def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
         unit_name = os.path.splitext(filename)[0]
         glb_path = os.path.join(output_dir, unit_name + '.glb')
         script_path = find_script_for_unit(bar_dir, unit_name)
+        can_fly = unit_can_fly(bar_dir, unit_name)
 
         try:
-            convert_single(s3o_path, script_path, glb_path)
+            convert_single(s3o_path, script_path, glb_path, can_fly=can_fly)
             success += 1
         except Exception as e:
             print(f"  ERROR converting {filename}: {e}")
