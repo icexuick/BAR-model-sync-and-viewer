@@ -253,8 +253,8 @@ class GLBBuilder:
             node = self.nodes[node_idx]
             # Start from the existing S3O base translation, add BOS move offset
             base = node.get("translation", [0.0, 0.0, 0.0])
-            # BOS axes: x=0, y=1, z=2 — same as S3O local axes
-            dx = axes.get(0, 0.0)
+            # COBWTF: BOS x-axis translations are negated in the Spring engine.
+            dx = -axes.get(0, 0.0)
             dy = axes.get(1, 0.0)
             dz = axes.get(2, 0.0)
             new_trans = [base[0] + dx, base[1] + dy, base[2] + dz]
@@ -366,7 +366,8 @@ class GLBBuilder:
             for t in all_times:
                 # BOS 'move piece to axis [value]' is a DELTA from the S3O rest
                 # offset. Add to rest for animated axes; keep rest for unanimated.
-                x = (rest[0] + _interp(axis_tracks, 0, t)) if 0 in axis_tracks else rest[0]
+                # COBWTF: BOS x-axis translations are negated in the Spring engine.
+                x = (rest[0] - _interp(axis_tracks, 0, t)) if 0 in axis_tracks else rest[0]
                 y = (rest[1] + _interp(axis_tracks, 1, t)) if 1 in axis_tracks else rest[1]
                 z = (rest[2] + _interp(axis_tracks, 2, t)) if 2 in axis_tracks else rest[2]
                 vecs.extend([x, y, z])
