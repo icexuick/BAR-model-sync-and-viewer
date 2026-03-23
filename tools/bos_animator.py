@@ -1400,7 +1400,7 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
 # Maps legacy names → weapon number
 _FIRE_LEGACY = {'FirePrimary': 1, 'FireSecondary': 2, 'FireTertiary': 3}
 
-_SLEEP_RE = re.compile(r'\bsleep\s+(\d+)\s*;', re.IGNORECASE)
+_FIRE_SLEEP_RE = re.compile(r'\bsleep\s+(\d+)\s*;', re.IGNORECASE)
 
 
 def _extract_branch_block(body: str, start_pos: int) -> Tuple[str, int]:
