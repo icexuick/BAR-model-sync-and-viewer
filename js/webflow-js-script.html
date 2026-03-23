@@ -306,13 +306,19 @@
             const groundMat = new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.4 });
             groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(maxDim*10, maxDim*10), groundMat);
             groundMesh.rotation.x = -Math.PI / 2;
+            let canFly = false;
+            modelScene.traverse(n => { if (n.userData && n.userData.can_fly) canFly = true; });
             const groundBox = autoplayOpenForBox ? box : defaultBox;
-            groundMesh.position.y = groundBox.min.y - center.y - 0.01;
+            let groundY = groundBox.min.y - center.y - 0.01;
+            if (canFly) groundY -= objectRadius * 0.3;
+            groundMesh.position.y = groundY;
             groundMesh.receiveShadow = true;
             scene.add(groundMesh);
-            renderer.localClippingEnabled = true;
-            const floorClipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(groundMesh.position.y));
-            material.clippingPlanes = [floorClipPlane];
+            if (!canFly) {
+                renderer.localClippingEnabled = true;
+                const floorClipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(groundMesh.position.y));
+                material.clippingPlanes = [floorClipPlane];
+            }
             if (gltf.animations && gltf.animations.length) {
                 mixer = new THREE.AnimationMixer(modelScene);
 

@@ -145,7 +145,10 @@ def _strip_comments(text: str) -> str:
 
 
 def _inline_call_scripts(body: str, bos_content: str, depth: int = 0) -> str:
-    """Replace 'call-script FuncName()' with the body of that function (max 3 levels deep)."""
+    """Replace 'call-script FuncName()' with the body of that function (max 3 levels deep).
+
+    Only inlines call-script (synchronous), NOT start-script (asynchronous/background).
+    """
     if depth > 3:
         return body
     _CALL_RE = re.compile(r'\bcall-script\s+(\w+)\s*\([^)]*\)\s*;', re.IGNORECASE)
@@ -1222,15 +1225,34 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
     aim_body = _extract_function_body(bos_content, 'AimWeapon1')
     if not aim_body:
         aim_body = _extract_function_body(bos_content, 'AimPrimary')
-    restore_body = _extract_function_body(bos_content, 'ExecuteRestoreAfterDelay')
-    if not restore_body:
-        restore_body = _extract_function_body(bos_content, 'RestoreAfterDelay')
+    # Prefer RestoreAfterDelay over ExecuteRestoreAfterDelay when it has more
+    # turn/move commands (e.g. legbar: ExecuteRestore only resets aim, while
+    # RestoreAfterDelay also moves turret/barrel/cover back).
+    exec_restore = _extract_function_body(bos_content, 'ExecuteRestoreAfterDelay')
+    plain_restore = _extract_function_body(bos_content, 'RestoreAfterDelay')
+    _move_turn_re = re.compile(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
+    exec_count = len(_move_turn_re.findall(exec_restore)) if exec_restore else 0
+    plain_count = len(_move_turn_re.findall(plain_restore)) if plain_restore else 0
+    if plain_count > exec_count and plain_restore:
+        restore_body = plain_restore
+    elif exec_restore:
+        restore_body = exec_restore
+    else:
+        restore_body = plain_restore
     if aim_body and restore_body:
         aim_body = _inline_call_scripts(aim_body, bos_content)
         restore_body = _inline_call_scripts(restore_body, bos_content)
+        # Also inline start-script calls in restore body (these call
+        # ExecuteRestoreAfterDelay etc. which have additional turn/move commands)
+        _START_SCRIPT_RE = re.compile(r'\bstart-script\s+(\w+)\s*\([^)]*\)\s*;', re.IGNORECASE)
+        def _start_replacer(m):
+            sub = _extract_function_body(bos_content, m.group(1))
+            return _inline_call_scripts(sub, bos_content) if sub else ''
+        restore_body = _START_SCRIPT_RE.sub(_start_replacer, restore_body)
         # Strip leading sleeps from restore body — these are gameplay delays
         # (wait before restoring), not part of the animation.
-        restore_body = re.sub(r'^\s*sleep\s+\d+\s*;', '', restore_body)
+        # Match both numeric sleeps (sleep 3000) and variable sleeps (sleep restore_delay).
+        restore_body = re.sub(r'^\s*sleep\s+[\w]+\s*;', '', restore_body)
         aim_clean = _strip_comments(aim_body)
         restore_clean = _strip_comments(restore_body)
         # Only use this pattern if AimWeapon has turn/move commands with wait-for

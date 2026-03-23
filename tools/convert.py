@@ -728,6 +728,8 @@ def convert_with_weapons(
             }
         if unit_role:
             root_extras["unit_role"] = unit_role
+        if can_fly:
+            root_extras["can_fly"] = True
         builder.nodes[root_idx]["extras"] = root_extras
         builder.scenes[0]["nodes"] = [root_idx]
 
@@ -1129,6 +1131,8 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                             unit_role = parse_lua_unit_role(lua_content)
                             if unit_role:
                                 print(f"  Unit role: {unit_role}")
+                            if re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE):
+                                can_fly = True
                             break
                         except Exception:
                             pass
