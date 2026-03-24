@@ -137,6 +137,9 @@
             roughnessValue = 0.8; pbrEmissiveIntensityValue = 12.0;
             selectedHdrUrl = legHdrUrl; VIEWER_CONFIG.envMapIntensity = 0.89;
         }
+        const scavField = document.getElementById('is-scavenger');
+        const isScavenger = scavField && scavField.textContent.trim().toLowerCase() === 'true';
+        if (isScavenger) teamColorValue = 0xA41DE2;
         const teamColor = new THREE.Color(teamColorValue);
         VIEWER_CONFIG.teamColor = '#' + teamColor.getHexString();
         VIEWER_CONFIG.hdrUrl = selectedHdrUrl;
