@@ -338,18 +338,19 @@
             const groundMat = new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.4 });
             groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(maxDim*10, maxDim*10), groundMat);
             groundMesh.rotation.x = -Math.PI / 2;
-            let canFly = false;
-            modelScene.traverse(n => { if (n.userData && n.userData.can_fly) canFly = true; });
+            let canFly = false, isShip = false;
+            modelScene.traverse(n => { if (n.userData && n.userData.can_fly) canFly = true; if (n.userData && n.userData.is_ship) isShip = true; });
             // Use whichever box has the higher min.y for the ground plane.
             // Defenses that deploy upward: open-pose min.y > closed min.y → use open box.
             // Units whose parts swing down when open: closed min.y > open min.y → use closed box.
             const groundBox = (box.min.y > defaultBox.min.y) ? box : defaultBox;
             let groundY = groundBox.min.y - center.y - 0.01;
             if (canFly) groundY -= objectRadius * 0.66;
+            else if (isShip) groundY -= objectRadius * 0.30;
             groundMesh.position.y = groundY;
             groundMesh.receiveShadow = true;
             scene.add(groundMesh);
-            if (!canFly) {
+            if (!canFly && !isShip) {
                 renderer.localClippingEnabled = true;
                 const floorClipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(groundMesh.position.y));
                 material.clippingPlanes = [floorClipPlane];

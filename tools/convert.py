@@ -183,6 +183,7 @@ def convert_with_weapons(
     unit_role: Optional[str] = None,
     unit_name: str = '',
     can_fly: bool = False,
+    is_ship: bool = False,
     merge_map: Optional[Dict[int, int]] = None,
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata, walk/spin animation, and unit role."""
@@ -792,6 +793,8 @@ def convert_with_weapons(
             root_extras["unit_role"] = unit_role
         if can_fly:
             root_extras["can_fly"] = True
+        if is_ship:
+            root_extras["is_ship"] = True
         builder.nodes[root_idx]["extras"] = root_extras
         builder.scenes[0]["nodes"] = [root_idx]
 
@@ -1043,6 +1046,35 @@ def unit_can_fly(bar_dir: str, unit_name: str) -> bool:
     return False
 
 
+def unit_is_ship(bar_dir: str, unit_name: str) -> bool:
+    """Return True if the unit's def file has a BOAT or UBOAT movementclass."""
+    units_dir = os.path.join(bar_dir, 'units')
+    for lua_path in [
+        os.path.join(units_dir, unit_name + '.lua'),
+        os.path.join(units_dir, unit_name.lower() + '.lua'),
+    ]:
+        if os.path.isfile(lua_path):
+            try:
+                with open(lua_path, 'r', errors='replace') as f:
+                    content = f.read()
+                if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', content, re.IGNORECASE):
+                    return True
+            except Exception:
+                pass
+    # Fallback: search recursively in units dir
+    for root, dirs, files in os.walk(units_dir):
+        for fn in files:
+            if fn.lower() == unit_name.lower() + '.lua':
+                try:
+                    with open(os.path.join(root, fn), 'r', errors='replace') as f:
+                        content = f.read()
+                    if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', content, re.IGNORECASE):
+                        return True
+                except Exception:
+                    pass
+    return False
+
+
 def find_script_for_unit(bar_dir: str, unit_name: str) -> Optional[str]:
     """Find the BOS or Lua script for a given unit in the BAR directory."""
     scripts_dir = os.path.join(bar_dir, 'scripts', 'Units')
@@ -1064,7 +1096,8 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                    output_path: Optional[str] = None,
                    info_only: bool = False,
                    weapon_defs: Optional[Dict[int, str]] = None,
-                   can_fly: bool = False) -> Optional[str]:
+                   can_fly: bool = False,
+                   is_ship: bool = False) -> Optional[str]:
     """Convert a single S3O file to GLB."""
     model = parse_s3o(s3o_path)
     unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
@@ -1215,6 +1248,8 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                                 print(f"  Unit role: {unit_role}")
                             if re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE):
                                 can_fly = True
+                            if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE):
+                                is_ship = True
                             break
                         except Exception:
                             pass
@@ -1240,7 +1275,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
             anim_script_path = bos_candidate
             print(f"  Animation script (BOS fallback): {bos_candidate}")
 
-    glb_data = convert_with_weapons(model, weapon_info, anim_script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly, merge_map)
+    glb_data = convert_with_weapons(model, weapon_info, anim_script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly, is_ship, merge_map)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -1293,9 +1328,10 @@ def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
         glb_path = os.path.join(output_dir, unit_name + '.glb')
         script_path = find_script_for_unit(bar_dir, unit_name)
         can_fly = unit_can_fly(bar_dir, unit_name)
+        is_ship = unit_is_ship(bar_dir, unit_name)
 
         try:
-            convert_single(s3o_path, script_path, glb_path, can_fly=can_fly)
+            convert_single(s3o_path, script_path, glb_path, can_fly=can_fly, is_ship=is_ship)
             success += 1
         except Exception as e:
             print(f"  ERROR converting {filename}: {e}")
@@ -1497,7 +1533,9 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
             output_path = os.path.join(tmpdir, s3o_name.replace(".s3o", ".glb"))
 
         weapon_defs = parse_lua_weapon_defs(lua_content)
-        glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs)
+        can_fly = bool(re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE))
+        is_ship = bool(re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE))
+        glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs, can_fly=can_fly, is_ship=is_ship)
         if glb_path and push and not info_only:
             push_glb_to_repo(glb_path, force=force)
         return glb_path
