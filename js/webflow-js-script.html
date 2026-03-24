@@ -516,7 +516,7 @@
                 }
             });
             controls.addEventListener('start', () => { isInteracting = true; didDrag = false; });
-            controls.addEventListener('end', () => { isInteracting = false; dragOrigin = null; if (didDrag && isTurntableEnabledByUser) idleTimer = setTimeout(() => { if (!isInteracting) turntableActive = true; }, 3000); });
+            controls.addEventListener('end', () => { isInteracting = false; dragOrigin = null; if (didDrag && isTurntableEnabledByUser) idleTimer = setTimeout(() => { if (!isInteracting) { didDrag = false; turntableActive = true; } }, 3000); });
             if (isTurntableEnabledByUser) turntableActive = true;
             if (animToggleButton) animToggleButton.addEventListener('click', () => { if(mixer && currentAction) currentAction.paused = !currentAction.paused; });
             if (movementToggle) movementToggle.addEventListener('change', () => {
