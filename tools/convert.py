@@ -854,7 +854,9 @@ def convert_with_weapons(
             # Always try spin animation — some units have BOTH walk and spin
             # (e.g. factories with a dish + opening animation).
             # Only include spin clips for pieces that are visually meaningful in the viewer:
-            # radar/sonar/jammer dishes, or any unit with an explicit unit_role.
+            # radar/sonar/jammer dishes, or any unit with an explicit unit_role,
+            # or units with a walk animation (spins in walkers are always visual, e.g.
+            # legsnapper corkscrews).
             _SPIN_INTERESTING_NAMES = (
                 'dish', 'radar', 'sonar', 'strut', 'turret', 'tower', 'spinner',
                 'fork', 'jam', 'antenna', 'array',
@@ -862,10 +864,12 @@ def convert_with_weapons(
                 'wheel', 'cradle', 'rotor', 'ring',
                 'arm', 'stand', 'drill', 'sphere', 'aim', 'spindle',
             )
+            has_walk = anim_name is not None
             spin_clips = extract_spin_animation(bos_content)
             if spin_clips:
-                # Keep only clips whose piece name is interesting, unless unit has a role
-                if unit_role:
+                # Keep only clips whose piece name is interesting, unless unit has a
+                # role or a walk animation (walkers with spins = always visual).
+                if unit_role or has_walk:
                     filtered_clips = spin_clips
                 else:
                     filtered_clips = [
