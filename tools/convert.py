@@ -1058,7 +1058,8 @@ def unit_can_fly(bar_dir: str, unit_name: str) -> bool:
 
 
 def unit_is_ship(bar_dir: str, unit_name: str) -> bool:
-    """Return True if the unit's def file has a BOAT or UBOAT movementclass."""
+    """Return True if the unit's def file has a BOAT, UBOAT, or HOVER movementclass."""
+    _SHIP_RE = re.compile(r'\bmovementclass\s*=\s*["\'](?:U?BOAT|HOVER)\d*["\']', re.IGNORECASE)
     units_dir = os.path.join(bar_dir, 'units')
     for lua_path in [
         os.path.join(units_dir, unit_name + '.lua'),
@@ -1068,7 +1069,7 @@ def unit_is_ship(bar_dir: str, unit_name: str) -> bool:
             try:
                 with open(lua_path, 'r', errors='replace') as f:
                     content = f.read()
-                if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', content, re.IGNORECASE):
+                if _SHIP_RE.search(content):
                     return True
             except Exception:
                 pass
@@ -1079,7 +1080,7 @@ def unit_is_ship(bar_dir: str, unit_name: str) -> bool:
                 try:
                     with open(os.path.join(root, fn), 'r', errors='replace') as f:
                         content = f.read()
-                    if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', content, re.IGNORECASE):
+                    if _SHIP_RE.search(content):
                         return True
                 except Exception:
                     pass
