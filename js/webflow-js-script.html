@@ -551,7 +551,7 @@
                         envRotMat3.setFromMatrix4(envRotMat4);
                         material.userData.shader.uniforms.envMapRotation.value.copy(envRotMat3);
                     }
-                    if (turntableActive && !isInteracting && !isAltDown) modelScene.rotation.y += VIEWER_CONFIG.autoRotationSpeed * clockDelta;
+                    if (turntableActive && !didDrag && !isAltDown) modelScene.rotation.y += VIEWER_CONFIG.autoRotationSpeed * clockDelta;
                     if (mixer) mixer.update(clockDelta);
 
                     const lerpSpeed = 8.0 * clockDelta;
