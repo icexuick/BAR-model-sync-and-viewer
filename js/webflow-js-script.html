@@ -507,10 +507,16 @@
                 }
                 pointerDownPos = null;
             });
-            let didDrag = false;
+            let didDrag = false; let dragOrigin = null;
+            renderer.domElement.addEventListener('pointerdown', (e) => { dragOrigin = { x: e.clientX, y: e.clientY }; });
+            renderer.domElement.addEventListener('pointermove', (e) => {
+                if (isInteracting && !didDrag && dragOrigin) {
+                    const dx = e.clientX - dragOrigin.x, dy = e.clientY - dragOrigin.y;
+                    if (dx*dx + dy*dy > 25) { didDrag = true; turntableActive = false; clearTimeout(idleTimer); }
+                }
+            });
             controls.addEventListener('start', () => { isInteracting = true; didDrag = false; });
-            controls.addEventListener('change', () => { if (isInteracting && !didDrag) { didDrag = true; turntableActive = false; clearTimeout(idleTimer); } });
-            controls.addEventListener('end', () => { isInteracting = false; if (didDrag && isTurntableEnabledByUser) idleTimer = setTimeout(() => { if (!isInteracting) turntableActive = true; }, 3000); });
+            controls.addEventListener('end', () => { isInteracting = false; dragOrigin = null; if (didDrag && isTurntableEnabledByUser) idleTimer = setTimeout(() => { if (!isInteracting) turntableActive = true; }, 3000); });
             if (isTurntableEnabledByUser) turntableActive = true;
             if (animToggleButton) animToggleButton.addEventListener('click', () => { if(mixer && currentAction) currentAction.paused = !currentAction.paused; });
             if (movementToggle) movementToggle.addEventListener('change', () => {
