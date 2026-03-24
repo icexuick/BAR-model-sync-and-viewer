@@ -724,14 +724,17 @@ def convert_with_weapons(
     piece_offsets: Dict[str, tuple] = {}
 
     _NO_MESH_FRAGMENTS = ('flare', 'aimpoint', 'fire', 'emit', 'wake',
-                          'blink', 'glow')
+                          'blink')
+    # 'glow' checked separately with word-boundary to avoid matching 'leglower'
+    _NO_MESH_GLOW_RE = re.compile(r'(?:^|[^a-z])glow')
 
     def add_piece_with_extras(piece: S3OPiece, parent_idx=None) -> int:
         """Add a piece node with weapon extras metadata."""
         piece_key = piece.name.lower()
         # Skip mesh geometry for hidden/effect pieces so they don't affect bounding box
         suppress_mesh = (piece_key in hide_pieces or
-                         any(frag in piece_key for frag in _NO_MESH_FRAGMENTS))
+                         any(frag in piece_key for frag in _NO_MESH_FRAGMENTS) or
+                         bool(_NO_MESH_GLOW_RE.search(piece_key)))
         if suppress_mesh:
             mesh_idx = None
         else:
