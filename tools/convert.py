@@ -143,14 +143,14 @@ def _collect_subtree(piece_key: str, children_map: Dict[str, List[str]]) -> List
 # Useful for units where body sway/sliding looks wrong in the viewer.
 _STRIP_ANIM_TRANSLATION: Dict[str, set] = {
     'corsktl': {'base'},
-    'legfloat': {'base'},
+    'legfloat': {'base', 'lknee', 'rknee', 'lankle', 'rankle'},
 }
 
 # Per-unit pieces whose rotation tracks should be stripped from animations.
 # Useful for units where body twisting/spinning looks wrong in the viewer.
 _STRIP_ANIM_ROTATION: Dict[str, set] = {
     'corsktl': {'base'},
-    'legfloat': {'base'},
+    'legfloat': {'base', 'lknee', 'rknee', 'lankle', 'rankle'},
 }
 
 # Per-unit target duration (seconds) for walk animations.
@@ -264,6 +264,11 @@ def convert_with_weapons(
                 all_aim_pieces.add(ap.lower())
 
         for wnum, wmap in weapon_info.weapons.items():
+            # Skip visual tagging for disabled weapons (e.g. drone controllers
+            # where AimWeapon returns 0 — no actual aiming/firing geometry)
+            if wmap.aim_disabled:
+                continue
+
             if wmap.query_piece:
                 _add_to_lookup(wmap.query_piece.lower(), wnum, "fire_point")
 
@@ -631,8 +636,11 @@ def convert_with_weapons(
                             and len(all_fp_keys) <= 2
                             and _mirror_parent_ok):
                         mirror_subtree = _collect_subtree(mirror_root, children_map)
-                        tagged_subtrees.append(mirror_subtree)
-                        seen_roots.add(mirror_root)
+                        # Skip mirror if its subtree contains pieces belonging to
+                        # other weapons (e.g. sleeves2 under tur2 for weapon 2)
+                        if not (set(mirror_subtree) & other_weapon_pieces):
+                            tagged_subtrees.append(mirror_subtree)
+                            seen_roots.add(mirror_root)
 
                     # Named-type siblings: pieces that share a "type word" with the visual
                     # root but aren't caught by l↔r mirror (e.g. leftBarrel/rightBarrel/topBarrel).
@@ -784,6 +792,7 @@ def convert_with_weapons(
                     "aim_pieces": wmap.aim_pieces,
                 }
                 for wnum, wmap in weapon_info.weapons.items()
+                if not wmap.aim_disabled
             }
             # Add shadow entries for merged weapons so that Fire_N clips
             # can find their def via weaponSummary (e.g. Fire_3 → weapon 2 def).
@@ -969,9 +978,9 @@ def convert_with_weapons(
                     # S3O rest pose as the deployed/open state.
                     # Exception: units whose BOS Create() explicitly starts closed.
                     # Units that are known to start open despite no explicit BOS open call
-                    _FORCE_AUTOPLAY_OPEN = {'armpb', 'corasy'}
+                    _FORCE_AUTOPLAY_OPEN = {'armpb', 'corasy', 'leganavymissileship'}
                     # Units that are known to start closed despite no explicit BOS closed call
-                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'corgant'}
+                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo'}
                     _CLOSED_IN_CREATE = [
                         r'start-script\s+OpenCloseAnim\s*\(\s*0\s*\)',
                         r'start-script\s+Stop\b',
@@ -996,9 +1005,9 @@ def convert_with_weapons(
                         builder.nodes[root_idx].setdefault("extras", {})["is_factory"] = True
                     starts_closed = (
                         unit_name.lower() not in _FORCE_AUTOPLAY_OPEN and
+                        not is_factory and
                         (
                             unit_name.lower() in _FORCE_STARTS_CLOSED or
-                            is_factory or
                             any(re.search(p, create_body, re.IGNORECASE) for p in _CLOSED_IN_CREATE)
                         )
                     )
@@ -1531,8 +1540,9 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
         # Output inside the temp dir so it never lands in the repo locally.
         # push_glb_to_repo() uploads it to GitHub; after that it's cleaned up.
         # Use --local to save to disk instead.
+        # Use the unit name (not S3O name) so aliases like corgantuw get their own GLB.
         if output_path is None:
-            output_path = os.path.join(tmpdir, s3o_name.replace(".s3o", ".glb"))
+            output_path = os.path.join(tmpdir, f"{unit_name}.glb")
 
         weapon_defs = parse_lua_weapon_defs(lua_content)
         can_fly = bool(re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE))

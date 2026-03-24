@@ -1252,13 +1252,22 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
     if aim_body and restore_body:
         aim_body = _inline_call_scripts(aim_body, bos_content)
         restore_body = _inline_call_scripts(restore_body, bos_content)
-        # Also inline start-script calls in restore body (these call
-        # ExecuteRestoreAfterDelay etc. which have additional turn/move commands)
+        # Also inline start-script calls in both aim and restore bodies (these call
+        # functions like openAbm/closeAbm/ExecuteRestoreAfterDelay which have
+        # additional turn/move commands)
         _START_SCRIPT_RE = re.compile(r'\bstart-script\s+(\w+)\s*\([^)]*\)\s*;', re.IGNORECASE)
-        def _start_replacer(m):
+        # For aim_body: skip Restore-related functions (those belong to close)
+        _RESTORE_NAMES = {'restoreafterdelay', 'executerestoreafterdelay'}
+        def _aim_start_replacer(m):
+            if m.group(1).lower() in _RESTORE_NAMES:
+                return ''  # strip restore calls from open body
             sub = _extract_function_body(bos_content, m.group(1))
             return _inline_call_scripts(sub, bos_content) if sub else ''
-        restore_body = _START_SCRIPT_RE.sub(_start_replacer, restore_body)
+        def _restore_start_replacer(m):
+            sub = _extract_function_body(bos_content, m.group(1))
+            return _inline_call_scripts(sub, bos_content) if sub else ''
+        aim_body = _START_SCRIPT_RE.sub(_aim_start_replacer, aim_body)
+        restore_body = _START_SCRIPT_RE.sub(_restore_start_replacer, restore_body)
         # Strip leading sleeps from restore body — these are gameplay delays
         # (wait before restoring), not part of the animation.
         # Match both numeric sleeps (sleep 3000) and variable sleeps (sleep restore_delay).
@@ -1288,14 +1297,19 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         aim_clean = _strip_comments(aim_body)
         restore_clean = _strip_comments(restore_body)
         # Only use this pattern if AimWeapon has turn/move commands with wait-for
-        # (indicating a deliberate open animation, not just aiming)
+        # (indicating a deliberate open animation, not just aiming).
+        # Also accept when 3+ distinct non-aim pieces are animated (e.g. silo
+        # panels like anpanelf/anpanell/anpanelr) — clearly a deploy, not aiming.
         has_open_wait = bool(re.search(r'wait-for-(turn|move)', aim_clean, re.IGNORECASE))
+        _aim_piece_names = set(re.findall(r'\b(?:turn|move)\s+(\w+)\s+to\s+[xyz]-axis', aim_clean, re.IGNORECASE))
+        _non_aim_pieces = {p for p in _aim_piece_names if not re.match(r'^(aim|turret|sleeve|gun|barrel|aimx|aimy)', p, re.IGNORECASE)}
+        has_many_deploy_pieces = len(_non_aim_pieces) >= 3
         has_open_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', aim_clean, re.IGNORECASE))
         has_close_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', restore_clean, re.IGNORECASE))
         # Don't conflict with existing Open()/Close() pattern
         has_open_close_fn = bool(_extract_function_body(bos_content, 'Open') and
                                  _extract_function_body(bos_content, 'Close'))
-        if has_open_wait and has_open_moves and has_close_moves and not has_open_close_fn:
+        if (has_open_wait or has_many_deploy_pieces) and has_open_moves and has_close_moves and not has_open_close_fn:
             # Parse close first to get closed pose (= rest position targets)
             close_tracks_raw, _ = _parse_turn_move_to_tracks(restore_body)
             closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
@@ -1327,6 +1341,23 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
             closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
                            for t in close_tracks_raw}
             open_tracks, open_dur = _parse_turn_move_to_tracks(act_body, start_pose=closed_pose)
+            # Fill in missing open tracks: if Deactivate moves pieces that
+            # Activate doesn't mention, generate open tracks that reverse
+            # from the closed pose to 0 (S3O rest).  This handles factories
+            # like legsplab where arms are opened via StartBuilding/MoveCranes
+            # but closed explicitly in Deactivate.
+            open_keys = {(t.piece, t.axis, t.is_rotation) for t in open_tracks}
+            for ct in close_tracks_raw:
+                key = (ct.piece, ct.axis, ct.is_rotation)
+                if key not in open_keys:
+                    start_val = closed_pose.get(key, 0.0)
+                    end_val = 0.0  # S3O rest pose
+                    if abs(start_val - end_val) > 0.01:
+                        # Use same duration as the existing open animation
+                        open_tracks.append(BosTrack(
+                            piece=ct.piece, axis=ct.axis, is_rotation=ct.is_rotation,
+                            keyframes=[BosKeyframe(0.0, start_val), BosKeyframe(open_dur, end_val)]
+                        ))
             open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
                          for t in open_tracks}
             close_tracks, close_dur = _parse_turn_move_to_tracks(deact_body, start_pose=open_pose)
@@ -1819,19 +1850,29 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
     clips: List[FireClipInfo] = []
     seen_weapons: set = set()
 
-    # Try FireWeapon1..FireWeapon16
+    # Try FireWeapon1..FireWeapon16, falling back to Shot1..Shot16 for recoil
     for n in range(1, 17):
         func_name = f'FireWeapon{n}'
         body = _extract_function_body(bos_content, func_name)
-        if not body:
-            continue
-        body = _inline_call_scripts(body, bos_content)
-        tracks, dur, rotary = _parse_fire_body_to_tracks(body)
+        if body:
+            body = _inline_call_scripts(body, bos_content)
+            tracks, dur, rotary = _parse_fire_body_to_tracks(body)
+        else:
+            tracks, dur, rotary = [], 0.0, None
+        # If FireWeaponN has no recoil tracks, try ShotN (per-shot callback
+        # used by multi-barrel weapons like corblackhy, armepoch)
+        if not tracks:
+            shot_body = _extract_function_body(bos_content, f'Shot{n}')
+            if shot_body:
+                shot_body = _inline_call_scripts(shot_body, bos_content)
+                tracks, dur, rotary = _parse_fire_body_to_tracks(shot_body)
+                if tracks:
+                    func_name = f'Shot{n}'
         if tracks:
             clip_name = f'Fire_{n}'
             pieces = sorted({t.piece for t in tracks})
             rotary_str = f", rotary: {rotary[0]} +{rotary[2]}°" if rotary else ""
-            print(f"  Fire animation '{clip_name}': {len(tracks)} tracks, "
+            print(f"  Fire animation '{clip_name}' (from {func_name}): {len(tracks)} tracks, "
                   f"{dur:.2f}s, pieces: {', '.join(pieces)}{rotary_str}")
             clips.append((clip_name, tracks, rotary))
             seen_weapons.add(n)

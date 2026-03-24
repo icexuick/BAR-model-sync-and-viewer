@@ -37,6 +37,7 @@ class WeaponPieceMapping:
     query_pieces: List[str] = field(default_factory=list)  # ALL fire point pieces (multi-barrel)
     aim_from_piece: Optional[str] = None  # piece returned by AimFromWeapon (aim origin)
     aim_pieces: List[str] = field(default_factory=list)  # pieces turned in AimWeapon
+    aim_disabled: bool = False  # True when AimWeapon returns 0 (e.g. drone controller)
     all_pieces: Set[str] = field(default_factory=set)  # union of all weapon pieces
 
     def __post_init__(self):
@@ -206,6 +207,16 @@ def parse_bos(filepath: str) -> BOSParseResult:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
             result.weapons[wnum].aim_pieces = sorted(aim_pieces)
             result.weapons[wnum]._update_all()
+
+        # Detect disabled weapons: AimWeapon returns 0 with no turn/move commands
+        # (e.g. drone controllers that don't actually aim)
+        stripped = re.sub(r'//[^\n]*', '', body)  # strip comments
+        has_return_0 = bool(re.search(r'\breturn\s*\(\s*0\s*\)', stripped, re.IGNORECASE))
+        has_turn_move = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', stripped, re.IGNORECASE))
+        if has_return_0 and not has_turn_move:
+            if wnum not in result.weapons:
+                result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
+            result.weapons[wnum].aim_disabled = True
 
     return result
 
