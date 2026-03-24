@@ -143,12 +143,14 @@ def _collect_subtree(piece_key: str, children_map: Dict[str, List[str]]) -> List
 # Useful for units where body sway/sliding looks wrong in the viewer.
 _STRIP_ANIM_TRANSLATION: Dict[str, set] = {
     'corsktl': {'base'},
+    'legfloat': {'base'},
 }
 
 # Per-unit pieces whose rotation tracks should be stripped from animations.
 # Useful for units where body twisting/spinning looks wrong in the viewer.
 _STRIP_ANIM_ROTATION: Dict[str, set] = {
     'corsktl': {'base'},
+    'legfloat': {'base'},
 }
 
 # Per-unit target duration (seconds) for walk animations.
