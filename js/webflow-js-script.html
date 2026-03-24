@@ -507,8 +507,10 @@
                 }
                 pointerDownPos = null;
             });
-            controls.addEventListener('start', () => { isInteracting = true; turntableActive = false; clearTimeout(idleTimer); });
-            controls.addEventListener('end', () => { isInteracting = false; if (isTurntableEnabledByUser) idleTimer = setTimeout(() => { if (!isInteracting) turntableActive = true; }, 3000); });
+            let didDrag = false;
+            controls.addEventListener('start', () => { isInteracting = true; didDrag = false; });
+            controls.addEventListener('change', () => { if (isInteracting && !didDrag) { didDrag = true; turntableActive = false; clearTimeout(idleTimer); } });
+            controls.addEventListener('end', () => { isInteracting = false; if (didDrag && isTurntableEnabledByUser) idleTimer = setTimeout(() => { if (!isInteracting) turntableActive = true; }, 3000); });
             if (isTurntableEnabledByUser) turntableActive = true;
             if (animToggleButton) animToggleButton.addEventListener('click', () => { if(mixer && currentAction) currentAction.paused = !currentAction.paused; });
             if (movementToggle) movementToggle.addEventListener('change', () => {
