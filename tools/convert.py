@@ -166,6 +166,14 @@ _TOGGLE_SKIP: set = {'legsolar', 'corlab'}
 # (e.g. FiringMode with 0.02s duration that jitters turret pieces)
 _LOOP_SKIP: set = {'leganavybattleship'}
 
+# Extra toggle tracks to inject into ActivateOpen/ActivateClose animations.
+# Format: { 'unitname': [('piece', axis, is_rotation, open_value, close_value, speed)] }
+# speed is degrees/sec (rotation) or units/sec (translation).
+# These tracks are appended to the extracted toggle clips to add missing visual movements.
+_EXTRA_TOGGLE_TRACKS: Dict[str, list] = {
+    'legbar': [('aimx1', 0, True, -15.0, 0.0, 50.0)],  # tilt turret upward when deployed
+}
+
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
@@ -926,6 +934,24 @@ def convert_with_weapons(
                         toggle_clips = [('ActivateOpen', open_tracks),
                                         ('ActivateClose', rev_tracks)]
                         print(f"  ActivateClose auto-reversed from Open ({dur:.2f}s)")
+                # Inject extra toggle tracks for unit-specific visual fixes
+                extra_toggle = _EXTRA_TOGGLE_TRACKS.get(unit_name.lower(), [])
+                if extra_toggle:
+                    from bos_animator import BosTrack, BosKeyframe
+                    new_clips = []
+                    for clip_name, clip_tracks in toggle_clips:
+                        dur = max((k.time for tr in clip_tracks for k in tr.keyframes), default=1.0)
+                        for piece, axis, is_rot, open_val, close_val, spd in extra_toggle:
+                            if clip_name == 'ActivateOpen':
+                                start_v, end_v = close_val, open_val
+                            else:
+                                start_v, end_v = open_val, close_val
+                            clip_tracks = list(clip_tracks) + [BosTrack(
+                                piece=piece, axis=axis, is_rotation=is_rot,
+                                keyframes=[BosKeyframe(0.0, start_v), BosKeyframe(dur, end_v)]
+                            )]
+                        new_clips.append((clip_name, clip_tracks))
+                    toggle_clips = new_clips
                 for clip_name, clip_tracks in toggle_clips:
                     builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
                                           piece_offsets)
