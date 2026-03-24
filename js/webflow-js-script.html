@@ -62,7 +62,8 @@
         anisotropy: isMobile ? 2 : 4,
         ssaoKernelSize: isMobile ? 6 : 8,
         ssaoKernelRadius: isMobile ? 8 : 16,
-        ssaoEnabled: true,
+        ssaoEnabled: !isMobile,
+        smaaEnabled: !isMobile,
         powerPreference: isMobile ? 'low-power' : 'high-performance',
     };
 
@@ -83,7 +84,27 @@
         if (!container) return;
         container.style.display = 'block';
 
+        // WebGL2 check — Three.js 0.160+ requires it
+        const testCanvas = document.createElement('canvas');
+        const hasWebGL2 = !!(testCanvas.getContext('webgl2'));
+        if (!hasWebGL2) {
+            const noticeEl = document.getElementById('model-viewer-notice');
+            if (noticeEl) { noticeEl.textContent = 'Your browser does not support WebGL 2. Please update your browser or device.'; noticeEl.style.display = 'block'; }
+            const ldr = document.getElementById('model-loader');
+            if (ldr) ldr.remove();
+            return;
+        }
+
         const loader = document.getElementById('model-loader');
+        let loadingDone = false;
+        const loadTimeout = setTimeout(() => {
+            if (loadingDone) return;
+            console.warn('Model loading timed out after 30s');
+            if (loader) { loader.style.transition = 'opacity 0.3s'; loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
+            const fallback = document.querySelector('.flex-unit-detail-img');
+            if (fallback) fallback.style.display = '';
+            if (noticeElement) { noticeElement.textContent = 'Loading took too long. Please try refreshing the page.'; noticeElement.style.display = 'block'; }
+        }, 30000);
 
         container.style.opacity = '0';
         container.style.transform = 'scale(0.5)';
@@ -177,11 +198,12 @@
         const gltfLoader = new GLTFLoader();
         const rgbeLoader = new RGBELoader();
         Promise.all([
-            rgbeLoader.loadAsync(selectedHdrUrl).then(t => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; return t; }),
+            rgbeLoader.loadAsync(selectedHdrUrl).then(t => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; return t; }).catch(e => { console.warn('HDR load failed, continuing without environment map:', e); return null; }),
             textureLoader.loadAsync(diffuseURL), textureLoader.loadAsync(pbrURL),
             textureLoader.loadAsync(normalURL), textureLoader.loadAsync(teamURL),
             gltfLoader.loadAsync(modelURL)
         ]).then(([env, diffuseMap, pbrMap, normalMap, teamMap, gltf]) => {
+            loadingDone = true; clearTimeout(loadTimeout);
             const fallbackImageBlock = document.querySelector('.flex-unit-detail-img');
             if (fallbackImageBlock) fallbackImageBlock.style.display = 'none';
 
@@ -404,7 +426,7 @@
             if (mixer && initFireAnims) initFireAnims(THREE, mixer, gltf.animations);
             const renderTarget = new THREE.WebGLRenderTarget(container.offsetWidth, container.offsetHeight, {
                 minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat,
-                alpha: true, type: THREE.HalfFloatType, samples: isMobile ? 0 : 4
+                alpha: true, type: isMobile ? THREE.UnsignedByteType : THREE.HalfFloatType, samples: isMobile ? 0 : 4
             });
             composer = new EffectComposer(renderer, renderTarget);
             const renderPass = new RenderPass(scene, camera);
@@ -416,8 +438,10 @@
                 ssaoPass.minDistance = VIEWER_CONFIG.ssaoMinDist; ssaoPass.maxDistance = VIEWER_CONFIG.ssaoMaxDist;
                 composer.addPass(ssaoPass);
             }
-            smaaPass = new SMAAPass( container.offsetWidth * renderer.getPixelRatio(), container.offsetHeight * renderer.getPixelRatio() );
-            composer.addPass(smaaPass);
+            if (performanceSettings.smaaEnabled) {
+                smaaPass = new SMAAPass( container.offsetWidth * renderer.getPixelRatio(), container.offsetHeight * renderer.getPixelRatio() );
+                composer.addPass(smaaPass);
+            }
             outputPass = new OutputPass();
             composer.addPass(outputPass);
             window._editorCtx = { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2, ambientLight, ssaoPass, groundMesh, areShadowsVisible, scene, camera, composer, smaaPass, loadHDR: (url) => { rgbeLoader.load(url, (t) => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; }, undefined, (e) => console.error('HDR Error:', e)); } };
@@ -578,9 +602,12 @@
             lastTime = performance.now();
             requestAnimationFrame(animate);
         }).catch(err => {
+            loadingDone = true; clearTimeout(loadTimeout);
             console.error("LOAD ERROR:", err);
-            if (loader) loader.remove();
-            if(noticeElement) { noticeElement.textContent = "Error loading model."; noticeElement.style.display = 'block'; }
+            if (loader) { loader.style.transition = 'opacity 0.3s'; loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
+            const fallback = document.querySelector('.flex-unit-detail-img');
+            if (fallback) fallback.style.display = '';
+            if(noticeElement) { noticeElement.textContent = "Error loading 3D model."; noticeElement.style.display = 'block'; }
         });
     }, 900);
 });
