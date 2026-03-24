@@ -625,7 +625,12 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
 # (e.g. WindSpeed, WindSpeed / -5.0).  Both forms are captured.
 _SPIN_RE = re.compile(
     r'\bspin\s+(\w+)\s+around\s+([xyz])-axis\s+speed\s+'
-    r'(?:<([^>]+)>|(\(?-?\d*\.?\d*\)?\s*\*?\s*[A-Za-z_]\w*(?:\s*[*/]\s*-?\d+\.?\d*)?\)?))',
+    r'(?:'
+    r'\(\s*<([^>]+)>\s*\*\s*\w+\s*\)'           # group(3): (<value> * var)
+    r'|<([^>]+)>\s*\*\s*(\w+)'                   # group(4)+group(5): <value>*var
+    r'|<([^>]+)>'                                 # group(6): bare <value>
+    r'|(\(?-?\d*\.?\d*\)?\s*\*?\s*[A-Za-z_]\w*(?:\s*[*/]\s*-?\d+\.?\d*)?\)?)'  # group(7): variable expr
+    r')',
     re.IGNORECASE
 )
 # Default wind speed (deg/s) used when the BOS speed is a variable like 'WindSpeed'.
@@ -661,29 +666,50 @@ def _collect_spin_commands(bos_content: str, func_name: str,
     for m in _SPIN_RE.finditer(clean):
         piece = m.group(1).lower()
         axis = AXIS_INDEX[m.group(2).lower()]
-        # group(3) = bracketed value <...>, group(4) = bare/parenthesized variable expression
-        raw = (m.group(3) or m.group(4) or '').strip()
-        try:
-            speed = float(raw)
-        except ValueError:
-            # Variable expression — determine sign from any numeric multiplier present
-            # (e.g. '-1*var', '(-0.5)*var', 'var*2', 'var / -5').
-            # Extract leading numeric coefficient if present.
-            coeff_m = re.search(r'\(?\s*(-?\d+\.?\d*)\s*\)?\s*\*', raw)
-            if coeff_m:
-                try:
-                    sign = -1.0 if float(coeff_m.group(1)) < 0 else 1.0
-                except ValueError:
-                    sign = 1.0
-            elif re.search(r'/\s*-', raw):
-                sign = -1.0
-            else:
+        # group(3) = (<value> * var), group(4)+group(5) = <value>*var,
+        # group(6) = bare <value>, group(7) = variable expr
+        paren_coeff = m.group(3)    # (<-1.0> * currentspeed) → "-1.0"
+        bare_coeff = m.group(4)     # <1.0>*var → "1.0"
+        bare_var = m.group(5)       # <1.0>*var → "currentspeed"
+        bare_val = m.group(6)       # <1.0> → "1.0"
+        var_expr = m.group(7)       # variable expression
+        if paren_coeff or (bare_coeff and bare_var):
+            # <value> * variable — use coefficient as sign, default speed as magnitude
+            coeff_str = paren_coeff or bare_coeff
+            try:
+                coeff = float(coeff_str)
+                sign = -1.0 if coeff < 0 else 1.0
+            except ValueError:
                 sign = 1.0
-            # Wind-speed variables keep the wind default; all others get the mex default.
-            if re.search(r'wind', raw, re.IGNORECASE):
-                speed = sign * _DEFAULT_WIND_SPEED
-            else:
-                speed = sign * _DEFAULT_MEX_SPEED
+            speed = sign * _DEFAULT_MEX_SPEED
+        elif bare_val:
+            raw = bare_val.strip()
+            try:
+                speed = float(raw)
+            except ValueError:
+                speed = _DEFAULT_MEX_SPEED
+        else:
+            raw = (var_expr or '').strip()
+            try:
+                speed = float(raw)
+            except ValueError:
+                # Variable expression — determine sign from any numeric multiplier present
+                # (e.g. '-1*var', '(-0.5)*var', 'var*2', 'var / -5').
+                coeff_m = re.search(r'\(?\s*(-?\d+\.?\d*)\s*\)?\s*\*', raw)
+                if coeff_m:
+                    try:
+                        sign = -1.0 if float(coeff_m.group(1)) < 0 else 1.0
+                    except ValueError:
+                        sign = 1.0
+                elif re.search(r'/\s*-', raw):
+                    sign = -1.0
+                else:
+                    sign = 1.0
+                # Wind-speed variables keep the wind default; all others get the mex default.
+                if re.search(r'wind', raw, re.IGNORECASE):
+                    speed = sign * _DEFAULT_WIND_SPEED
+                else:
+                    speed = sign * _DEFAULT_MEX_SPEED
         if speed != 0.0:
             spins[(piece, axis)] = speed
 
@@ -794,9 +820,53 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
         if clips:
             pieces = [c[0].split('_', 1)[1] for c in clips]
             print(f"  Spin animation '{func_name}': {len(clips)} spinning pieces: {', '.join(pieces)}")
-            return clips
+            all_clips = clips
+            break
+    else:
+        all_clips = []
 
-    return None
+    # Extra scan: propeller/screw spins from StartMoving (ships & subs).
+    # These pieces are excluded from the main scan above but are the primary
+    # visual element for naval units.
+    _PROP_NAMES = ('prop', 'screw', 'fan')
+    moving_spins = _collect_spin_commands(bos_content, 'StartMoving')
+    prop_spins = {k: v for k, v in moving_spins.items()
+                  if any(frag in k[0] for frag in _PROP_NAMES)}
+    if prop_spins:
+        import math as _math2
+        from collections import defaultdict as _dd2
+        existing = {c[1][0].piece.lower() for c in all_clips} if all_clips else set()
+        piece_axes2: Dict[str, Dict[int, float]] = _dd2(dict)
+        for (piece, axis), speed in prop_spins.items():
+            if piece not in existing:
+                piece_axes2[piece][axis] = speed
+        STEP_DEG2 = 120.0
+        for piece, axes in piece_axes2.items():
+            periods = [abs(360.0 / spd) for spd in axes.values()]
+            duration = periods[0]
+            for p in periods[1:]:
+                a_ms = round(duration * 1000); b_ms = round(p * 1000)
+                from math import gcd
+                duration = (a_ms * b_ms // gcd(a_ms, b_ms)) / 1000.0
+            duration = min(duration, 24.0)
+            piece_tracks: List[BosTrack] = []
+            for axis, speed in axes.items():
+                total_deg = speed * duration
+                n_steps = max(8, int(_math2.ceil(abs(total_deg) / STEP_DEG2)))
+                kfs = [
+                    BosKeyframe(
+                        time=round(duration * i / n_steps, 4),
+                        value=round(total_deg * i / n_steps, 2)
+                    )
+                    for i in range(n_steps)
+                ]
+                piece_tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs))
+            all_clips.append((f"StartMoving_{piece}", piece_tracks))
+        if piece_axes2:
+            prop_names = ', '.join(sorted(piece_axes2.keys()))
+            print(f"  Propeller spin from StartMoving: {prop_names}")
+
+    return all_clips if all_clips else None
 
 
 _SLEEP_RE = re.compile(
