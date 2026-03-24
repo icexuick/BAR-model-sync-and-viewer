@@ -864,7 +864,7 @@ def convert_with_weapons(
                 'wheel', 'cradle', 'rotor', 'ring',
                 'arm', 'stand', 'drill', 'sphere', 'aim', 'spindle',
             )
-            has_walk = anim_name is not None
+            has_walk = result is not None
             spin_clips = extract_spin_animation(bos_content)
             if spin_clips:
                 # Keep only clips whose piece name is interesting, unless unit has a
