@@ -343,7 +343,7 @@
             directionalLight.shadow.camera.left = directionalLight.shadow.camera.bottom = -sCamSize;
             directionalLight.shadow.camera.right = directionalLight.shadow.camera.top = sCamSize;
             directionalLight.shadow.camera.updateProjectionMatrix();
-            const groundMat = new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.4 });
+            const groundMat = new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.4, depthWrite: false });
             groundMesh = new THREE.Mesh(new THREE.PlaneGeometry(maxDim*10, maxDim*10), groundMat);
             groundMesh.rotation.x = -Math.PI / 2;
             let canFly = false, isShip = false;

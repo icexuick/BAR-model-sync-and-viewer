@@ -15,7 +15,8 @@
       "Read(//d/BAR/BAR GL4 Lights-Distortions IceXuick/units/Legion/Seaconomy/**)",
       "Read(//c/Users/icema/.claude/projects/d--BAR-BAR-modelviewer/memory/**)",
       "WebFetch(domain:www.beyondallreason.info)",
-      "WebFetch(domain:help.webflow.com)"
+      "WebFetch(domain:help.webflow.com)",
+      "WebFetch(domain:unpkg.com)"
     ]
   }
 }
