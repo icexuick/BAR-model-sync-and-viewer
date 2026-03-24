@@ -202,8 +202,10 @@
         const rgbeLoader = new RGBELoader();
         Promise.all([
             rgbeLoader.loadAsync(selectedHdrUrl).then(t => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; return t; }).catch(e => { console.warn('HDR load failed, continuing without environment map:', e); return null; }),
-            textureLoader.loadAsync(diffuseURL), textureLoader.loadAsync(pbrURL),
-            textureLoader.loadAsync(normalURL), textureLoader.loadAsync(teamURL),
+            textureLoader.loadAsync(diffuseURL).catch(e => { console.warn('Diffuse texture failed:', e); return null; }),
+            textureLoader.loadAsync(pbrURL).catch(e => { console.warn('PBR texture failed:', e); return null; }),
+            textureLoader.loadAsync(normalURL).catch(e => { console.warn('Normal texture failed:', e); return null; }),
+            textureLoader.loadAsync(teamURL).catch(e => { console.warn('Team texture failed:', e); return null; }),
             gltfLoader.loadAsync(modelURL)
         ]).then(([env, diffuseMap, pbrMap, normalMap, teamMap, gltf]) => {
             loadingDone = true; clearTimeout(loadTimeout);
@@ -227,17 +229,22 @@
 
             const highlightUniform = { value: 0.0 };
             const dimUniform = { value: 0.0 };
-            window._barShaderSetup(THREE, material, {
-                pbrMap, teamColor, teamMap, pbrEmissiveIntensityValue, pulseMaxValue,
-                roughnessOffset: VIEWER_CONFIG.roughnessOffset, timeUniform, highlightUniform, dimUniform
-            });
+            if (window._barShaderSetup) {
+                window._barShaderSetup(THREE, material, {
+                    pbrMap, teamColor, teamMap, pbrEmissiveIntensityValue, pulseMaxValue,
+                    roughnessOffset: VIEWER_CONFIG.roughnessOffset, timeUniform, highlightUniform, dimUniform
+                });
+            }
             modelScene = gltf.scene;
 
             const weaponSummary = {};
-            const wpnResult = window._barWeaponsSetup(THREE, {
-                modelScene, unitName, material, camera, renderer, lightGroup,
-                shouldHideMesh, weaponSummaryOut: weaponSummary
-            });
+            let wpnResult = { spinPieceNames: new Set(), initFireAnims: null, meshWeaponMap: new Map() };
+            if (window._barWeaponsSetup) {
+                wpnResult = window._barWeaponsSetup(THREE, {
+                    modelScene, unitName, material, camera, renderer, lightGroup,
+                    shouldHideMesh, weaponSummaryOut: weaponSummary
+                });
+            }
             const { spinPieceNames, initFireAnims } = wpnResult;
             modelScene.traverse(child => {
                 if (child.isMesh) {
