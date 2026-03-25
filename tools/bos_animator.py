@@ -263,7 +263,8 @@ def parse_create_hide_pieces(bos_content: str) -> set:
     return {m.group(1).lower() for m in re.finditer(r'\bhide\s+(\w+)', clean, re.IGNORECASE)}
 
 
-def parse_create_now_rotations(bos_content: str, skip_activate_flypose: bool = False) -> Dict[Tuple, float]:
+def parse_create_now_rotations(bos_content: str, skip_activate_flypose: bool = False,
+                               include_translations: bool = False) -> Dict[Tuple, float]:
     """
     Parse rest-pose transforms for pieces. Tries two sources in order:
     1. 'turn/move piece to axis <value> now' in Create() — explicit immediate pose
@@ -272,18 +273,22 @@ def parse_create_now_rotations(bos_content: str, skip_activate_flypose: bool = F
       is_rotation=True  → degrees (turn)
       is_rotation=False → engine units (move)
     skip_activate_flypose: if True, skip the Activate() fly-pose scan (use for factories).
+    include_translations: if True, also include 'move ... now' translations from Create().
     """
     result: Dict[Tuple, float] = {}
 
-    # Source 1: Create() 'now' commands — rotations only.
-    # We intentionally skip 'move ... now' translations: those often stow/retract
-    # parts to a "hidden" start state (e.g. barrels pushed in), while the S3O
-    # geometry already represents the correct displayed rest pose.
+    # Source 1: Create() 'now' commands — rotations always, translations only when
+    # explicitly requested (some units have pieces with large S3O offsets that are
+    # corrected by move...now in Create, e.g. legeconv covers at y=-91 moved +100).
     body = _extract_function_body(bos_content, 'Create')
     if body:
         for m in _TURN_NOW_RE.finditer(body):
             key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
             result[key] = float(m.group(3))
+        if include_translations:
+            for m in _MOVE_NOW_RE.finditer(body):
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+                result[key] = float(m.group(3))
 
     # Source 2: activatescr() — fly pose for aircraft.
     # Aircraft use activatescr() (state=0 = flying) to fold wings/tilt engines to
