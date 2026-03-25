@@ -162,7 +162,7 @@ _ANIM_DURATION_OVERRIDE: Dict[str, float] = {
 
 # Units whose toggle animation is too complex for the current single-pass parser
 # (multi-phase sequential BOS with wait-for-turn sync points, corecont y-offsets, etc.)
-_TOGGLE_SKIP: set = {'corlab'}
+_TOGGLE_SKIP: set = {'legsolar', 'corlab'}
 
 # Units whose activate-loop animation should be skipped entirely
 # (e.g. FiringMode with 0.02s duration that jitters turret pieces)
@@ -849,7 +849,7 @@ def convert_with_weapons(
                 # Only use Activate() fly-pose scan for units that can actually fly.
                 # Some units have pieces with extreme S3O offsets corrected by
                 # 'move ... now' in Create() — enable translations for those.
-                _NEEDS_CREATE_TRANSLATIONS = {'legeconv', 'legsolar'}
+                _NEEDS_CREATE_TRANSLATIONS = {'legeconv'}
                 now_rots = parse_create_now_rotations(
                     bos_content, skip_activate_flypose=not can_fly,
                     include_translations=unit_name.lower() in _NEEDS_CREATE_TRANSLATIONS)
@@ -992,7 +992,7 @@ def convert_with_weapons(
                     # Units that are known to start open despite no explicit BOS open call
                     _FORCE_AUTOPLAY_OPEN = {'armpb', 'corasy', 'leganavymissileship'}
                     # Units that are known to start closed despite no explicit BOS closed call
-                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'legeconv', 'legsolar'}
+                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'legeconv'}
                     _CLOSED_IN_CREATE = [
                         r'start-script\s+OpenCloseAnim\s*\(\s*0\s*\)',
                         r'start-script\s+Stop\b',
