@@ -39,6 +39,7 @@ import hashlib
 import urllib.request
 import numpy as np
 from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 
 from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
@@ -1059,68 +1060,208 @@ def convert_with_weapons(
     return builder.build_glb()
 
 
+@dataclass
+class UnitDefInfo:
+    """Parsed info from a unit's .lua definition file."""
+    objectname: Optional[str] = None   # e.g. "Units/ARMCOM.s3o"
+    script: Optional[str] = None       # e.g. "Units/ARMCOM_lus.lua" or "Units/CORCOM.cob"
+    can_fly: bool = False
+    is_ship: bool = False
+    lua_path: Optional[str] = None     # path to the unitdef file itself
+
+
+# Cache: {(bar_dir, unit_name_lower): UnitDefInfo}
+_unitdef_cache: Dict[tuple, UnitDefInfo] = {}
+
+# Cache: bar_dir → {unit_name_lower: lua_path}
+_unitdef_index_cache: Dict[str, Dict[str, str]] = {}
+
+
+def _build_unitdef_index(bar_dir: str) -> Dict[str, str]:
+    """Build index of all unitdef .lua files: {unit_name_lower: full_path}."""
+    if bar_dir in _unitdef_index_cache:
+        return _unitdef_index_cache[bar_dir]
+
+    index: Dict[str, str] = {}
+    units_dir = os.path.join(bar_dir, 'units')
+    if os.path.isdir(units_dir):
+        for root, _, files in os.walk(units_dir):
+            for fn in files:
+                if fn.lower().endswith('.lua'):
+                    name = os.path.splitext(fn)[0].lower()
+                    index[name] = os.path.join(root, fn)
+
+    _unitdef_index_cache[bar_dir] = index
+    return index
+
+
+def find_unitdef(bar_dir: str, unit_name: str) -> Optional[str]:
+    """Find the unitdef .lua file for a unit, searching recursively in units/."""
+    index = _build_unitdef_index(bar_dir)
+    return index.get(unit_name.lower())
+
+
+def parse_unitdef(bar_dir: str, unit_name: str) -> UnitDefInfo:
+    """
+    Parse a unit's .lua definition file to extract objectname, script, canfly, etc.
+    Results are cached per (bar_dir, unit_name).
+    """
+    cache_key = (bar_dir, unit_name.lower())
+    if cache_key in _unitdef_cache:
+        return _unitdef_cache[cache_key]
+
+    info = UnitDefInfo()
+    lua_path = find_unitdef(bar_dir, unit_name)
+    if not lua_path:
+        _unitdef_cache[cache_key] = info
+        return info
+
+    info.lua_path = lua_path
+    try:
+        with open(lua_path, 'r', errors='replace') as f:
+            content = f.read()
+    except Exception:
+        _unitdef_cache[cache_key] = info
+        return info
+
+    # objectname = "Units/ARMCOM.s3o" (sometimes without .s3o extension)
+    m = re.search(r'\bobjectname\s*=\s*["\']([^"\']+)["\']', content, re.IGNORECASE)
+    if m:
+        obj = m.group(1)
+        if not obj.lower().endswith('.s3o'):
+            obj += '.s3o'
+        info.objectname = obj
+
+    # script = "Units/ARMCOM_lus.lua" or "Units/CORCOM.cob"
+    m = re.search(r'\bscript\s*=\s*["\']([^"\']+)["\']', content, re.IGNORECASE)
+    if m:
+        info.script = m.group(1)
+
+    # canfly = true
+    if re.search(r'\bcanfly\s*=\s*true\b', content, re.IGNORECASE):
+        info.can_fly = True
+
+    # movementclass = "BOAT4" / "UBOAT" / "HOVER"
+    if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT|HOVER)\d*["\']', content, re.IGNORECASE):
+        info.is_ship = True
+
+    _unitdef_cache[cache_key] = info
+    return info
+
+
 def unit_can_fly(bar_dir: str, unit_name: str) -> bool:
     """Return True if the unit's def file contains canFly = true."""
-    units_dir = os.path.join(bar_dir, 'units')
-    for lua_path in [
-        os.path.join(units_dir, unit_name + '.lua'),
-        os.path.join(units_dir, unit_name.lower() + '.lua'),
-    ]:
-        if os.path.isfile(lua_path):
-            try:
-                with open(lua_path, 'r', errors='replace') as f:
-                    content = f.read()
-                if re.search(r'\bcanfly\s*=\s*true\b', content, re.IGNORECASE):
-                    return True
-            except Exception:
-                pass
-    return False
+    return parse_unitdef(bar_dir, unit_name).can_fly
 
 
 def unit_is_ship(bar_dir: str, unit_name: str) -> bool:
     """Return True if the unit's def file has a BOAT, UBOAT, or HOVER movementclass."""
-    _SHIP_RE = re.compile(r'\bmovementclass\s*=\s*["\'](?:U?BOAT|HOVER)\d*["\']', re.IGNORECASE)
-    units_dir = os.path.join(bar_dir, 'units')
-    for lua_path in [
-        os.path.join(units_dir, unit_name + '.lua'),
-        os.path.join(units_dir, unit_name.lower() + '.lua'),
-    ]:
-        if os.path.isfile(lua_path):
-            try:
-                with open(lua_path, 'r', errors='replace') as f:
-                    content = f.read()
-                if _SHIP_RE.search(content):
-                    return True
-            except Exception:
-                pass
-    # Fallback: search recursively in units dir
-    for root, dirs, files in os.walk(units_dir):
-        for fn in files:
-            if fn.lower() == unit_name.lower() + '.lua':
-                try:
-                    with open(os.path.join(root, fn), 'r', errors='replace') as f:
-                        content = f.read()
-                    if _SHIP_RE.search(content):
-                        return True
-                except Exception:
-                    pass
-    return False
+    return parse_unitdef(bar_dir, unit_name).is_ship
+
+
+def _resolve_script_path(bar_dir: str, script_ref: str) -> Optional[str]:
+    """
+    Resolve a script reference from a unitdef (e.g. "Units/ARMCOM_lus.lua")
+    to an actual file path. The unitdef 'script' field points to .cob but there
+    is always a matching .bos (source) file we prefer for parsing.
+    """
+    scripts_dir = os.path.join(bar_dir, 'scripts')
+
+    # Strip leading path component if it matches scripts subdir structure
+    # e.g. "Units/ARMCOM_lus.lua" → look in scripts/Units/ARMCOM_lus.lua
+    candidates = []
+
+    # The .cob is compiled; we want the source .bos or .lua
+    base, ext = os.path.splitext(script_ref)
+    if ext.lower() == '.cob':
+        # Prefer .bos source, fall back to .lua
+        candidates.append(base + '.bos')
+        candidates.append(base + '.lua')
+    elif ext.lower() == '.lua':
+        # For .lua scripts, try .bos first (for weapon parsing), then .lua
+        candidates.append(base + '.bos')
+        candidates.append(script_ref)
+    else:
+        candidates.append(script_ref)
+
+    for cand in candidates:
+        # Try scripts/{candidate} directly
+        full = os.path.join(scripts_dir, cand)
+        if os.path.isfile(full):
+            return full
+        # Try case-insensitive match in scripts/Units/
+        cand_lower = os.path.basename(cand).lower()
+        units_scripts = os.path.join(scripts_dir, 'Units')
+        if os.path.isdir(units_scripts):
+            for fn in os.listdir(units_scripts):
+                if fn.lower() == cand_lower:
+                    return os.path.join(units_scripts, fn)
+
+    return None
 
 
 def find_script_for_unit(bar_dir: str, unit_name: str) -> Optional[str]:
-    """Find the BOS or Lua script for a given unit in the BAR directory."""
+    """
+    Find the BOS or Lua animation script for a unit.
+    Strategy:
+    1. Read unitdef .lua → get 'script' field → resolve to actual file
+    2. Fallback: try scripts/Units/{unit_name}.bos then .lua
+    """
+    # 1. Unitdef-based lookup
+    udef = parse_unitdef(bar_dir, unit_name)
+    if udef.script:
+        resolved = _resolve_script_path(bar_dir, udef.script)
+        if resolved:
+            return resolved
+
+    # 2. Fallback: direct name match
     scripts_dir = os.path.join(bar_dir, 'scripts', 'Units')
     if not os.path.isdir(scripts_dir):
         scripts_dir = os.path.join(bar_dir, 'scripts')
 
-    # Try .bos first, then .lua
     for ext in ['.bos', '.lua']:
         path = os.path.join(scripts_dir, unit_name + ext)
         if os.path.isfile(path):
             return path
 
-    # Some units use a different script name via unitdef
-    # We could parse the unitdef, but for now just check common patterns
+    return None
+
+
+def find_s3o_for_unit(bar_dir: str, unit_name: str) -> Optional[str]:
+    """
+    Find the S3O model file for a unit.
+    Strategy:
+    1. Read unitdef .lua → get 'objectname' field → resolve to actual file
+    2. Fallback: try objects3d/{unit_name}.s3o and objects3d/Units/{unit_name}.s3o
+    """
+    objects_dir = os.path.join(bar_dir, 'objects3d')
+
+    # 1. Unitdef-based lookup
+    udef = parse_unitdef(bar_dir, unit_name)
+    if udef.objectname:
+        # objectname like "Units/ARMCOM.s3o"
+        full = os.path.join(objects_dir, udef.objectname)
+        if os.path.isfile(full):
+            return full
+        # Case-insensitive search
+        obj_lower = udef.objectname.lower()
+        for root, _, files in os.walk(objects_dir):
+            for fn in files:
+                if os.path.join(root, fn).replace('\\', '/').lower().endswith(obj_lower.replace('\\', '/')):
+                    return os.path.join(root, fn)
+
+    # 2. Fallback: direct name match
+    for subdir in ['', 'Units']:
+        path = os.path.join(objects_dir, subdir, unit_name + '.s3o')
+        if os.path.isfile(path):
+            return path
+        # Case-insensitive
+        check_dir = os.path.join(objects_dir, subdir) if subdir else objects_dir
+        if os.path.isdir(check_dir):
+            for fn in os.listdir(check_dir):
+                if fn.lower() == unit_name.lower() + '.s3o':
+                    return os.path.join(check_dir, fn)
+
     return None
 
 
@@ -1129,10 +1270,12 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                    info_only: bool = False,
                    weapon_defs: Optional[Dict[int, str]] = None,
                    can_fly: bool = False,
-                   is_ship: bool = False) -> Optional[str]:
+                   is_ship: bool = False,
+                   unit_name: Optional[str] = None) -> Optional[str]:
     """Convert a single S3O file to GLB."""
     model = parse_s3o(s3o_path)
-    unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
+    if unit_name is None:
+        unit_name = os.path.splitext(os.path.basename(s3o_path))[0]
 
     # Piece name fragments that are always hidden in the viewer regardless of unit.
     # These are cosmetic/award pieces shown by in-game Lua widgets, not BOS Create().
@@ -1175,10 +1318,18 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
         weapon_script_path = script_path
         if script_path.lower().endswith('.lua'):
             bos_dir = os.path.dirname(script_path)
-            bos_candidate = os.path.join(bos_dir, unit_name + '.bos')
-            if os.path.isfile(bos_candidate):
-                weapon_script_path = bos_candidate
-                print(f"  Weapon parsing from BOS: {bos_candidate}")
+            # Derive BOS name from script filename (e.g. armcom_lus.lua → armcom.bos)
+            script_base = os.path.splitext(os.path.basename(script_path))[0]
+            script_base = re.sub(r'_lus$', '', script_base, flags=re.IGNORECASE)
+            bos_candidates = [
+                os.path.join(bos_dir, script_base + '.bos'),
+                os.path.join(bos_dir, unit_name + '.bos'),
+            ]
+            for bos_candidate in bos_candidates:
+                if os.path.isfile(bos_candidate):
+                    weapon_script_path = bos_candidate
+                    print(f"  Weapon parsing from BOS: {bos_candidate}")
+                    break
         weapon_info = parse_unit_script(weapon_script_path)
         weapon_info.print_summary()
         # Auto-hide pieces that BOS Create() hides at game start (medals, effects).
@@ -1318,10 +1469,14 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
             if not is_lua_script(_lua_check):
                 # Not a real LUS script — try BOS fallback
                 bos_dir = os.path.dirname(script_path)
-                bos_candidate = os.path.join(bos_dir, unit_name + '.bos')
-                if os.path.isfile(bos_candidate):
-                    anim_script_path = bos_candidate
-                    print(f"  Animation script (BOS fallback): {bos_candidate}")
+                _sb = os.path.splitext(os.path.basename(script_path))[0]
+                _sb = re.sub(r'_lus$', '', _sb, flags=re.IGNORECASE)
+                for _bos_cand in [os.path.join(bos_dir, _sb + '.bos'),
+                                  os.path.join(bos_dir, unit_name + '.bos')]:
+                    if os.path.isfile(_bos_cand):
+                        anim_script_path = _bos_cand
+                        print(f"  Animation script (BOS fallback): {_bos_cand}")
+                        break
             else:
                 print(f"  Using LUS animation script: {script_path}")
         except Exception:
@@ -1337,60 +1492,72 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
 
 
 def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
-    """Batch convert all S3O files in a BAR game directory (including subdirs)."""
+    """
+    Batch convert units in a BAR game directory.
+
+    Unitdef-driven: reads every .lua in units/ to get the correct objectname
+    (S3O model) and script (BOS/LUS) for each unit. This ensures units that
+    share models (e.g. armdecom → ARMCOM.s3o) are converted correctly.
+    GLB output is always named after the unit (not the model).
+    """
     import fnmatch
+    units_dir = os.path.join(bar_dir, 'units')
     objects_dir = os.path.join(bar_dir, 'objects3d')
+    if not os.path.isdir(units_dir):
+        print(f"Error: units directory not found at {units_dir}")
+        return
     if not os.path.isdir(objects_dir):
         print(f"Error: objects3d directory not found at {objects_dir}")
         return
 
-    # Walk all subdirectories to find .s3o files.
-    # Skip variant subdirs (event/, aprilfools/, scavboss/, etc.) — only use
-    # files directly under objects3d/ or objects3d/Units/.
-    _SKIP_DIRS = {'event', 'aprilfools', 'scavboss', 'lups', 'test'}
-    s3o_paths = []
-    for root, dirs, files in os.walk(objects_dir):
-        # Prune skipped subdirs in-place so os.walk won't descend into them
-        dirs[:] = [d for d in dirs if d.lower() not in _SKIP_DIRS]
-        for f in files:
-            if f.lower().endswith('.s3o'):
-                s3o_paths.append(os.path.join(root, f))
-    s3o_paths.sort()
+    # Build list of all units from unitdef files
+    _EXCLUDE_FRAGMENTS = ('_dead', 'wreck', 'debris', '_scav')
+    index = _build_unitdef_index(bar_dir)
+    unit_names = sorted(index.keys())
 
-    # Always exclude dead/wreck/debris models and commander units with custom animations
-    _EXCLUDE = ('_dead', 'wreck', 'debris')
-    _EXCLUDE_EXACT = {'armcom', 'corcom'}
-    s3o_paths = [p for p in s3o_paths
-                 if not any(x in os.path.basename(p).lower() for x in _EXCLUDE)
-                 and os.path.splitext(os.path.basename(p))[0].lower() not in _EXCLUDE_EXACT]
+    # Filter out dead/wreck/debris variants
+    unit_names = [n for n in unit_names
+                  if not any(x in n for x in _EXCLUDE_FRAGMENTS)]
 
     if unit_filter:
-        # Support glob patterns like "arm*"
-        s3o_paths = [p for p in s3o_paths
-                     if fnmatch.fnmatch(os.path.splitext(os.path.basename(p))[0].lower(),
-                                        unit_filter.lower())]
+        unit_names = [n for n in unit_names
+                      if fnmatch.fnmatch(n, unit_filter.lower())]
 
-    print(f"Found {len(s3o_paths)} S3O files to convert")
+    print(f"Found {len(unit_names)} unit definitions to convert")
     os.makedirs(output_dir, exist_ok=True)
 
-    success, failed = 0, 0
-    for s3o_path in s3o_paths:
-        filename = os.path.basename(s3o_path)
-        unit_name = os.path.splitext(filename)[0]
+    success, failed, skipped = 0, 0, 0
+    for unit_name in unit_names:
+        # Resolve S3O model via unitdef
+        s3o_path = find_s3o_for_unit(bar_dir, unit_name)
+        if not s3o_path:
+            # Fallback: try direct name match
+            for subdir in ['', 'Units']:
+                candidate = os.path.join(objects_dir, subdir, unit_name + '.s3o')
+                if os.path.isfile(candidate):
+                    s3o_path = candidate
+                    break
+        if not s3o_path:
+            udef = parse_unitdef(bar_dir, unit_name)
+            print(f"  Skipping {unit_name}: no S3O found (objectname={udef.objectname})")
+            skipped += 1
+            continue
+
         glb_path = os.path.join(output_dir, unit_name + '.glb')
         script_path = find_script_for_unit(bar_dir, unit_name)
-        can_fly = unit_can_fly(bar_dir, unit_name)
-        is_ship = unit_is_ship(bar_dir, unit_name)
+        udef = parse_unitdef(bar_dir, unit_name)
 
         try:
-            convert_single(s3o_path, script_path, glb_path, can_fly=can_fly, is_ship=is_ship)
+            convert_single(s3o_path, script_path, glb_path,
+                           can_fly=udef.can_fly, is_ship=udef.is_ship,
+                           unit_name=unit_name)
             success += 1
         except Exception as e:
-            print(f"  ERROR converting {filename}: {e}")
+            print(f"  ERROR converting {unit_name}: {e}")
             failed += 1
 
     print(f"\n{'='*60}")
-    print(f"Batch conversion complete: {success} success, {failed} failed")
+    print(f"Batch conversion complete: {success} success, {failed} failed, {skipped} skipped (no S3O)")
 
 
 BAR_RAW = "https://github.com/beyond-all-reason/Beyond-All-Reason/raw/refs/heads/master"
