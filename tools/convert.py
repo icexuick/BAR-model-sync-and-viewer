@@ -1491,7 +1491,8 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     return output_path
 
 
-def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
+def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None,
+                  folder_filter: str = None):
     """
     Batch convert units in a BAR game directory.
 
@@ -1499,6 +1500,9 @@ def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
     (S3O model) and script (BOS/LUS) for each unit. This ensures units that
     share models (e.g. armdecom → ARMCOM.s3o) are converted correctly.
     GLB output is always named after the unit (not the model).
+
+    folder_filter: only include units whose unitdef path contains this string
+                   (case-insensitive). E.g. "Scavengers" to only convert scav units.
     """
     import fnmatch
     units_dir = os.path.join(bar_dir, 'units')
@@ -1511,13 +1515,19 @@ def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None):
         return
 
     # Build list of all units from unitdef files
-    _EXCLUDE_FRAGMENTS = ('_dead', 'wreck', 'debris', '_scav')
+    _EXCLUDE_FRAGMENTS = ('_dead', 'wreck', 'debris')
     index = _build_unitdef_index(bar_dir)
     unit_names = sorted(index.keys())
 
     # Filter out dead/wreck/debris variants
     unit_names = [n for n in unit_names
                   if not any(x in n for x in _EXCLUDE_FRAGMENTS)]
+
+    # Filter by folder (e.g. "Scavengers" to only convert scav units)
+    if folder_filter:
+        folder_lower = folder_filter.lower()
+        unit_names = [n for n in unit_names
+                      if folder_lower in index[n].lower()]
 
     if unit_filter:
         unit_names = [n for n in unit_names
@@ -1836,7 +1846,8 @@ def main():
     parser.add_argument('--bar-dir', help='BAR game directory for batch conversion')
     parser.add_argument('--output-dir', default='./glb_output',
                         help='Output directory for batch conversion')
-    parser.add_argument('--filter', help='Unit name filter for batch mode')
+    parser.add_argument('--filter', help='Unit name filter for batch mode (glob pattern, e.g. "arm*")')
+    parser.add_argument('--folder', help='Only convert units whose unitdef is in this folder (e.g. "Scavengers")')
     parser.add_argument('--info-only', action='store_true',
                         help='Only show info, do not convert')
     parser.add_argument('--local', action='store_true',
@@ -1888,7 +1899,8 @@ def main():
             force=args.force,
         )
     elif args.bar_dir:
-        batch_convert(args.bar_dir, args.output_dir, args.filter)
+        batch_convert(args.bar_dir, args.output_dir, args.filter,
+                      folder_filter=getattr(args, 'folder', None))
     elif args.s3o:
         convert_single(args.s3o, args.script, args.output, args.info_only)
     else:
