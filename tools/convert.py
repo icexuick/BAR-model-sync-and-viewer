@@ -1164,7 +1164,17 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     weapon_info = None
     if script_path and os.path.isfile(script_path):
         print(f"\n  Script: {script_path}")
-        weapon_info = parse_unit_script(script_path)
+        # For weapon parsing, use the BOS file if the script is Lua
+        # (BOS parser doesn't understand Lua syntax, but weapon metadata
+        # comes from QueryWeapon/AimWeapon which are in BOS format).
+        weapon_script_path = script_path
+        if script_path.lower().endswith('.lua'):
+            bos_dir = os.path.dirname(script_path)
+            bos_candidate = os.path.join(bos_dir, unit_name + '.bos')
+            if os.path.isfile(bos_candidate):
+                weapon_script_path = bos_candidate
+                print(f"  Weapon parsing from BOS: {bos_candidate}")
+        weapon_info = parse_unit_script(weapon_script_path)
         weapon_info.print_summary()
         # Auto-hide pieces that BOS Create() hides at game start (medals, effects).
         # Only apply to mesh-less pieces (verts=0) — structural geometry that is
