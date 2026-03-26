@@ -730,6 +730,432 @@ def extract_lua_hide_pieces(lua_content: str) -> Set[str]:
     return hidden
 
 
+def _inline_lua_calls(body: str, lua_content: str, depth: int = 3) -> str:
+    """
+    Inline simple function calls in a Lua body.
+    Replaces `funcname()` with the body of `function funcname()...end`.
+    Only handles no-argument calls. Recurses up to `depth` levels.
+    """
+    if depth <= 0:
+        return body
+
+    # Find bare function calls: word() that are not Turn/Move/Sleep/etc
+    _SKIP = {'turn', 'move', 'Turn', 'Move', 'Spin', 'Sleep', 'Show', 'Hide',
+             'Signal', 'SetSignalMask', 'StartThread', 'WaitForTurn', 'WaitForMove',
+             'piece', 'print', 'return', 'Spring', 'math', 'pairs', 'ipairs',
+             'require', 'include', 'dofile'}
+
+    call_re = re.compile(r'\b(\w+)\s*\(\s*\)')
+    changed = True
+    iterations = 0
+    while changed and iterations < depth:
+        changed = False
+        iterations += 1
+        for m in call_re.finditer(body):
+            func_name = m.group(1)
+            if func_name in _SKIP:
+                continue
+            # Try to find the function definition
+            func_body = _extract_lua_function_body(lua_content, func_name)
+            if func_body:
+                body = body[:m.start()] + func_body + body[m.end():]
+                changed = True
+                break  # restart after replacement since positions shifted
+
+    return body
+
+
+def extract_lua_fire_animations(lua_content: str) -> Optional[List[Tuple[str, List[BosTrack], None]]]:
+    """
+    Extract fire/recoil animations from script.FireWeapon().
+
+    LUS FireWeapon uses a combined variant dispatching on weapons[weapon]:
+        function script.FireWeapon(weapon)
+            if weapons[weapon] == "dgun" then
+                turn(luparm, 1, 20)          -- instant (no speed)
+                move(barrel, 2, -1.5)        -- instant
+                turn(luparm, 1, 5, 100)      -- animated (has speed, in degrees/s)
+                move(barrel, 2, 0, 5)        -- animated (has speed, in engine units/s)
+            end
+        end
+
+    Instant commands (no speed) → keyframe at t=0.
+    Speed commands → keyframe at t=duration (based on distance/speed).
+
+    Returns list of (clip_name, tracks, None) triples compatible with BOS FireClipInfo.
+    The third element is always None (no rotary support for LUS yet).
+    """
+    piece_map = _parse_piece_names(lua_content)
+    convention = _detect_turn_convention(lua_content)
+
+    # Parse weapons table: {number: type_name}
+    weapons_table: Dict[int, str] = {}
+    wt_match = _WEAPON_TABLE_RE.search(lua_content)
+    if wt_match:
+        for em in _WEAPON_ENTRY_RE.finditer(wt_match.group(1)):
+            weapons_table[int(em.group(1))] = em.group(2)
+
+    # Extract FireWeapon body
+    fire_body = _extract_lua_function_body(lua_content, 'script.FireWeapon')
+    if not fire_body:
+        # Try numbered variants: script.FireWeapon1, etc.
+        fire_body = _extract_lua_function_body(lua_content, 'FireWeapon1')
+
+    if not fire_body:
+        return None
+
+    # Split into weapon-type branches
+    branches: Dict[str, str] = {}
+
+    # Combined variant: weapons[weapon] == "type" branches
+    branch_positions = list(re.finditer(
+        r'weapons\s*\[\s*weapon\s*\]\s*==\s*["\'](\w+)["\']', fire_body))
+
+    if branch_positions:
+        for i, bm in enumerate(branch_positions):
+            weapon_type = bm.group(1)
+            start = bm.end()
+            if i + 1 < len(branch_positions):
+                end = branch_positions[i + 1].start()
+            else:
+                end = len(fire_body)
+            # Strip "then" and leading whitespace
+            branch_body = re.sub(r'^\s*then\s*', '', fire_body[start:end])
+            branches[weapon_type] = _inline_lua_calls(branch_body, lua_content)
+    else:
+        # Single body (no dispatch) — assign to weapon 1
+        branches['weapon_1'] = _inline_lua_calls(fire_body, lua_content)
+
+    # Regex for turn/move WITH optional speed capture
+    # lowercase turn(piece, axis, goal) or turn(piece, axis, goal, speed)
+    _TURN_FIRE_RE = re.compile(
+        r'\bturn\s*\(\s*(\w+)\s*,\s*(\d)\s*,\s*([-\d.]+)(?:\s*,\s*([-\d.]+))?\s*\)',
+        re.IGNORECASE
+    )
+    # lowercase move(piece, axis, goal) or move(piece, axis, goal, speed)
+    _MOVE_FIRE_RE = re.compile(
+        r'\bmove\s*\(\s*(\w+)\s*,\s*(\d)\s*,\s*([-\d.]+)(?:\s*,\s*([-\d.]+))?\s*\)',
+        re.IGNORECASE
+    )
+    # uppercase Turn(piece, axis_const, goal) or Turn(piece, axis_const, goal, speed)
+    _TURN_UPPER_FIRE_RE = re.compile(
+        r'\bTurn\s*\(\s*(\w+)\s*,\s*([xyz]_axis|\d)\s*,\s*([-\d.e]+)(?:\s*,\s*([-\d.e]+))?\s*\)'
+    )
+    # uppercase Move(piece, axis_const, goal) or Move(piece, axis_const, goal, speed)
+    _MOVE_UPPER_FIRE_RE = re.compile(
+        r'\bMove\s*\(\s*(\w+)\s*,\s*([xyz]_axis|\d)\s*,\s*([-\d.e]+)(?:\s*,\s*([-\d.e]+))?\s*\)'
+    )
+    # Sleep(N) in ms
+    _SLEEP_FIRE_RE = re.compile(r'\bSleep\s*\(\s*(\d+)\s*\)', re.IGNORECASE)
+
+    clips = []
+
+    # Find the lowest weapon number for each weapon type
+    type_to_min_num: Dict[str, int] = {}
+    for wnum, wtype in weapons_table.items():
+        if wtype not in type_to_min_num or wnum < type_to_min_num[wtype]:
+            type_to_min_num[wtype] = wnum
+
+    for weapon_type, body in branches.items():
+        # Strip Lua comments
+        body_clean = re.sub(r'--[^\n]*', '', body)
+
+        # Tokenize: collect commands and sleeps in order
+        tokens = []  # ('cmd', key, target, speed_or_None) or ('sleep', ms)
+
+        # Find all commands and sleeps with their positions
+        all_matches = []
+
+        if convention == 'lower':
+            for m in _TURN_FIRE_RE.finditer(body_clean):
+                var_name = m.group(1)
+                piece_name = piece_map.get(var_name, var_name).lower()
+                axis = _resolve_axis(m.group(2))
+                goal_deg = float(m.group(3))
+                speed_str = m.group(4)
+
+                # Z-axis handling for the lowercase wrapper:
+                # With speed: wrapper negates z → BOS convention → pass raw degrees
+                # Without speed: wrapper does NOT negate z → need pre-negate for builder
+                if axis == 2 and speed_str is None:
+                    goal_deg = -goal_deg
+
+                if speed_str is not None:
+                    # Speed in degrees/second (the wrapper converts to rad)
+                    speed = float(speed_str)
+                else:
+                    speed = None  # instant
+                all_matches.append((m.start(), 'cmd', (piece_name, axis, True),
+                                    goal_deg, speed))
+
+            for m in _MOVE_FIRE_RE.finditer(body_clean):
+                var_name = m.group(1)
+                piece_name = piece_map.get(var_name, var_name).lower()
+                axis = _resolve_axis(m.group(2))
+                goal = float(m.group(3))
+                speed_str = m.group(4)
+                speed = float(speed_str) if speed_str is not None else None
+                all_matches.append((m.start(), 'cmd', (piece_name, axis, False),
+                                    goal, speed))
+        else:
+            # uppercase convention
+            for m in _TURN_UPPER_FIRE_RE.finditer(body_clean):
+                var_name = m.group(1)
+                piece_name = piece_map.get(var_name, var_name).lower()
+                axis = _resolve_axis(m.group(2))
+                goal_rad = float(m.group(3))
+                goal_deg = math.degrees(goal_rad)
+                speed_str = m.group(4)
+
+                # Uppercase Turn never negates z → pre-negate for builder
+                if axis == 2:
+                    goal_deg = -goal_deg
+
+                if speed_str is not None:
+                    speed = math.degrees(float(speed_str))
+                else:
+                    speed = None
+                all_matches.append((m.start(), 'cmd', (piece_name, axis, True),
+                                    goal_deg, speed))
+
+            for m in _MOVE_UPPER_FIRE_RE.finditer(body_clean):
+                var_name = m.group(1)
+                piece_name = piece_map.get(var_name, var_name).lower()
+                axis = _resolve_axis(m.group(2))
+                goal = float(m.group(3))
+                speed_str = m.group(4)
+                speed = float(speed_str) if speed_str is not None else None
+                all_matches.append((m.start(), 'cmd', (piece_name, axis, False),
+                                    goal, speed))
+
+        for m in _SLEEP_FIRE_RE.finditer(body_clean):
+            all_matches.append((m.start(), 'sleep', int(m.group(1))))
+
+        # Sort by position in source
+        all_matches.sort(key=lambda x: x[0])
+
+        # Build tokens list
+        for item in all_matches:
+            if item[1] == 'cmd':
+                tokens.append(('cmd', item[2], item[3], item[4]))
+            elif item[1] == 'sleep':
+                tokens.append(('sleep', item[2]))
+
+        if not tokens:
+            continue
+
+        # Walk tokens, build keyframes (same strategy as BOS _parse_fire_body_to_tracks)
+        current_pose: Dict[tuple, float] = {}
+        track_kfs: Dict[tuple, List[BosKeyframe]] = {}
+        t_cursor = 0.0
+        pending_cmds: List[tuple] = []  # (key, target, speed_or_None)
+
+        def flush_pending():
+            nonlocal t_cursor
+            if not pending_cmds:
+                return
+            max_end_t = t_cursor
+            for key, target, speed in pending_cmds:
+                start_val = current_pose.get(key, 0.0)
+                if key not in track_kfs:
+                    track_kfs[key] = [BosKeyframe(time=0.0, value=start_val)]
+                else:
+                    last = track_kfs[key][-1]
+                    if last.time < t_cursor - 0.001:
+                        track_kfs[key].append(BosKeyframe(time=t_cursor, value=last.value))
+
+                if speed is None:
+                    # Instant (no speed) — jump at current time
+                    end_t = t_cursor + 0.001
+                elif speed > 0:
+                    cmd_dur = abs(target - start_val) / speed
+                    end_t = t_cursor + cmd_dur
+                else:
+                    end_t = t_cursor
+
+                track_kfs[key].append(BosKeyframe(time=end_t, value=target))
+                current_pose[key] = target
+                if end_t > max_end_t:
+                    max_end_t = end_t
+            pending_cmds.clear()
+            t_cursor = max_end_t
+
+        for tok in tokens:
+            if tok[0] == 'cmd':
+                _, key, target, speed = tok
+                pending_cmds.append((key, target, speed))
+            elif tok[0] == 'sleep':
+                flush_pending()
+                t_cursor += tok[1] / 1000.0
+
+        flush_pending()
+
+        if not track_kfs:
+            continue
+
+        # Ensure all tracks return to rest (0) at the end
+        for key, kfs in track_kfs.items():
+            last_val = kfs[-1].value
+            if abs(last_val) > 0.001:
+                is_rot = key[2]
+                default_speed = 90.0 if is_rot else 5.0  # deg/s or units/s
+                return_dur = abs(last_val) / default_speed
+                # Look for last cmd targeting near-0 to get its speed
+                for tok in reversed(tokens):
+                    if tok[0] == 'cmd' and tok[1] == key and abs(tok[2]) < 0.001:
+                        if tok[3] is not None and tok[3] > 0:
+                            return_dur = abs(last_val) / tok[3]
+                        break
+                t_end = kfs[-1].time + 0.01
+                kfs.append(BosKeyframe(time=t_end, value=last_val))
+                kfs.append(BosKeyframe(time=t_end + return_dur, value=0.0))
+
+        # Compute total duration
+        total_duration = max(kf.time for kfs in track_kfs.values() for kf in kfs)
+        if total_duration < 0.01:
+            total_duration = 0.5
+
+        # Build tracks
+        tracks: List[BosTrack] = []
+        for key, kfs in track_kfs.items():
+            if len(kfs) < 2:
+                continue
+            if all(abs(kf.value) < 0.001 for kf in kfs):
+                continue
+            piece, axis, is_rot = key
+            tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot,
+                                   keyframes=kfs))
+
+        if not tracks:
+            continue
+
+        # Determine weapon number for clip name
+        weapon_num = type_to_min_num.get(weapon_type, len(clips) + 1)
+        clip_name = f'Fire_{weapon_num}'
+
+        pieces = sorted({t.piece for t in tracks})
+        print(f"  LUA Fire animation '{clip_name}' ({weapon_type}): {len(tracks)} tracks, "
+              f"{total_duration:.2f}s, pieces: {', '.join(pieces)}")
+
+        clips.append((clip_name, tracks, None))
+
+    return clips if clips else None
+
+
+def extract_lua_create_now_rotations(lua_content: str,
+                                     include_translations: bool = False) -> Dict[tuple, float]:
+    """
+    Extract rest-pose transforms from script.Create() instant Turn/Move commands.
+
+    In LUS, 'instant' means Turn/Move called without a speed argument, or with
+    a very high speed (9999+). These set the initial pose of pieces.
+
+    Also falls back to StopWalking() for significant rest-pose rotations (>20°),
+    mirroring the BOS parse_create_now_rotations behaviour.
+
+    Returns {(piece, axis, is_rotation): value_in_degrees_or_units}.
+    """
+    piece_map = _parse_piece_names(lua_content)
+    convention = _detect_turn_convention(lua_content)
+    result: Dict[tuple, float] = {}
+
+    # Regex for Turn/Move with optional speed (to detect instant vs animated)
+    _TURN_CREATE_RE = re.compile(
+        r'\bTurn\s*\(\s*(\w+)\s*,\s*([xyz]_axis|\d)\s*,\s*([-\d.e]+)(?:\s*,\s*([-\d.e]+))?\s*\)'
+    )
+    _MOVE_CREATE_RE = re.compile(
+        r'\bMove\s*\(\s*(\w+)\s*,\s*([xyz]_axis|\d)\s*,\s*([-\d.e]+)(?:\s*,\s*([-\d.e]+))?\s*\)'
+    )
+    # Also match lowercase wrappers (instant = no speed arg)
+    _TURN_LOWER_CREATE_RE = re.compile(
+        r'\bturn\s*\(\s*(\w+)\s*,\s*(\d)\s*,\s*([-\d.]+)\s*\)',
+        re.IGNORECASE
+    )
+    _MOVE_LOWER_CREATE_RE = re.compile(
+        r'\bmove\s*\(\s*(\w+)\s*,\s*(\d)\s*,\s*([-\d.]+)\s*\)',
+        re.IGNORECASE
+    )
+
+    create_body = _extract_lua_function_body(lua_content, 'Create')
+    if create_body:
+        # Strip comments
+        clean = re.sub(r'--[^\n]*', '', create_body)
+
+        # Uppercase Turn() without speed = instant, or with very high speed (9999+)
+        for m in _TURN_CREATE_RE.finditer(clean):
+            speed_str = m.group(4)
+            if speed_str is not None and float(speed_str) < 9000:
+                continue  # animated turn, not a rest-pose
+            var_name = m.group(1)
+            piece_name = piece_map.get(var_name, var_name).lower()
+            axis = _resolve_axis(m.group(2))
+            value_deg = math.degrees(float(m.group(3)))
+            if axis == 2:
+                value_deg = -value_deg
+            result[(piece_name, axis, True)] = value_deg
+
+        if include_translations:
+            for m in _MOVE_CREATE_RE.finditer(clean):
+                speed_str = m.group(4)
+                if speed_str is not None and float(speed_str) < 9000:
+                    continue
+                var_name = m.group(1)
+                piece_name = piece_map.get(var_name, var_name).lower()
+                axis = _resolve_axis(m.group(2))
+                result[(piece_name, axis, False)] = float(m.group(3))
+
+        # lowercase turn() without speed = instant
+        for m in _TURN_LOWER_CREATE_RE.finditer(clean):
+            var_name = m.group(1)
+            piece_name = piece_map.get(var_name, var_name).lower()
+            axis = _resolve_axis(m.group(2))
+            value_deg = float(m.group(3))
+            # lowercase wrapper without speed does NOT negate z (only the speed branch does)
+            if axis == 2:
+                value_deg = -value_deg
+            result[(piece_name, axis, True)] = value_deg
+
+        if include_translations:
+            for m in _MOVE_LOWER_CREATE_RE.finditer(clean):
+                var_name = m.group(1)
+                piece_name = piece_map.get(var_name, var_name).lower()
+                axis = _resolve_axis(m.group(2))
+                result[(piece_name, axis, False)] = float(m.group(3))
+
+    # Fallback: StopWalking significant rotations (>20°)
+    rot_result = {k: v for k, v in result.items() if k[2]}
+    if not rot_result:
+        body = _extract_lua_function_body(lua_content, 'StopWalking')
+        if body:
+            clean = re.sub(r'--[^\n]*', '', body)
+            candidate: Dict[tuple, float] = {}
+            if convention == 'lower':
+                for m in _TURN_LOWER_RE.finditer(clean):
+                    var_name = m.group(1)
+                    piece_name = piece_map.get(var_name, var_name).lower()
+                    axis = _resolve_axis(m.group(2))
+                    val = float(m.group(3))
+                    if abs(val) > 20.0:
+                        candidate[(piece_name, axis, True)] = val
+            else:
+                for m in _TURN_UPPER_RE.finditer(clean):
+                    var_name = m.group(1)
+                    piece_name = piece_map.get(var_name, var_name).lower()
+                    axis = _resolve_axis(m.group(2))
+                    val = math.degrees(float(m.group(3)))
+                    if axis == 2:
+                        val = -val
+                    if abs(val) > 20.0:
+                        candidate[(piece_name, axis, True)] = val
+            if candidate:
+                result.update(candidate)
+                print(f"  LUA StopWalking rest pose: {len(candidate)} rotations")
+
+    if result:
+        print(f"  LUA Create now-rotations: {len(result)} transforms")
+    return result
+
+
 def extract_lua_weapon_queries(lua_content: str) -> Dict[str, Dict]:
     """
     Extract weapon → piece mappings from script.QueryWeapon and script.AimFromWeapon.

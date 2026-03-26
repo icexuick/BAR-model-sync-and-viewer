@@ -44,7 +44,7 @@ from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
 from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose, extract_activate_loop_animation, extract_toggle_animations, extract_fire_animations
-from lua_animator import is_lua_script, extract_lua_walk_animation, extract_lua_stopwalking_tracks, extract_lua_spin_animations, extract_lua_hide_pieces
+from lua_animator import is_lua_script, extract_lua_walk_animation, extract_lua_stopwalking_tracks, extract_lua_spin_animations, extract_lua_hide_pieces, extract_lua_fire_animations, extract_lua_create_now_rotations
 
 
 
@@ -852,9 +852,14 @@ def convert_with_weapons(
                 # Some units have pieces with extreme S3O offsets corrected by
                 # 'move ... now' in Create() — enable translations for those.
                 _NEEDS_CREATE_TRANSLATIONS = {'legeconv'}
-                now_rots = parse_create_now_rotations(
-                    bos_content, skip_activate_flypose=not can_fly,
-                    include_translations=unit_name.lower() in _NEEDS_CREATE_TRANSLATIONS)
+                if _is_lua:
+                    now_rots = extract_lua_create_now_rotations(
+                        bos_content,
+                        include_translations=unit_name.lower() in _NEEDS_CREATE_TRANSLATIONS)
+                else:
+                    now_rots = parse_create_now_rotations(
+                        bos_content, skip_activate_flypose=not can_fly,
+                        include_translations=unit_name.lower() in _NEEDS_CREATE_TRANSLATIONS)
                 if now_rots:
                     builder.apply_now_rotations(now_rots, node_name_to_idx)
 
@@ -1031,7 +1036,7 @@ def convert_with_weapons(
                         builder.apply_animation_t0_as_default_pose('ActivateOpen')
 
             # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
-            fire_clips = [] if _is_lua else extract_fire_animations(bos_content)
+            fire_clips = extract_lua_fire_animations(bos_content) if _is_lua else extract_fire_animations(bos_content)
             if fire_clips:
                 fire_rotary = {}
                 for clip_name, clip_tracks, rotary in fire_clips:

@@ -246,74 +246,197 @@ def _extract_all_pieces_from_function(body: str, known_pieces: List[str]) -> Lis
 def parse_lua_script(filepath: str) -> BOSParseResult:
     """Parse a Lua unit script for weapon-piece mappings.
 
-    BAR Lua scripts use a different pattern:
-      function script.QueryWeapon1() return piece_name end
-      function script.AimWeapon1(heading, pitch) ... end
+    Supports two calling conventions:
+
+    1. Numbered variant (simple scripts):
+       function script.QueryWeapon1() return piece_name end
+       function script.AimWeapon1(heading, pitch) ... end
+
+    2. Combined variant with weapons table (commander scripts):
+       weapons = { [1] = "laser", [2] = "uwlaser", [3] = "dgun" }
+       function script.QueryWeapon(weapon)
+           if weapons[weapon] == "laser" then return laserflare end
+       end
+       function script.AimWeapon(weapon, heading, pitch)
+           if weapons[weapon] == "laser" then
+               Turn(aimy1, 2, heading, ...)
+           end
+       end
     """
     with open(filepath, 'r', errors='replace') as f:
         content = f.read()
 
     result = BOSParseResult()
 
-    # Extract piece declarations from "local piece_name = piece('name')" pattern
+    # --- Piece declarations ---
+    # Multi-piece: local a, b, c = piece("a", "b", "c")
+    piece_map: Dict[str, str] = {}  # variable name → piece string name
+    for match in re.finditer(r'local\s+([\w\s,]+?)\s*=\s*piece\s*\((.*?)\)', content, re.DOTALL):
+        vars_str = match.group(1)
+        pieces_str = match.group(2)
+        var_names = [v.strip() for v in vars_str.split(',') if v.strip()]
+        piece_names = re.findall(r'["\'](\w+)["\']', pieces_str)
+        for var, pname in zip(var_names, piece_names):
+            piece_map[var] = pname.lower()
+            if pname.lower() not in result.pieces:
+                result.pieces.append(pname.lower())
+
+    # Single-piece: local turret = piece("turret") or piece 'turret'
     for match in re.finditer(r"local\s+(\w+)\s*=\s*piece\s*['\"](\w+)['\"]", content):
         var_name = match.group(1)
         piece_name = match.group(2).lower()
-        result.pieces.append(piece_name)
+        if var_name not in piece_map:
+            piece_map[var_name] = piece_name
+        if piece_name not in result.pieces:
+            result.pieces.append(piece_name)
 
-    # Also from: "local pieces = { base = piece('base'), ... }"
+    # Also from: piece("name") anywhere (catch-all)
     for match in re.finditer(r"piece\s*\(\s*['\"](\w+)['\"]\s*\)", content):
         piece_name = match.group(1).lower()
         if piece_name not in result.pieces:
             result.pieces.append(piece_name)
 
-    # QueryWeaponN
-    for match in re.finditer(
-        r'function\s+script\.QueryWeapon(\d+)\s*\([^)]*\)(.*?)(?=\nfunction|\nend\s*$|\Z)',
-        content, re.DOTALL
-    ):
-        wnum = int(match.group(1))
-        body = match.group(2)
-        # Look for "return <piece>" pattern
-        ret_match = re.search(r'return\s+(\w+)', body)
-        if ret_match:
-            piece_var = ret_match.group(1)
-            if wnum not in result.weapons:
-                result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
-            result.weapons[wnum].query_piece = piece_var.lower()
-            result.weapons[wnum]._update_all()
+    def _resolve_piece(var_name: str) -> str:
+        """Resolve a variable name to its piece string name."""
+        return piece_map.get(var_name, var_name).lower()
 
-    # AimFromWeaponN
+    # --- Weapons table (combined variant) ---
+    # weapons = { [1] = "laser", [2] = "uwlaser", [3] = "dgun" }
+    weapon_types: Dict[int, str] = {}
+    wt_match = re.search(r'\bweapons\s*=\s*\{(.*?)\}', content, re.DOTALL)
+    if wt_match:
+        for entry in re.finditer(r'\[(\d+)\]\s*=\s*["\'](\w+)["\']', wt_match.group(1)):
+            weapon_types[int(entry.group(1))] = entry.group(2)
+
+    # --- Numbered variant: script.QueryWeaponN ---
     for match in re.finditer(
-        r'function\s+script\.AimFromWeapon(\d+)\s*\([^)]*\)(.*?)(?=\nfunction|\nend\s*$|\Z)',
+        r'function\s+script\.QueryWeapon(\d+)\s*\([^)]*\)(.*?)(?=\nfunction\s|\Z)',
         content, re.DOTALL
     ):
         wnum = int(match.group(1))
         body = match.group(2)
         ret_match = re.search(r'return\s+(\w+)', body)
         if ret_match:
-            piece_var = ret_match.group(1)
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
-            result.weapons[wnum].aim_from_piece = piece_var.lower()
+            result.weapons[wnum].query_piece = _resolve_piece(ret_match.group(1))
             result.weapons[wnum]._update_all()
 
-    # AimWeaponN — look for Turn() calls
+    # --- Numbered variant: script.AimFromWeaponN ---
     for match in re.finditer(
-        r'function\s+script\.AimWeapon(\d+)\s*\([^)]*\)(.*?)(?=\nfunction|\nend\s*$|\Z)',
+        r'function\s+script\.AimFromWeapon(\d+)\s*\([^)]*\)(.*?)(?=\nfunction\s|\Z)',
+        content, re.DOTALL
+    ):
+        wnum = int(match.group(1))
+        body = match.group(2)
+        ret_match = re.search(r'return\s+(\w+)', body)
+        if ret_match:
+            if wnum not in result.weapons:
+                result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
+            result.weapons[wnum].aim_from_piece = _resolve_piece(ret_match.group(1))
+            result.weapons[wnum]._update_all()
+
+    # --- Numbered variant: script.AimWeaponN ---
+    for match in re.finditer(
+        r'function\s+script\.AimWeapon(\d+)\s*\([^)]*\)(.*?)(?=\nfunction\s|\Z)',
         content, re.DOTALL
     ):
         wnum = int(match.group(1))
         body = match.group(2)
         aim_pieces = set()
-        for turn_match in re.finditer(r'Turn\s*\(\s*(\w+)', body):
-            piece_var = turn_match.group(1).lower()
-            aim_pieces.add(piece_var)
+        for turn_match in re.finditer(r'\b[Tt]urn\s*\(\s*(\w+)', body):
+            aim_pieces.add(_resolve_piece(turn_match.group(1)))
         if aim_pieces:
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
             result.weapons[wnum].aim_pieces = sorted(aim_pieces)
             result.weapons[wnum]._update_all()
+
+    # --- Combined variant: script.QueryWeapon(weapon) ---
+    # Dispatch via: if weapons[weapon] == "type" then return piece end
+    qw_match = re.search(
+        r'function\s+script\.QueryWeapon\s*\(\s*weapon\s*\)(.*?)(?=\nfunction\s|\Z)',
+        content, re.DOTALL
+    )
+    if qw_match and weapon_types:
+        body = qw_match.group(1)
+        # Parse each branch: weapons[weapon] == "type" then ... return piece
+        for branch in re.finditer(
+            r'weapons\[weapon\]\s*==\s*["\'](\w+)["\']\s*then\s*\n?\s*return\s+(\w+)',
+            body
+        ):
+            wtype = branch.group(1)
+            piece_var = branch.group(2)
+            # Map all weapon numbers with this type
+            for wnum, wt in weapon_types.items():
+                if wt == wtype:
+                    if wnum not in result.weapons:
+                        result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
+                    result.weapons[wnum].query_piece = _resolve_piece(piece_var)
+                    result.weapons[wnum]._update_all()
+
+    # --- Combined variant: script.AimFromWeapon(weapon) ---
+    af_match = re.search(
+        r'function\s+script\.AimFromWeapon\s*\(\s*weapon\s*\)(.*?)(?=\nfunction\s|\Z)',
+        content, re.DOTALL
+    )
+    if af_match and weapon_types:
+        body = af_match.group(1)
+        for branch in re.finditer(
+            r'weapons\[weapon\]\s*==\s*["\'](\w+)["\']\s*then\s*\n?\s*return\s+(\w+)',
+            body
+        ):
+            wtype = branch.group(1)
+            piece_var = branch.group(2)
+            for wnum, wt in weapon_types.items():
+                if wt == wtype:
+                    if wnum not in result.weapons:
+                        result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
+                    # "return 0" means aim is disabled (e.g. dgun uses unit center)
+                    if piece_var == '0' or piece_var == 'nil':
+                        result.weapons[wnum].aim_disabled = True
+                    else:
+                        result.weapons[wnum].aim_from_piece = _resolve_piece(piece_var)
+                    result.weapons[wnum]._update_all()
+
+    # --- Combined variant: script.AimWeapon(weapon, heading, pitch) ---
+    aw_match = re.search(
+        r'function\s+script\.AimWeapon\s*\(\s*weapon\s*,\s*heading\s*,\s*pitch\s*\)(.*?)(?=\nfunction\s|\Z)',
+        content, re.DOTALL
+    )
+    if aw_match and weapon_types:
+        body = aw_match.group(1)
+        # Split by weapon type checks — each section from one weapons[weapon]=="type"
+        # to the next contains all Turn commands for that weapon type, including
+        # nested if/else blocks.
+        branches = list(re.finditer(
+            r'weapons\[weapon\]\s*==\s*["\'](\w+)["\']',
+            body
+        ))
+        for i, branch in enumerate(branches):
+            wtype = branch.group(1)
+            start = branch.end()
+            # Section ends at the next weapons[weapon] check or end of body
+            end = branches[i + 1].start() if i + 1 < len(branches) else len(body)
+            branch_body = body[start:end]
+            # Strip Lua line comments to avoid matching Turn() in comments
+            branch_clean = re.sub(r'--[^\n]*', '', branch_body)
+            aim_pieces = set()
+            # Match both Turn() and turn() for aim pieces
+            for turn_match in re.finditer(r'\b[Tt]urn\s*\(\s*(\w+)', branch_clean):
+                piece_var = turn_match.group(1)
+                # Skip non-piece identifiers
+                if piece_var.lower() in ('heading', 'pitch', 'math', 'rad',
+                                          'true', 'false', 'nil', 'self'):
+                    continue
+                aim_pieces.add(_resolve_piece(piece_var))
+            if aim_pieces:
+                for wnum, wt in weapon_types.items():
+                    if wt == wtype:
+                        if wnum not in result.weapons:
+                            result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
+                        result.weapons[wnum].aim_pieces = sorted(aim_pieces)
+                        result.weapons[wnum]._update_all()
 
     return result
 
