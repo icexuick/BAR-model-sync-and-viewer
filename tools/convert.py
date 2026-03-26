@@ -44,6 +44,7 @@ from s3o_parser import parse_s3o, S3OModel, S3OPiece, print_piece_tree
 from s3o_to_glb import GLBBuilder, convert_s3o_to_glb
 from bos_parser import parse_unit_script, BOSParseResult, WeaponPieceMapping
 from bos_animator import extract_walk_animation, extract_spin_animation, parse_create_now_rotations, parse_create_hide_pieces, extract_stopwalking_pose, extract_activate_loop_animation, extract_toggle_animations, extract_fire_animations
+from lua_animator import is_lua_script, extract_lua_walk_animation, extract_lua_stopwalking_tracks, extract_lua_spin_animations, extract_lua_hide_pieces
 
 
 
@@ -817,8 +818,9 @@ def convert_with_weapons(
         try:
             with open(script_path, 'r', errors='replace') as f:
                 bos_content = f.read()
+            _is_lua = is_lua_script(bos_content)
             now_rots = {}
-            result = extract_walk_animation(bos_content)
+            result = extract_lua_walk_animation(bos_content) if _is_lua else extract_walk_animation(bos_content)
             if result:
                 anim_name, tracks, now_rots = result
                 # Strip translation/rotation tracks for units where body sway looks wrong
@@ -840,7 +842,7 @@ def convert_with_weapons(
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
                 # StopWalking pose — exported as a second clip so the viewer can
                 # crossfade to the neutral stance when the movement toggle is off.
-                stop_tracks = extract_stopwalking_pose(bos_content)
+                stop_tracks = extract_lua_stopwalking_tracks(bos_content) if _is_lua else extract_stopwalking_pose(bos_content)
                 if stop_tracks:
                     builder.add_animation('StopWalking', stop_tracks, node_name_to_idx, piece_offsets)
             else:
@@ -870,7 +872,7 @@ def convert_with_weapons(
                 'arm', 'stand', 'drill', 'sphere', 'aim', 'spindle',
             )
             has_walk = result is not None
-            spin_clips = extract_spin_animation(bos_content)
+            spin_clips = extract_lua_spin_animations(bos_content) if _is_lua else extract_spin_animation(bos_content)
             if spin_clips:
                 # Keep only clips whose piece name is interesting, unless unit has a
                 # role or a walk animation (walkers with spins = always visual).
@@ -900,7 +902,8 @@ def convert_with_weapons(
                         builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces + spin_clip_names
             # Activate-loop animations (e.g. armaser spinarms — while(TRUE) + turn-to + sleep)
             # These can coexist with spin clips (e.g. legmos has blades spin + wing flapping loop)
-            loop_clips = [] if unit_name.lower() in _LOOP_SKIP else extract_activate_loop_animation(bos_content)
+            # Skip BOS-specific extractors for Lua scripts (they use BOS regex patterns)
+            loop_clips = [] if (_is_lua or unit_name.lower() in _LOOP_SKIP) else extract_activate_loop_animation(bos_content)
             if loop_clips:
                 # Skip loop clips for pieces already covered by spin clips
                 existing_spin_pieces = set()
@@ -933,7 +936,7 @@ def convert_with_weapons(
                     extras["spin_pieces"] = existing + loop_pieces + loop_clip_names
 
             # Toggle animations (Open/Close or MMStatus) — always check, independent of spin
-            toggle_clips = [] if unit_name.lower() in _TOGGLE_SKIP else extract_toggle_animations(bos_content)
+            toggle_clips = [] if (_is_lua or unit_name.lower() in _TOGGLE_SKIP) else extract_toggle_animations(bos_content)
             if toggle_clips:
                 # Find Open clip; generate Close as time-reversed Open if no valid Close exists
                 open_tracks = next((t for n, t in toggle_clips if n == 'ActivateOpen'), None)
@@ -1028,7 +1031,7 @@ def convert_with_weapons(
                         builder.apply_animation_t0_as_default_pose('ActivateOpen')
 
             # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
-            fire_clips = extract_fire_animations(bos_content)
+            fire_clips = [] if _is_lua else extract_fire_animations(bos_content)
             if fire_clips:
                 fire_rotary = {}
                 for clip_name, clip_tracks, rotary in fire_clips:
@@ -1169,7 +1172,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
         # visible in the static viewer.
         with open(script_path, 'r', errors='replace') as _f:
             _bos = _f.read()
-        bos_hides = parse_create_hide_pieces(_bos)
+        bos_hides = extract_lua_hide_pieces(_bos) if is_lua_script(_bos) else parse_create_hide_pieces(_bos)
         if bos_hides:
             piece_verts = {p.name.lower(): len(p.vertices) for p in model.all_pieces()}
             # Hide BOS-hidden pieces: always hide zero-vertex pieces, and also
@@ -1288,16 +1291,26 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     if output_path is None:
         output_path = os.path.splitext(s3o_path)[0] + '.glb'
 
-    # For animation extraction, prefer a .bos script even when the unitdef
-    # specifies a .lua script (our BOS animator can extract walk/fire/toggle
-    # animations from BOS but not from Lua).
+    # For animation extraction: if the script is a Lua file, check whether it's
+    # a real LUS animation script (has piece() declarations) or just a unitdef.
+    # If it's a real LUS, use it directly (our lua_animator can parse it).
+    # If it's just a unitdef, fall back to a .bos file for BOS animation extraction.
     anim_script_path = script_path
     if script_path and script_path.lower().endswith('.lua'):
-        bos_dir = os.path.dirname(script_path)
-        bos_candidate = os.path.join(bos_dir, unit_name + '.bos')
-        if os.path.isfile(bos_candidate):
-            anim_script_path = bos_candidate
-            print(f"  Animation script (BOS fallback): {bos_candidate}")
+        try:
+            with open(script_path, 'r', errors='replace') as _f:
+                _lua_check = _f.read()
+            if not is_lua_script(_lua_check):
+                # Not a real LUS script — try BOS fallback
+                bos_dir = os.path.dirname(script_path)
+                bos_candidate = os.path.join(bos_dir, unit_name + '.bos')
+                if os.path.isfile(bos_candidate):
+                    anim_script_path = bos_candidate
+                    print(f"  Animation script (BOS fallback): {bos_candidate}")
+            else:
+                print(f"  Using LUS animation script: {script_path}")
+        except Exception:
+            pass
 
     glb_data = convert_with_weapons(model, weapon_info, anim_script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly, is_ship, merge_map)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
