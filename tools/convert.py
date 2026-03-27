@@ -666,9 +666,18 @@ def convert_with_weapons(
                                     tagged_subtrees.append(sib_subtree)
                                     seen_roots.add(sib)
 
+                    # Pieces that are build/nano effects or decorative — never weapon visuals.
+                    _NONWEAPON_KEYWORDS = ('hexl', 'nano', 'cagelight', 'buildspot',
+                                           'nanopoint', 'buildpad')
+
+                    def _is_nonweapon(pk: str) -> bool:
+                        return any(kw in pk for kw in _NONWEAPON_KEYWORDS)
+
                     for s in tagged_subtrees:
                         for piece_key in s:
                             if (not _is_dummy_piece(piece_key)
+                                    and not _is_nonweapon(piece_key)
+                                    and piece_key not in hide_pieces
                                     and (piece_key == visual_root or not _is_limb_joint(piece_key))
                                     and (piece_key == visual_root or piece_key not in other_aim_pieces)
                                     and piece_key not in other_weapon_pieces
