@@ -1,0 +1,122 @@
+name: Convert changed S3O models to GLB
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Elke zondag 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      force_all:
+        description: 'Forceer conversie van alle units (negeert change check)'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  check-and-convert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout BAR-modelviewer repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Get current BAR repo SHA (units dir)
+        id: get_sha
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA=$(curl -s \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/beyond-all-reason/Beyond-All-Reason/commits?path=units&per_page=1" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['sha'])")
+          echo "current_sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Load last synced SHA
+        id: last_sha
+        run: |
+          if [ -f last_sync_sha.txt ]; then
+            echo "stored_sha=$(cat last_sync_sha.txt)" >> $GITHUB_OUTPUT
+          else
+            echo "stored_sha=none" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if anything changed
+        id: changed
+        run: |
+          FORCE="${{ inputs.force_all }}"
+          CURRENT="${{ steps.get_sha.outputs.current_sha }}"
+          STORED="${{ steps.last_sha.outputs.stored_sha }}"
+          if [ "$FORCE" = "true" ]; then
+            echo "run_conversion=true" >> $GITHUB_OUTPUT
+          elif [ "$CURRENT" != "$STORED" ]; then
+            echo "Wijzigingen gevonden: $STORED -> $CURRENT"
+            echo "run_conversion=true" >> $GITHUB_OUTPUT
+          else
+            echo "Geen wijzigingen, workflow stopt."
+            echo "run_conversion=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get list of changed units
+        id: changed_units
+        if: steps.changed.outputs.run_conversion == 'true' && inputs.force_all != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          STORED="${{ steps.last_sha.outputs.stored_sha }}"
+          CURRENT="${{ steps.get_sha.outputs.current_sha }}"
+          if [ "$STORED" = "none" ]; then
+            echo "convert_all=true" >> $GITHUB_OUTPUT
+          else
+            CHANGED=$(curl -s \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/beyond-all-reason/Beyond-All-Reason/compare/${STORED}...${CURRENT}" \
+              | python3 -c "
+          import sys, json, re
+          data = json.load(sys.stdin)
+          files = [f['filename'] for f in data.get('files', [])]
+          relevant = [f for f in files if re.search(r'\.(s3o|bos|lua|lus)$', f, re.I)]
+          units = set(re.sub(r'\.(s3o|bos|lua|lus)$','',f.split('/')[-1],flags=re.I) for f in relevant)
+          print(' '.join(sorted(units)))
+          ")
+            echo "changed_units=$CHANGED" >> $GITHUB_OUTPUT
+            echo "convert_all=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Convert all units
+        if: steps.changed.outputs.run_conversion == 'true' && (inputs.force_all == 'true' || steps.changed_units.outputs.convert_all == 'true')
+        run: python tools/convert.py --bar-dir . --output-dir glb/
+
+      - name: Convert only changed units
+        if: steps.changed.outputs.run_conversion == 'true' && inputs.force_all != 'true' && steps.changed_units.outputs.convert_all != 'true' && steps.changed_units.outputs.changed_units != ''
+        run: |
+          for UNIT in ${{ steps.changed_units.outputs.changed_units }}; do
+            python tools/convert.py --unit "$UNIT" --output-dir glb/ || echo "Waarschuwing: $UNIT mislukt, overgeslagen."
+          done
+
+      - name: Update last_sync_sha.txt
+        if: steps.changed.outputs.run_conversion == 'true'
+        run: echo "${{ steps.get_sha.outputs.current_sha }}" > last_sync_sha.txt
+
+      - name: Commit en push GLB bestanden
+        if: steps.changed.outputs.run_conversion == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add glb/ last_sync_sha.txt
+          if git diff --cached --quiet; then
+            echo "Niets te committen."
+          else
+            git commit -m "chore: auto-convert changed S3O models to GLB [skip ci]"
+            git push
+          fi
