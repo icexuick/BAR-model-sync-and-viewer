@@ -14,8 +14,7 @@ De website draait op Webflow (beyondallreason.info). Modellen worden getoond met
 ## GLB bestandslocatie — BELANGRIJK
 - **Alle GLBs staan in `glb/`** — dit is de enige juiste plek.
 - De viewer laadt van: `https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/glb/{unitname}.glb`
-- **Zoek NOOIT naar GLBs in de repo root, `glb-output/`, of ergens anders.**
-- `glb-output/` is alleen voor tijdelijke test-output — nooit committen.
+- **Zoek NOOIT naar GLBs in de repo root of ergens anders dan `glb/`.**
 - Na elke GLB update: direct committen + pushen (dit mag altijd zonder te vragen).
 
 ## Convert commando's — altijd naar `glb/`

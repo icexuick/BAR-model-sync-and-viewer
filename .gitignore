@@ -1,6 +1,6 @@
 .env
 *.pyc
 __pycache__/
-glb_output/
-glb-output/
+s3o/
+scripts/
 .claude/

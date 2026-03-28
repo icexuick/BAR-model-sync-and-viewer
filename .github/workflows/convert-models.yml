@@ -1,8 +1,6 @@
 name: Convert changed S3O models to GLB
 
 on:
-  schedule:
-    - cron: '0 2 * * 0'  # Elke zondag 02:00 UTC
   workflow_dispatch:
     inputs:
       force_all:
@@ -94,15 +92,15 @@ jobs:
             echo "convert_all=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Convert all units
+      - name: Convert all units (via GitHub API)
         if: steps.changed.outputs.run_conversion == 'true' && (inputs.force_all == 'true' || steps.changed_units.outputs.convert_all == 'true')
-        run: python tools/convert.py --bar-dir . --output-dir glb/
+        run: python tools/convert.py --prefix "" --local --force
 
-      - name: Convert only changed units
+      - name: Convert only changed units (via GitHub API)
         if: steps.changed.outputs.run_conversion == 'true' && inputs.force_all != 'true' && steps.changed_units.outputs.convert_all != 'true' && steps.changed_units.outputs.changed_units != ''
         run: |
           for UNIT in ${{ steps.changed_units.outputs.changed_units }}; do
-            python tools/convert.py --unit "$UNIT" --output-dir glb/ || echo "Waarschuwing: $UNIT mislukt, overgeslagen."
+            python tools/convert.py --unit "$UNIT" --local --force || echo "Waarschuwing: $UNIT mislukt, overgeslagen."
           done
 
       - name: Update last_sync_sha.txt

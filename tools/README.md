@@ -19,7 +19,7 @@ pip install numpy
 python convert.py --s3o objects3d/corjugg.s3o --script scripts/Units/corjugg.bos
 
 # Batch convert an entire BAR game directory
-python convert.py --bar-dir /path/to/Beyond-All-Reason --output-dir ./glb_output
+python convert.py --bar-dir /path/to/Beyond-All-Reason --output-dir ./glb
 
 # Just show model info (no conversion)
 python convert.py --s3o objects3d/armflea.s3o --info-only
@@ -199,7 +199,7 @@ Beyond-All-Reason/
 ├── units/              ← Unitdef Lua files
 ├── tools/
 │   └── s3o_to_glb/     ← This converter
-└── glb_output/          ← Generated GLB files (gitignored or separate repo)
+└── glb/                 ← Generated GLB files
 ```
 
 ## License

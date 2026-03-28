@@ -12,7 +12,7 @@ Usage:
   python convert.py --s3o objects3d/corjugg.s3o --script scripts/Units/corjugg.bos
 
   # Batch convert a BAR game directory
-  python convert.py --bar-dir /path/to/Beyond-All-Reason --output-dir ./glb_output
+  python convert.py --bar-dir /path/to/Beyond-All-Reason --output-dir ./glb
 
   # Just parse and show info (no conversion)
   python convert.py --s3o objects3d/corjugg.s3o --info-only
@@ -1620,13 +1620,40 @@ def _github_get(url: str) -> dict:
         raise
 
 
-def _download(url: str, dest: str):
-    """Download a URL to dest, raising on HTTP errors."""
+def _download_cached(url: str, dest: str) -> bool:
+    """Download url to dest with ETag-based caching.
+
+    If dest already exists and an .etag sidecar is present, sends
+    If-None-Match.  Returns True if the file was (re)downloaded,
+    False if the cached version is still current.
+    Raises on HTTP errors other than 304.
+    """
     url = url.replace(" ", "%20")
-    req = urllib.request.Request(url, headers={"User-Agent": "BAR-modelviewer"})
-    with urllib.request.urlopen(req) as resp:
-        with open(dest, 'wb') as f:
-            f.write(resp.read())
+    etag_path = dest + ".etag"
+    headers = {"User-Agent": "BAR-modelviewer"}
+
+    if os.path.exists(dest) and os.path.exists(etag_path):
+        with open(etag_path, "r") as f:
+            stored_etag = f.read().strip()
+        if stored_etag:
+            headers["If-None-Match"] = stored_etag
+
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req) as resp:
+            data = resp.read()
+            with open(dest, "wb") as f:
+                f.write(data)
+            # Save ETag for future cache checks
+            etag = resp.headers.get("ETag", "")
+            if etag:
+                with open(etag_path, "w") as f:
+                    f.write(etag)
+            return True
+    except urllib.error.HTTPError as e:
+        if e.code == 304:
+            return False
+        raise
 
 
 _units_tree_cache: Optional[list] = None
@@ -1730,54 +1757,62 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
     print(f"  S3O model : {s3o_subpath}  (parsed: {s3o_raw!r})")
     print(f"  Script    : {script_base}  (parsed: {script_raw!r})")
 
-    # 3. Download files to a temp directory, then convert
-    with tempfile.TemporaryDirectory() as tmpdir:
-        s3o_local = os.path.join(tmpdir, s3o_name)
-        script_local = os.path.join(tmpdir, script_base)
+    # 3. Download S3O to s3o/ and script to scripts/ (cached — skip if already exists)
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    s3o_dir = os.path.join(repo_root, "s3o")
+    scripts_dir = os.path.join(repo_root, "scripts")
+    os.makedirs(s3o_dir, exist_ok=True)
+    os.makedirs(scripts_dir, exist_ok=True)
 
-        s3o_url = f"{BAR_RAW}/objects3d/{s3o_subpath}"
-        print(f"  Downloading {s3o_url} ...")
-        _download(s3o_url, s3o_local)
+    s3o_local = os.path.join(s3o_dir, s3o_name)
+    s3o_url = f"{BAR_RAW}/objects3d/{s3o_subpath}"
+    if _download_cached(s3o_url, s3o_local):
+        print(f"  Downloaded S3O: {s3o_name}")
+    else:
+        print(f"  S3O up-to-date: {s3o_name}")
 
-        script_ok = False
-        # If the unitdef specifies a Lua script, prefer the .bos fallback
-        # (our parser can extract walk/weapon animations from BOS but not Lua).
-        # Try .bos first, then fall back to the unitdef script.
-        script_candidates = [script_base]
-        if script_base.endswith('.lua'):
-            script_candidates = [f"{unit_name}.bos", script_base]
-        for script_try_name in script_candidates:
-            script_local = os.path.join(tmpdir, script_try_name)
-            for script_subpath_try in [f"scripts/Units/{script_try_name}", f"scripts/{script_try_name}"]:
-                try:
-                    script_url = f"{BAR_RAW}/{script_subpath_try}"
-                    print(f"  Downloading {script_url} ...")
-                    _download(script_url, script_local)
-                    script_ok = True
-                    script_base = script_try_name
-                    break
-                except Exception:
-                    pass
-            if script_ok:
+    script_ok = False
+    script_local = None
+    # If the unitdef specifies a Lua script, prefer the .bos fallback
+    # (our parser can extract walk/weapon animations from BOS but not Lua).
+    # Try .bos first, then fall back to the unitdef script.
+    script_candidates = [script_base]
+    if script_base.endswith('.lua'):
+        script_candidates = [f"{unit_name}.bos", script_base]
+    for script_try_name in script_candidates:
+        script_local_try = os.path.join(scripts_dir, script_try_name)
+        for script_subpath_try in [f"scripts/Units/{script_try_name}", f"scripts/{script_try_name}"]:
+            try:
+                script_url = f"{BAR_RAW}/{script_subpath_try}"
+                if _download_cached(script_url, script_local_try):
+                    print(f"  Downloaded script: {script_try_name}")
+                else:
+                    print(f"  Script up-to-date: {script_try_name}")
+                script_local = script_local_try
+                script_ok = True
+                script_base = script_try_name
                 break
-        if not script_ok:
-            print("  Warning: script not found, converting without weapon metadata")
-            script_local = None
+            except Exception:
+                pass
+        if script_ok:
+            break
+    if not script_ok:
+        print("  Warning: script not found, converting without weapon metadata")
+        script_local = None
 
-        # Output inside the temp dir so it never lands in the repo locally.
-        # push_glb_to_repo() uploads it to GitHub; after that it's cleaned up.
-        # Use --local to save to disk instead.
-        # Use the unit name (not S3O name) so aliases like corgantuw get their own GLB.
-        if output_path is None:
-            output_path = os.path.join(tmpdir, f"{unit_name}.glb")
+    # Use the unit name (not S3O name) so aliases like corgantuw get their own GLB.
+    if output_path is None:
+        # When no output path given (push mode), use a temp file
+        _tmpdir = tempfile.mkdtemp()
+        output_path = os.path.join(_tmpdir, f"{unit_name}.glb")
 
-        weapon_defs = parse_lua_weapon_defs(lua_content)
-        can_fly = bool(re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE))
-        is_ship = bool(re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE))
-        glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs, can_fly=can_fly, is_ship=is_ship)
-        if glb_path and push and not info_only:
-            push_glb_to_repo(glb_path, force=force)
-        return glb_path
+    weapon_defs = parse_lua_weapon_defs(lua_content)
+    can_fly = bool(re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE))
+    is_ship = bool(re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE))
+    glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs, can_fly=can_fly, is_ship=is_ship)
+    if glb_path and push and not info_only:
+        push_glb_to_repo(glb_path, force=force)
+    return glb_path
 
 
 VIEWER_REPO = "icexuick/BAR-modelviewer"
@@ -1853,7 +1888,7 @@ def main():
     parser.add_argument('--script', help='Path to the .bos or .lua script file')
     parser.add_argument('--output', '-o', help='Output .glb path')
     parser.add_argument('--bar-dir', help='BAR game directory for batch conversion')
-    parser.add_argument('--output-dir', default='./glb_output',
+    parser.add_argument('--output-dir', default='./glb',
                         help='Output directory for batch conversion')
     parser.add_argument('--filter', help='Unit name filter for batch mode (glob pattern, e.g. "arm*")')
     parser.add_argument('--folder', help='Only convert units whose unitdef is in this folder (e.g. "Scavengers")')
@@ -1867,18 +1902,22 @@ def main():
 
     args = parser.parse_args()
 
-    if args.prefix:
+    if args.prefix is not None:
         unit_names = _find_units_with_prefix(args.prefix)
         if not unit_names:
             print(f"No units found with prefix '{args.prefix}'")
             return
         print(f"Found {len(unit_names)} units with prefix '{args.prefix}': {unit_names}")
         ok, skipped, failed = 0, 0, []
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        glb_dir = os.path.join(repo_root, "glb")
+        os.makedirs(glb_dir, exist_ok=True)
         for i, unit_name in enumerate(unit_names, 1):
             print(f"\n[{i}/{len(unit_names)}] {unit_name}")
             try:
+                out_path = os.path.join(glb_dir, f"{unit_name}.glb") if args.local else None
                 result = fetch_unit_from_github(
-                    unit_name, None, False,
+                    unit_name, out_path, False,
                     push=not args.local,
                     force=args.force,
                 )
