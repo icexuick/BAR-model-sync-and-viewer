@@ -566,12 +566,14 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
                     track_dict.setdefault(key, []).append(BosKeyframe(time=t, value=value))
 
             # For tracks that appear in the loop but NOT in the pre-loop frame,
-            # add t=0 with the first loop-frame value so there is no jump.
-            # (e.g. corcat's rthigh is absent from Frame:8 but present in Frame:12)
-            first_loop_cmds = active_loop[0][1] if active_loop else {}
-            for key, value in first_loop_cmds.items():
-                if key not in pre_cmds and key in track_dict:
-                    track_dict[key].insert(0, BosKeyframe(time=0.0, value=value))
+            # add t=0 with their earliest loop-frame value so there is no jump.
+            # Some pieces only appear in later loop frames (e.g. corack's lbeamhinge
+            # is absent from Frame 5 but present from Frame 10+).
+            for key in list(track_dict.keys()):
+                if key not in pre_cmds:
+                    first_kf = track_dict[key][0]
+                    if first_kf.time > 1e-5:
+                        track_dict[key].insert(0, BosKeyframe(time=0.0, value=first_kf.value))
 
             n_blocks = n_loop + 1  # for the print
         else:

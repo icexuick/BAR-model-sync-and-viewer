@@ -369,7 +369,8 @@ def convert_with_weapons(
                     ap.lower()
                     for wn2, wm2 in weapon_info.weapons.items()
                     if wn2 != wnum
-                    for ap in list(wm2.aim_pieces)  # aim_pieces are clearly owned
+                    for ap in list(wm2.aim_pieces)
+                    if ap.lower() not in own_pieces_lower  # only if not shared with us
                 } | {
                     ap.lower()
                     for wn2, wm2 in weapon_info.weapons.items()
