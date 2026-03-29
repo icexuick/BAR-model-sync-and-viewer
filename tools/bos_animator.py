@@ -327,18 +327,45 @@ def parse_create_now_rotations(bos_content: str, skip_activate_flypose: bool = F
         body = _extract_function_body(bos_content, _fly_func)
         if not body:
             continue
-        stripped = _strip_comments(body)
+        # Follow call-script / start-script references recursively (max 3 deep)
+        # so that Activate() → Open() or RequestState() → Go() picks up the turns.
+        expanded = _strip_comments(body)
+        _seen_funcs = {_fly_func}
+        _to_expand = [expanded]
+        for _depth in range(3):
+            new_calls = []
+            for chunk in _to_expand:
+                for cm in re.finditer(r'(?:call-script|start-script)\s+(\w+)\s*\(', chunk):
+                    fn = cm.group(1)
+                    if fn not in _seen_funcs:
+                        _seen_funcs.add(fn)
+                        callee = _extract_function_body(bos_content, fn)
+                        if callee:
+                            callee_stripped = _strip_comments(callee)
+                            expanded += '\n' + callee_stripped
+                            new_calls.append(callee_stripped)
+            _to_expand = new_calls
+            if not _to_expand:
+                break
         candidate = {}
-        for m in _TURN_RE.finditer(stripped):
+        for m in _TURN_RE.finditer(expanded):
             val = float(m.group(3))
             if abs(val) > 15.0:
                 key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
                 candidate[key] = val  # last value wins = final target angle
-        # Note: move (translation) commands are intentionally excluded from fly-pose.
-        # Activate() translations are factory-door movements, not aircraft fly poses.
         if candidate:
+            # Also include move commands when the same pieces have turn
+            # commands — these are deploy translations (e.g. legabm pivot
+            # slides), not factory-door movements.
+            turned_pieces = {k[0] for k in candidate}
+            for m in _MOVE_RE.finditer(expanded):
+                piece = m.group(1).lower()
+                if piece in turned_pieces:
+                    val = float(m.group(3))
+                    key = (piece, AXIS_INDEX[m.group(2).lower()], False)
+                    candidate[key] = val
             result.update(candidate)
-            print(f"  Using {_fly_func}() as fly pose ({len(candidate)} transforms)")
+            print(f"  Using {_fly_func}() as deploy pose ({len(candidate)} transforms)")
             break
 
     # Source 3: StopWalking() — fallback if Create() has no 'now' rotations.

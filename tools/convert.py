@@ -858,19 +858,20 @@ def convert_with_weapons(
                     builder.add_animation('StopWalking', stop_tracks, node_name_to_idx, piece_offsets)
             else:
                 # No walk animation — collect rest-pose rotations (Create() now + fly pose).
-                # Apply them as static node rotations so aircraft show in fly pose.
-                # Only use Activate() fly-pose scan for units that can actually fly.
-                # Some units have pieces with extreme S3O offsets corrected by
-                # 'move ... now' in Create() — enable translations for those.
+                # Apply them as static node rotations so the unit shows in its
+                # operational state (aircraft fly pose, ABM/popup deployed state, etc.).
+                # Skip Activate() scan only for factories (their Activate is door-open).
+                _is_factory = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
                 _NEEDS_CREATE_TRANSLATIONS = {'legeconv'}
+                _needs_trans = unit_name.lower() in _NEEDS_CREATE_TRANSLATIONS
                 if _is_lua:
                     now_rots = extract_lua_create_now_rotations(
                         bos_content,
-                        include_translations=unit_name.lower() in _NEEDS_CREATE_TRANSLATIONS)
+                        include_translations=_needs_trans)
                 else:
                     now_rots = parse_create_now_rotations(
-                        bos_content, skip_activate_flypose=not can_fly,
-                        include_translations=unit_name.lower() in _NEEDS_CREATE_TRANSLATIONS)
+                        bos_content, skip_activate_flypose=_is_factory,
+                        include_translations=_needs_trans)
                 if now_rots:
                     builder.apply_now_rotations(now_rots, node_name_to_idx)
 
