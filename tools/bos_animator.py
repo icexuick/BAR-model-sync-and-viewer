@@ -290,6 +290,32 @@ def parse_create_now_rotations(bos_content: str, skip_activate_flypose: bool = F
                 key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
                 result[key] = float(m.group(3))
 
+        # If Create() has a build-wait loop (while get BUILD_PERCENT_LEFT),
+        # the animated turn/move commands AFTER the loop represent the
+        # deployed/unfolded state (e.g. solar panels opening).  Their target
+        # values override the folded 'now' values so the GLB shows the unit
+        # in its operational state rather than its construction state.
+        build_wait = re.search(
+            r'while\s*\(\s*get\s+BUILD_PERCENT_LEFT\s*\).*?sleep\s+\d+\s*;.*?\}',
+            body, re.DOTALL | re.IGNORECASE)
+        if build_wait:
+            post_build = body[build_wait.end():]
+            overrides = 0
+            for m in _TURN_RE.finditer(post_build):
+                val = float(m.group(3) or m.group(4))
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+                if key in result and abs(result[key] - val) > 0.1:
+                    result[key] = val
+                    overrides += 1
+            for m in _MOVE_RE.finditer(post_build):
+                val = float(m.group(3))
+                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], False)
+                if key in result and abs(result[key] - val) > 0.1:
+                    result[key] = val
+                    overrides += 1
+            if overrides:
+                print(f"  Create() post-build override: {overrides} pieces to deployed pose")
+
     # Source 2: activatescr() — fly pose for aircraft.
     # Aircraft use activatescr() (state=0 = flying) to fold wings/tilt engines to
     # the in-flight position. The S3O rest pose is the landed/stored state.
