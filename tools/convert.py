@@ -873,6 +873,7 @@ def convert_with_weapons(
                         bos_content, skip_activate_flypose=_is_factory,
                         include_translations=_needs_trans)
                 if now_rots:
+                    print(f"  Applying {len(now_rots)} rest-pose transforms")
                     builder.apply_now_rotations(now_rots, node_name_to_idx)
 
             # Always try spin animation — some units have BOTH walk and spin

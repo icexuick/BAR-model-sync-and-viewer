@@ -405,8 +405,12 @@ class GLBBuilder:
             n_comp = {'VEC3': 3, 'VEC4': 4}[out_acc['type']]
             vals = list(_struct.unpack_from(f'<{n_comp}f', self.buffer_data, offset))
             node = self.nodes[node_idx]
+            # Skip nodes that already have a non-identity value set by
+            # apply_now_rotations (Create() rest-pose) — those are authoritative.
             if path == 'rotation':
-                # Only set if meaningfully non-identity
+                existing = node.get('rotation')
+                if existing and any(abs(v) > 1e-5 for v in existing[:3]):
+                    continue  # preserve Create() now rotation
                 if any(abs(v) > 1e-5 for v in vals[:3]):
                     node['rotation'] = vals
                 else:
