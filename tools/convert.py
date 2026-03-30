@@ -128,9 +128,10 @@ def parse_lua_builder_info(lua_content: str) -> bool:
 
 
 def find_nano_parent_pieces(root_piece: 'S3OPiece', hide_pieces: set = None) -> List[str]:
-    """Find parent pieces of 'nano*' pieces in the S3O tree.
+    """Find parent pieces of nanolathe emitter pieces in the S3O tree.
+    Emitter patterns: nano*, flare* (some factories use flare as emitter name).
     These are the visual construction arm/nozzle meshes.
-    Returns list of original-case piece names (parents of nano pieces that have geometry).
+    Returns list of original-case piece names (parents of emitter pieces that have geometry).
     Skips body/base pieces — only returns dedicated arm/nozzle meshes.
     Hidden pieces (emitter markers) are treated as having no geometry."""
     results = []
@@ -141,13 +142,23 @@ def find_nano_parent_pieces(root_piece: 'S3OPiece', hide_pieces: set = None) -> 
     if len(root_piece.children) == 1:
         body_pieces.add(id(root_piece.children[0]))
 
+    # Emitter name patterns: *nano* always matches (catches lnano1, rnano2 etc);
+    # flare* only if hidden (to avoid matching weapon fire-point flares)
+    def is_emitter(piece):
+        name = piece.name.lower()
+        if 'nano' in name:
+            return True
+        if re.match(r'^flare', name) and name in hide_pieces:
+            return True
+        return False
+
     def has_real_geometry(piece):
         """A piece has real geometry if it has vertices AND is not hidden."""
         return len(piece.vertices) > 0 and piece.name.lower() not in hide_pieces
 
     def walk(piece, parent, grandparent):
-        if re.match(r'^nano', piece.name, re.IGNORECASE):
-            # If the nano piece itself has real visible geometry, use it directly
+        if is_emitter(piece):
+            # If the emitter piece itself has real visible geometry, use it directly
             if has_real_geometry(piece):
                 results.append(piece.name)
             elif parent is not None and id(parent) not in body_pieces:
@@ -882,6 +893,20 @@ def convert_with_weapons(
             root_extras["is_ship"] = True
         if is_builder:
             nano_parents = find_nano_parent_pieces(model.root_piece, hide_pieces)
+            if not nano_parents:
+                # Fallback: some factories have nano emitters directly on the body
+                # with no arm pieces — use 'pad' (build platform) if it exists,
+                # otherwise use the body piece itself so the whole factory highlights
+                all_pieces = {p.name.lower(): p for p in model.all_pieces()}
+                if 'pad' in all_pieces and len(all_pieces['pad'].vertices) > 0:
+                    nano_parents = ['pad']
+                else:
+                    # Use the main body piece (root or its single child)
+                    body = model.root_piece
+                    if len(body.vertices) == 0 and len(body.children) == 1:
+                        body = body.children[0]
+                    if len(body.vertices) > 0:
+                        nano_parents = [body.name]
             if nano_parents:
                 # Store unique parent names (lowercased for matching)
                 root_extras["constructor_pieces"] = list(dict.fromkeys(
