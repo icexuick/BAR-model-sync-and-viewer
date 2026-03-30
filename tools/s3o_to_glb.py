@@ -262,7 +262,8 @@ class GLBBuilder:
 
     def add_animation(self, anim_name: str, tracks: list,
                       node_name_to_idx: Dict[str, int],
-                      piece_offsets: Dict[str, tuple] = None):
+                      piece_offsets: Dict[str, tuple] = None,
+                      now_rots: dict = None):
         """
         Add a glTF animation from BOS animation tracks.
 
@@ -270,6 +271,8 @@ class GLBBuilder:
         node_name_to_idx : {piece_name_lower: node_index}
         piece_offsets    : {piece_name_lower: (ox, oy, oz)} — S3O rest translations.
                            BOS move values are deltas from this rest position.
+        now_rots         : {(piece, axis, is_rot): degrees} — Create() rest-pose
+                           rotations to use as base for unanimated axes.
         """
         import math
         from collections import defaultdict
@@ -345,11 +348,16 @@ class GLBBuilder:
             all_times = sorted({kf.time
                                  for tr in axis_tracks.values()
                                  for kf in tr.keyframes})
+            # For unanimated axes, use Create() now_rots base values if available.
+            # This preserves e.g. y=120° from Create() when only x-axis is animated.
+            base_rx = now_rots.get((piece, 0, True), 0.0) if now_rots else 0.0
+            base_ry = now_rots.get((piece, 1, True), 0.0) if now_rots else 0.0
+            base_rz = now_rots.get((piece, 2, True), 0.0) if now_rots else 0.0
             quats = []
             for t in all_times:
-                rx = _interp(axis_tracks, 0, t)
-                ry = _interp(axis_tracks, 1, t)
-                rz = _interp(axis_tracks, 2, t)
+                rx = _interp(axis_tracks, 0, t) if 0 in axis_tracks else base_rx
+                ry = _interp(axis_tracks, 1, t) if 1 in axis_tracks else base_ry
+                rz = _interp(axis_tracks, 2, t) if 2 in axis_tracks else base_rz
                 quats.extend(_euler_to_quat(rx, ry, rz))
             s = _add_sampler(all_times, quats, "VEC4")
             channels.append({"sampler": s, "target": {"node": node_idx, "path": "rotation"}})

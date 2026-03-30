@@ -850,12 +850,12 @@ def convert_with_weapons(
                             for kf in t.keyframes:
                                 kf.time *= scale
                 builder.apply_now_rotations(now_rots, node_name_to_idx)
-                builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets)
+                builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets, now_rots=now_rots)
                 # StopWalking pose — exported as a second clip so the viewer can
                 # crossfade to the neutral stance when the movement toggle is off.
                 stop_tracks = extract_lua_stopwalking_tracks(bos_content) if _is_lua else extract_stopwalking_pose(bos_content)
                 if stop_tracks:
-                    builder.add_animation('StopWalking', stop_tracks, node_name_to_idx, piece_offsets)
+                    builder.add_animation('StopWalking', stop_tracks, node_name_to_idx, piece_offsets, now_rots=now_rots)
             else:
                 # No walk animation — collect rest-pose rotations (Create() now + fly pose).
                 # Apply them as static node rotations so the unit shows in its
@@ -942,7 +942,7 @@ def convert_with_weapons(
                         clip_tracks = [t for t in clip_tracks if not (t.is_rotation and t.piece.lower() in _strip_rot)]
                     if clip_tracks:
                         builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
-                                              piece_offsets)
+                                              piece_offsets, now_rots=now_rots)
                 loop_pieces = [t.piece for _, ct in loop_clips for t in ct
                                if t.piece.lower() not in existing_spin_pieces]
                 loop_clip_names = [cn for cn, ct in loop_clips
@@ -1001,7 +1001,7 @@ def convert_with_weapons(
                     toggle_clips = new_clips
                 for clip_name, clip_tracks in toggle_clips:
                     builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
-                                          piece_offsets)
+                                          piece_offsets, now_rots=now_rots)
                 if model.root_piece:
                     root_idx = builder.scenes[0]["nodes"][0]
                     extras = builder.nodes[root_idx].setdefault("extras", {})
@@ -1054,7 +1054,7 @@ def convert_with_weapons(
                 fire_rotary = {}
                 for clip_name, clip_tracks, rotary in fire_clips:
                     builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
-                                          piece_offsets)
+                                          piece_offsets, now_rots=now_rots)
                     if rotary:
                         piece, axis, step_deg, _ = rotary
                         axis_name = ['x', 'y', 'z'][axis]
