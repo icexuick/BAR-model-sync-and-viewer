@@ -127,7 +127,7 @@
         let teamColorValue = 0x0043EE, texturePrefix = 'arm';
         let normalMapScaleY = 2.2, roughnessValue = 0.45;
         let pbrEmissiveIntensityValue = 14.0, pulseMaxValue = buildpicMode ? 0.01 : 1.4;
-        const cdnBase = 'https://cdn.jsdelivr.net/gh/icexuick/BAR-modelviewer@main/';
+        const cdnBase = urlParams.has('raw') ? 'https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/' : 'https://cdn.jsdelivr.net/gh/icexuick/BAR-modelviewer@main/';
         const hdrFile = isMobile ? 'clarens_midday_1k_mobile.hdr' : 'clarens_midday_2k5.hdr';
         let armHdrUrl = cdnBase + 'hdr/' + hdrFile;
         let corHdrUrl = cdnBase + 'hdr/' + hdrFile;
