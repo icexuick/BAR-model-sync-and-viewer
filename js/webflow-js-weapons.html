@@ -81,6 +81,14 @@ window._barWeaponsSetup = function(THREE, opts) {
         }
     }
 
+    // Filter spin pieces: remove propellers, fans, thrusters, wheels etc. — never radar
+    if (spinPieceNames && spinPieceNames.size > 0) {
+        var propPatterns = /^(fan|prop|thruster|rotor|blade|turbine|wheel|tyre|tire|screw|vent|engine|exhaust|motor)/;
+        var toRemove = [];
+        spinPieceNames.forEach(function(n) { if (propPatterns.test(n)) toRemove.push(n); });
+        for (var pi = 0; pi < toRemove.length; pi++) spinPieceNames.delete(toRemove[pi]);
+    }
+
     // Register spin pieces + their subtrees as radar/sonar hoverable
     if (unitRole && spinPieceNames && spinPieceNames.size > 0 &&
         (unitRole === 'RADAR' || unitRole === 'SONAR' || unitRole === 'RADAR_SONAR' ||
