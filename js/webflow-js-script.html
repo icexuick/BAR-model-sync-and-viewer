@@ -345,12 +345,9 @@
             const aspect = container.offsetWidth / container.offsetHeight;
             if (aspect < 1) { distance = distance / aspect; }
             const finalDistance = distance * VIEWER_CONFIG.initialZoomMultiplier;
+            camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
             if (buildpicMode) {
-                camera.position.set(-finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
-                scene.environmentRotation = new THREE.Euler(0, -Math.PI / 2, 0);
-                lightGroup.rotation.y = -Math.PI / 2;
-            } else {
-                camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
+                modelScene.rotation.y = Math.PI / 2;
             }
             controls.target.set(0, 0, 0);
             controls.update();
