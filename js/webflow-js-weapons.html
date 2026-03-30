@@ -111,13 +111,17 @@ window._barWeaponsSetup = function(THREE, opts) {
     }
 
     // Register constructor pieces as hoverable group
+    // Pieces that are also weapons still get added to constructorGroupMeshes
+    // so DOM us-type="nano" hover can highlight them, but they keep their
+    // weapon tooltip priority for 3D hover (meshWeaponMap takes precedence).
     if (constructorPieceNames && constructorPieceNames.size > 0) {
         modelScene.traverse(function(node) {
             if (!node.isMesh) return;
             if (shouldHideMesh(node.name)) return;
-            if (meshWeaponMap.has(node.uuid)) return; // weapons always take priority
             if (constructorPieceNames.has(node.name.toLowerCase())) {
-                unitRoleMeshMap.set(node.uuid, 'Construction Module');
+                if (!meshWeaponMap.has(node.uuid)) {
+                    unitRoleMeshMap.set(node.uuid, 'Construction Module');
+                }
                 constructorGroupMeshes.push(node);
             }
         });
