@@ -1353,6 +1353,32 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
             clips.append(('ActivateClose', close_tracks))
             return clips
 
+    # --- Pattern 2b-pre: StopMoving/StartMoving deploy (artillery like cormart) ---
+    # Some units deploy stabilizers/tracks when stopped and retract when moving.
+    # StopMoving = deploy (open), StartMoving = retract (close).
+    # Require 6+ turn/move commands to avoid matching subtle tilt-resets.
+    stop_body = _extract_function_body(bos_content, 'StopMoving')
+    start_body = _extract_function_body(bos_content, 'StartMoving')
+    if stop_body and start_body:
+        stop_body = _inline_call_scripts(stop_body, bos_content)
+        start_body = _inline_call_scripts(start_body, bos_content)
+        _mt_re = re.compile(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
+        _stop_cmd_count = len(_mt_re.findall(stop_body))
+        if _stop_cmd_count >= 6 and _mt_re.search(start_body):
+            close_tracks_raw, _ = _parse_turn_move_to_tracks(start_body)
+            closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                           for t in close_tracks_raw}
+            open_tracks, open_dur = _parse_turn_move_to_tracks(stop_body, start_pose=closed_pose)
+            open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
+                         for t in open_tracks}
+            close_tracks, close_dur = _parse_turn_move_to_tracks(start_body, start_pose=open_pose)
+            if open_tracks and close_tracks and open_dur >= 0.15:
+                print(f"  Toggle animation 'ActivateOpen' (from StopMoving): {len(open_tracks)} tracks, {open_dur:.2f}s")
+                print(f"  Toggle animation 'ActivateClose' (from StartMoving): {len(close_tracks)} tracks, {close_dur:.2f}s")
+                clips.append(('ActivateOpen', open_tracks))
+                clips.append(('ActivateClose', close_tracks))
+                return clips
+
     # --- Pattern 2b: AimWeapon open/close (missile launchers like armmerl, corvroc, corhrk) ---
     # These units open in AimWeapon (turn pieces to firing position) and close
     # in ExecuteRestoreAfterDelay or RestoreAfterDelay (return to rest).
@@ -1432,14 +1458,17 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         # panels like anpanelf/anpanell/anpanelr) — clearly a deploy, not aiming.
         has_open_wait = bool(re.search(r'wait-for-(turn|move)', aim_clean, re.IGNORECASE))
         _aim_piece_names = set(re.findall(r'\b(?:turn|move)\s+(\w+)\s+to\s+[xyz]-axis', aim_clean, re.IGNORECASE))
-        _non_aim_pieces = {p for p in _aim_piece_names if not re.match(r'^(aim|turret|sleeve|gun|barrel|aimx|aimy)', p, re.IGNORECASE)}
+        _non_aim_pieces = {p for p in _aim_piece_names if not re.match(r'^(aim|turret|sleeve|gun|barrel|aimx|aimy|flare)', p, re.IGNORECASE)}
         has_many_deploy_pieces = len(_non_aim_pieces) >= 3
         has_open_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', aim_clean, re.IGNORECASE))
         has_close_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', restore_clean, re.IGNORECASE))
         # Don't conflict with existing Open()/Close() pattern
         has_open_close_fn = bool(_extract_function_body(bos_content, 'Open') and
                                  _extract_function_body(bos_content, 'Close'))
-        if (has_open_wait or has_many_deploy_pieces) and has_open_moves and has_close_moves and not has_open_close_fn:
+        # Skip if only aim-related pieces are animated — that's just turret
+        # aiming, not a deploy (e.g. corwolv, armart artillery units).
+        has_non_aim_pieces = len(_non_aim_pieces) >= 1
+        if (has_open_wait or has_many_deploy_pieces) and has_open_moves and has_close_moves and not has_open_close_fn and has_non_aim_pieces:
             # Parse close first to get closed pose (= rest position targets)
             close_tracks_raw, _ = _parse_turn_move_to_tracks(restore_body)
             closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value

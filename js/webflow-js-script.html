@@ -157,7 +157,7 @@
         const teamURL = `${baseURL}${texturePrefix}_team.png`;
 
         const scene = new THREE.Scene();
-        scene.environmentRotation = new THREE.Euler(0, 0, 0);
+        window._hdrRotY = 0;
         scene.background = null;
         const camera = new THREE.PerspectiveCamera(35, container.offsetWidth / container.offsetHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({
@@ -347,9 +347,12 @@
             if (aspect < 1) { distance = distance / aspect; }
             const finalDistance = distance * VIEWER_CONFIG.initialZoomMultiplier;
             camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
+            // --- Buildpic mode: apply tuned settings ---
             if (buildpicMode) {
-                modelScene.rotation.y = Math.PI / 2;
-                lightGroup.rotation.y = Math.PI / 2;
+                modelScene.rotation.y = THREE.MathUtils.degToRad(parseFloat(urlParams.get('modelRotY')) || 90);
+                lightGroup.rotation.y = THREE.MathUtils.degToRad(parseFloat(urlParams.get('lightRotY')) || 83);
+                window._hdrRotY = THREE.MathUtils.degToRad(parseFloat(urlParams.get('hdrRotY')) || 180);
+                directionalLight.position.y = 3.2;
             }
             controls.target.set(0, 0, 0);
             controls.update();
@@ -472,7 +475,8 @@
             }
             outputPass = new OutputPass();
             composer.addPass(outputPass);
-            window._editorCtx = { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2, ambientLight, ssaoPass, groundMesh, areShadowsVisible, scene, camera, composer, smaaPass, loadHDR: (url) => { rgbeLoader.load(url, (t) => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; }, undefined, (e) => console.error('HDR Error:', e)); } };
+            window._editorCtx = { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2, ambientLight, ssaoPass, groundMesh, areShadowsVisible, scene, camera, composer, smaaPass, modelScene, lightGroup, buildpicMode, loadHDR: (url) => { rgbeLoader.load(url, (t) => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; }, undefined, (e) => console.error('HDR Error:', e)); } };
+
             function exportHighResPNG(w, h) {
                 const origW = container.offsetWidth, origH = container.offsetHeight;
                 const origPR = renderer.getPixelRatio();
@@ -607,7 +611,7 @@
                     const clockDelta = clock.getDelta();
                     timeUniform.value = clock.elapsedTime;
                     if (material.userData.shader && material.userData.shader.uniforms.envMapRotation) {
-                        envRotMat4.makeRotationY(lightGroup.rotation.y);
+                        envRotMat4.makeRotationY(lightGroup.rotation.y + (window._hdrRotY || 0));
                         envRotMat3.setFromMatrix4(envRotMat4);
                         material.userData.shader.uniforms.envMapRotation.value.copy(envRotMat3);
                     }

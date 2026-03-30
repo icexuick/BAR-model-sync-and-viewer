@@ -3,7 +3,6 @@ window._barShaderSetup = function(THREE, material, opts) {
     const { pbrMap, teamColor, teamMap, pbrEmissiveIntensityValue, pulseMaxValue,
             roughnessOffset, timeUniform, highlightUniform, dimUniform } = opts;
     material.onBeforeCompile = (shader) => {
-        shader.defines.USE_ENVMAP_ROTATION = '1';
         shader.uniforms.pbrMap = { value: pbrMap };
         shader.uniforms.teamColor = { value: teamColor };
         shader.uniforms.teamMap = { value: teamMap };
@@ -26,9 +25,39 @@ window._barShaderSetup = function(THREE, material, opts) {
             'uniform float roughnessOffset;',
             'uniform float highlightStrength;',
             'uniform float dimStrength;',
+            'uniform mat3 envMapRotation;',
             '#define USE_TEAMMAP'
         ].join('\n');
         shader.fragmentShader = header + '\n' + shader.fragmentShader;
+        // Patch envmap sampling to apply envMapRotation to world-space vectors
+        // (Three.js 0.160 does not support scene.environmentRotation natively)
+        shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <envmap_physical_pars_fragment>',
+            `#ifdef USE_ENVMAP
+vec3 getIBLIrradiance( const in vec3 normal ) {
+    #ifdef ENVMAP_TYPE_CUBE_UV
+    vec3 worldNormal = inverseTransformDirection( normal, viewMatrix );
+    worldNormal = envMapRotation * worldNormal;
+    vec4 envMapColor = textureCubeUV( envMap, worldNormal, 1.0 );
+    return PI * envMapColor.rgb * envMapIntensity;
+    #else
+    return vec3( 0.0 );
+    #endif
+}
+vec3 getIBLRadiance( const in vec3 viewDir, const in vec3 normal, const in float roughness ) {
+    #ifdef ENVMAP_TYPE_CUBE_UV
+    vec3 reflectVec = reflect( - viewDir, normal );
+    reflectVec = normalize( mix( reflectVec, normal, roughness * roughness) );
+    reflectVec = inverseTransformDirection( reflectVec, viewMatrix );
+    reflectVec = envMapRotation * reflectVec;
+    vec4 envMapColor = textureCubeUV( envMap, reflectVec, roughness );
+    return envMapColor.rgb * envMapIntensity;
+    #else
+    return vec3( 0.0 );
+    #endif
+}
+#endif`
+        );
         shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>',
             'float roughnessFactor = roughness + roughnessOffset; vec4 texelRoughness = texture2D( pbrMap, vUv ); roughnessFactor *= texelRoughness.b; roughnessFactor = clamp(roughnessFactor, 0.05, 1.0);');
         shader.fragmentShader = shader.fragmentShader.replace('#include <metalnessmap_fragment>',

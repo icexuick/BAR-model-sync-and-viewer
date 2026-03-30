@@ -2,7 +2,7 @@
     import GUI from 'https://unpkg.com/three@0.160.0/examples/jsm/libs/lil-gui.module.min.js';
 
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('editor')) {
+    if (urlParams.has('editor') || urlParams.has('buildpic')) {
         function waitForCtx() {
             if (window._editorCtx) initEditor(window._editorCtx);
             else setTimeout(waitForCtx, 200);
@@ -10,12 +10,72 @@
         waitForCtx();
     }
 
+    const DEG2RAD = Math.PI / 180;
+    const RAD2DEG = 180 / Math.PI;
+
     function initEditor(ctx) {
         const { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2,
-                ambientLight, ssaoPass, groundMesh, loadHDR } = ctx;
+                ambientLight, ssaoPass, groundMesh, loadHDR, modelScene, lightGroup, scene, buildpicMode } = ctx;
         let areShadowsVisible = true;
 
-        const gui = new GUI({ title: 'Unit Lab' });
+        const gui = new GUI({ title: buildpicMode ? 'Buildpic Editor' : 'Unit Lab' });
+
+        // --- Buildpic rotation controls (only in buildpic mode) ---
+        if (buildpicMode && modelScene && lightGroup && scene) {
+            const fBp = gui.addFolder('Buildpic Rotation');
+            fBp.open();
+            const bpState = {
+                modelRotY: modelScene.rotation.y * RAD2DEG,
+                lightRotY: lightGroup.rotation.y * RAD2DEG,
+                hdrRotY: (window._hdrRotY || 0) * RAD2DEG,
+                shadowOpacity: groundMesh ? groundMesh.material.opacity : 0.4
+            };
+            fBp.add(bpState, 'modelRotY', -180, 180, 1).name('Model Y (deg)').onChange(v => {
+                modelScene.rotation.y = v * DEG2RAD;
+            });
+            fBp.add(bpState, 'lightRotY', -180, 180, 1).name('Light Y (deg)').onChange(v => {
+                lightGroup.rotation.y = v * DEG2RAD;
+            });
+            fBp.add(bpState, 'hdrRotY', -180, 180, 1).name('HDR Y (deg)').onChange(v => {
+                window._hdrRotY = v * DEG2RAD;
+            });
+            fBp.add(bpState, 'shadowOpacity', 0, 1, 0.05).name('Shadow Opacity').onChange(v => {
+                if (groundMesh) groundMesh.material.opacity = v;
+            });
+
+            // Copy all buildpic-relevant settings to clipboard
+            const copyObj = {
+                copySettings: () => {
+                    const s = {
+                        modelRotY: bpState.modelRotY,
+                        lightRotY: bpState.lightRotY,
+                        hdrRotY: bpState.hdrRotY,
+                        keyLightIntensity: directionalLight.intensity,
+                        keyLightX: +directionalLight.position.x.toFixed(2),
+                        keyLightY: +directionalLight.position.y.toFixed(2),
+                        keyLightZ: +directionalLight.position.z.toFixed(2),
+                        fillLightIntensity: directionalLight2.intensity,
+                        fillLightX: +directionalLight2.position.x.toFixed(2),
+                        fillLightY: +directionalLight2.position.y.toFixed(2),
+                        fillLightZ: +directionalLight2.position.z.toFixed(2),
+                        ambientLightIntensity: ambientLight.intensity,
+                        envMapIntensity: material.envMapIntensity,
+                        toneMappingExposure: renderer.toneMappingExposure,
+                        shadowOpacity: bpState.shadowOpacity
+                    };
+                    const json = JSON.stringify(s, null, 2);
+                    navigator.clipboard.writeText(json).then(() => {
+                        console.log('Buildpic settings copied to clipboard');
+                        alert('Settings copied to clipboard!');
+                    }).catch(() => {
+                        console.log('Buildpic settings:', json);
+                        prompt('Copy these settings:', json);
+                    });
+                }
+            };
+            fBp.add(copyObj, 'copySettings').name('Copy Settings to Clipboard');
+        }
+
         const fGen = gui.addFolder('General');
         fGen.add(VIEWER_CONFIG, 'mouseRotateSpeed', 0.1, 2.0).onChange(v => controls.rotateSpeed = v);
         fGen.add(VIEWER_CONFIG, 'autoRotationSpeed', 0, 2.0);
