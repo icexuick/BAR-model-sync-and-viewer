@@ -39,13 +39,56 @@ window._barWeaponsSetup = function(THREE, opts) {
     });
 
     var spinPieceNames = null;
+    var constructorPieceNames = null;
     modelScene.traverse(function(node) {
         if (node.userData && node.userData.spin_pieces) {
-            spinPieceNames = new Set(node.userData.spin_pieces.map(function(n) { return n.toLowerCase(); }));
+            spinPieceNames = new Set(node.userData.spin_pieces
+                .filter(function(n) { return !n.startsWith('Spin_'); })
+                .map(function(n) { return n.toLowerCase(); }));
+        }
+        if (node.userData && node.userData.constructor_pieces) {
+            constructorPieceNames = new Set(node.userData.constructor_pieces.map(function(n) { return n.toLowerCase(); }));
         }
     });
 
+    // Role tooltip labels
+    var ROLE_LABELS = {
+        RADAR: 'Radar', SONAR: 'Sonar', RADAR_SONAR: 'Radar & Sonar',
+        JAMMER: 'Jammer', RADAR_JAMMER: 'Radar & Jammer'
+    };
+
     var unitRoleMeshMap = new Map();
+    var roleGroupMeshes = [];     // meshes for radar/sonar/jammer spin pieces
+    var constructorGroupMeshes = []; // meshes for constructor arm pieces
+
+    // Register spin pieces as radar/sonar hoverable (only if unit has a relevant role)
+    if (unitRole && spinPieceNames && spinPieceNames.size > 0 &&
+        (unitRole === 'RADAR' || unitRole === 'SONAR' || unitRole === 'RADAR_SONAR' ||
+         unitRole === 'JAMMER' || unitRole === 'RADAR_JAMMER')) {
+        var roleLabel = ROLE_LABELS[unitRole] || unitRole;
+        modelScene.traverse(function(node) {
+            if (!node.isMesh) return;
+            if (shouldHideMesh(node.name)) return;
+            if (meshWeaponMap.has(node.uuid)) return; // weapons always take priority
+            if (spinPieceNames.has(node.name.toLowerCase())) {
+                unitRoleMeshMap.set(node.uuid, roleLabel);
+                roleGroupMeshes.push(node);
+            }
+        });
+    }
+
+    // Register constructor pieces as hoverable group
+    if (constructorPieceNames && constructorPieceNames.size > 0) {
+        modelScene.traverse(function(node) {
+            if (!node.isMesh) return;
+            if (shouldHideMesh(node.name)) return;
+            if (meshWeaponMap.has(node.uuid)) return; // weapons always take priority
+            if (constructorPieceNames.has(node.name.toLowerCase())) {
+                unitRoleMeshMap.set(node.uuid, 'Construction Module');
+                constructorGroupMeshes.push(node);
+            }
+        });
+    }
 
     function getDomWeaponNames() {
         var map = new Map();
@@ -145,12 +188,36 @@ window._barWeaponsSetup = function(THREE, opts) {
         }
     }
 
+    // Role highlight: highlight all meshes in the same group (constructor or radar/sonar spin)
+    var hoveredRoleLabel = null;
+    function setRoleHighlight(label) {
+        if (label === hoveredRoleLabel) return;
+        hoveredRoleLabel = label;
+        var group = null;
+        if (label === 'Construction Module') group = constructorGroupMeshes;
+        else if (label) group = roleGroupMeshes;
+        var highlightedUuids = new Set();
+        if (group) {
+            for (var i = 0; i < group.length; i++) highlightedUuids.add(group[i].uuid);
+        }
+        modelScene.traverse(function(child) {
+            if (!child.isMesh) return;
+            if (highlightedUuids.has(child.uuid)) {
+                child.userData._targetHighlight = 1.0;
+                child.userData._targetDim = 0.0;
+            } else {
+                child.userData._targetHighlight = 0.0;
+                child.userData._targetDim = label !== null ? 1.0 : 0.0;
+            }
+        });
+    }
+
     document.addEventListener('mouseover', function(e) {
         var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
         if (!el) return;
         var slug = el.getAttribute('data-wpn-slug');
         var wn = slugToWnum.get(slug);
-        if (wn !== undefined && visualMeshesByWeapon.has(wn)) setWeaponHighlight(wn);
+        if (wn !== undefined && visualMeshesByWeapon.has(wn)) { setRoleHighlight(null); setWeaponHighlight(wn); }
     });
     document.addEventListener('mouseout', function(e) {
         var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
@@ -159,12 +226,12 @@ window._barWeaponsSetup = function(THREE, opts) {
     });
 
     window.addEventListener('mousemove', function(e) {
-        if (window._barViewerAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); setWeaponHighlight(null); return; }
+        if (window._barViewerAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); setWeaponHighlight(null); setRoleHighlight(null); return; }
         if (meshWeaponMap.size === 0 && unitRoleMeshMap.size === 0) return;
         var rect = renderer.domElement.getBoundingClientRect();
         if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
             hideTooltip();
-            if (!e.target.closest('.uw-item-flex[data-wpn-slug]')) setWeaponHighlight(null);
+            if (!e.target.closest('.uw-item-flex[data-wpn-slug]')) { setWeaponHighlight(null); setRoleHighlight(null); }
             return;
         }
         pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -176,28 +243,36 @@ window._barWeaponsSetup = function(THREE, opts) {
             if (meshWeaponMap.has(hit.object.uuid)) {
                 var winfo = meshWeaponMap.get(hit.object.uuid);
                 showTooltip(e.clientX, e.clientY, winfo);
+                setRoleHighlight(null);
                 setWeaponHighlight(winfo.num);
             } else {
-                showRoleTooltip(e.clientX, e.clientY, unitRoleMeshMap.get(hit.object.uuid));
+                var rl = unitRoleMeshMap.get(hit.object.uuid);
+                showRoleTooltip(e.clientX, e.clientY, rl);
                 setWeaponHighlight(null);
+                setRoleHighlight(rl);
             }
         } else {
             hideTooltip();
             setWeaponHighlight(null);
+            setRoleHighlight(null);
         }
     });
 
     renderer.domElement.addEventListener('touchstart', function(e) {
-        if (meshWeaponMap.size === 0 || e.touches.length !== 1) return;
+        if ((meshWeaponMap.size === 0 && unitRoleMeshMap.size === 0) || e.touches.length !== 1) return;
         var touch = e.touches[0];
         var rect = renderer.domElement.getBoundingClientRect();
         pointer.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
         pointer.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
         raycaster.setFromCamera(pointer, camera);
         var hits = raycaster.intersectObject(modelScene, true);
-        var hit = hits.find(function(h) { return meshWeaponMap.has(h.object.uuid); });
+        var hit = hits.find(function(h) { return meshWeaponMap.has(h.object.uuid) || unitRoleMeshMap.has(h.object.uuid); });
         if (hit) {
-            showTooltip(touch.clientX, touch.clientY, meshWeaponMap.get(hit.object.uuid));
+            if (meshWeaponMap.has(hit.object.uuid)) {
+                showTooltip(touch.clientX, touch.clientY, meshWeaponMap.get(hit.object.uuid));
+            } else {
+                showRoleTooltip(touch.clientX, touch.clientY, unitRoleMeshMap.get(hit.object.uuid));
+            }
             clearTimeout(tooltipHideTimer);
             tooltipHideTimer = setTimeout(hideTooltip, 2000);
         }

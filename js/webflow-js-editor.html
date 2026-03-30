@@ -79,7 +79,7 @@
         const fGen = gui.addFolder('General');
         fGen.add(VIEWER_CONFIG, 'mouseRotateSpeed', 0.1, 2.0).onChange(v => controls.rotateSpeed = v);
         fGen.add(VIEWER_CONFIG, 'autoRotationSpeed', 0, 2.0);
-        fGen.addColor(VIEWER_CONFIG, 'teamColor').onChange(v => { if (material.userData.shader) material.userData.shader.uniforms.teamColor.value.set(v); });
+        fGen.addColor(VIEWER_CONFIG, 'teamColor').onChange(v => { if (material.userData.shader) material.userData.shader.uniforms.teamColor.value.set(v); if (window._orbUpdateTeamColor) window._orbUpdateTeamColor(v); });
         fGen.add(VIEWER_CONFIG, 'hdrUrl').onFinishChange(v => loadHDR(v));
         fGen.add(VIEWER_CONFIG, 'envMapIntensity', 0, 5).onChange(v => material.envMapIntensity = v);
         fGen.add(VIEWER_CONFIG, 'toneMappingExposure', 0.1, 4.0).onChange(v => renderer.toneMappingExposure = v);

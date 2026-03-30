@@ -430,7 +430,7 @@ def extract_stopwalking_pose(bos_content: str) -> Optional[List[BosTrack]]:
     return None
 
 
-def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrack]]]:
+def extract_walk_animation(bos_content: str, skip_activate_flypose: bool = False) -> Optional[Tuple[str, List[BosTrack]]]:
     """
     Extract walk animation tracks from a BOS script.
 
@@ -449,7 +449,7 @@ def extract_walk_animation(bos_content: str) -> Optional[Tuple[str, List[BosTrac
     """
     bos_content = _expand_macros(bos_content)
     _is_factory = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
-    now_rots = parse_create_now_rotations(bos_content, skip_activate_flypose=_is_factory)
+    now_rots = parse_create_now_rotations(bos_content, skip_activate_flypose=_is_factory or skip_activate_flypose)
 
     for func_name in ['Walk', 'StartMoving', 'Move', 'DoTheWalking', 'movelegs', 'walkscr', 'Movement']:
         body = _extract_function_body(bos_content, func_name)

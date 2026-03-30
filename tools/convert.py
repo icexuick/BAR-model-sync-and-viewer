@@ -87,19 +87,32 @@ def parse_lua_weapon_defs(lua_content: str) -> Dict[int, str]:
     return result
 
 
+def _parse_lua_int(lua_content: str, field: str) -> int:
+    """Extract an integer value for a unitdef field, return 0 if not found."""
+    m = re.search(rf'\b{field}\s*=\s*(\d+)', lua_content, re.IGNORECASE)
+    return int(m.group(1)) if m else 0
+
+
 def parse_lua_unit_role(lua_content: str) -> Optional[str]:
     """
     Detect the unit's role from unitdef Lua fields.
-    Returns one of: 'RADAR', 'JAMMER', 'SONAR', 'RADAR_JAMMER', 'MEX', or None.
+    Returns one of: 'RADAR', 'JAMMER', 'SONAR', 'RADAR_JAMMER',
+    'RADAR_SONAR', 'MEX', or None.
+    Radar/sonar must have range >= 100 to qualify.
     """
-    has_radar  = bool(re.search(r'\bradardistance\s*=\s*[1-9]', lua_content, re.IGNORECASE))
-    has_jammer = bool(re.search(r'\bradardistancejam\s*=\s*[1-9]', lua_content, re.IGNORECASE))
-    has_sonar  = bool(re.search(r'\bsonardistance\s*=\s*[1-9]', lua_content, re.IGNORECASE))
+    radar_range  = _parse_lua_int(lua_content, 'radardistance')
+    jammer_range = _parse_lua_int(lua_content, 'radardistancejam')
+    sonar_range  = _parse_lua_int(lua_content, 'sonardistance')
+    has_radar  = radar_range >= 100
+    has_jammer = jammer_range >= 100
+    has_sonar  = sonar_range >= 100
     has_mex    = bool(re.search(r'\bextractsmetal\s*=\s*[0-9]*\.[0-9]*[1-9]', lua_content, re.IGNORECASE))
     if has_radar and has_jammer:
         return 'RADAR_JAMMER'
     if has_jammer:
         return 'JAMMER'
+    if has_radar and has_sonar:
+        return 'RADAR_SONAR'
     if has_radar:
         return 'RADAR'
     if has_sonar:
@@ -107,6 +120,31 @@ def parse_lua_unit_role(lua_content: str) -> Optional[str]:
     if has_mex:
         return 'MEX'
     return None
+
+
+def parse_lua_builder_info(lua_content: str) -> bool:
+    """Check if the unit is a builder (has builder=true in unitdef)."""
+    return bool(re.search(r'\bbuilder\s*=\s*true', lua_content, re.IGNORECASE))
+
+
+def find_nano_parent_pieces(root_piece: 'S3OPiece') -> List[str]:
+    """Find parent pieces of 'nano*' pieces in the S3O tree.
+    These are the visual construction arm/nozzle meshes.
+    Returns list of original-case piece names (parents of nano pieces that have geometry)."""
+    results = []
+
+    def walk(piece, parent, grandparent):
+        if re.match(r'^nano', piece.name, re.IGNORECASE) and parent is not None:
+            # nano piece found — use parent if it has geometry, else grandparent
+            if len(parent.vertices) > 0:
+                results.append(parent.name)
+            elif grandparent is not None and len(grandparent.vertices) > 0:
+                results.append(grandparent.name)
+        for child in piece.children:
+            walk(child, piece, parent)
+
+    walk(root_piece, None, None)
+    return results
 
 
 def _build_piece_maps(root_piece: 'S3OPiece') -> Tuple[Dict[str, str], Dict[str, List[str]]]:
@@ -170,6 +208,10 @@ _TOGGLE_SKIP: set = {'legsolar', 'corlab'}
 # (e.g. FiringMode with 0.02s duration that jitters turret pieces)
 _LOOP_SKIP: set = {'leganavybattleship'}
 
+# Units whose Activate() should NOT be scanned as deploy pose
+# (solar panels: Activate→Go() opens panels, but we want the Create() closed pose)
+_SKIP_ACTIVATE_FLYPOSE: set = {'legsolar'}
+
 # Extra toggle tracks to inject into ActivateOpen/ActivateClose animations.
 # Format: { 'unitname': [('piece', axis, is_rotation, open_value, close_value, speed)] }
 # speed is degrees/sec (rotation) or units/sec (translation).
@@ -189,6 +231,7 @@ def convert_with_weapons(
     can_fly: bool = False,
     is_ship: bool = False,
     merge_map: Optional[Dict[int, int]] = None,
+    is_builder: bool = False,
 ) -> bytes:
     """Convert S3O to GLB with weapon metadata, walk/spin animation, and unit role."""
     if merge_map is None:
@@ -821,6 +864,13 @@ def convert_with_weapons(
             root_extras["can_fly"] = True
         if is_ship:
             root_extras["is_ship"] = True
+        if is_builder:
+            nano_parents = find_nano_parent_pieces(model.root_piece)
+            if nano_parents:
+                # Store unique parent names (lowercased for matching)
+                root_extras["constructor_pieces"] = list(dict.fromkeys(
+                    p.lower() for p in nano_parents
+                ))
         builder.nodes[root_idx]["extras"] = root_extras
         builder.scenes[0]["nodes"] = [root_idx]
 
@@ -831,7 +881,8 @@ def convert_with_weapons(
                 bos_content = f.read()
             _is_lua = is_lua_script(bos_content)
             now_rots = {}
-            result = extract_lua_walk_animation(bos_content) if _is_lua else extract_walk_animation(bos_content)
+            _skip_fly_pose = unit_name.lower() in _SKIP_ACTIVATE_FLYPOSE
+            result = extract_lua_walk_animation(bos_content) if _is_lua else extract_walk_animation(bos_content, skip_activate_flypose=_skip_fly_pose)
             if result:
                 anim_name, tracks, now_rots = result
                 # Strip translation/rotation tracks for units where body sway looks wrong
@@ -862,6 +913,7 @@ def convert_with_weapons(
                 # operational state (aircraft fly pose, ABM/popup deployed state, etc.).
                 # Skip Activate() scan only for factories (their Activate is door-open).
                 _is_factory = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
+                _skip_fly = _is_factory or _skip_fly_pose
                 _NEEDS_CREATE_TRANSLATIONS = {'legeconv'}
                 _needs_trans = unit_name.lower() in _NEEDS_CREATE_TRANSLATIONS
                 if _is_lua:
@@ -870,7 +922,7 @@ def convert_with_weapons(
                         include_translations=_needs_trans)
                 else:
                     now_rots = parse_create_now_rotations(
-                        bos_content, skip_activate_flypose=_is_factory,
+                        bos_content, skip_activate_flypose=_skip_fly,
                         include_translations=_needs_trans)
                 if now_rots:
                     print(f"  Applying {len(now_rots)} rest-pose transforms")
@@ -1283,7 +1335,8 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                    weapon_defs: Optional[Dict[int, str]] = None,
                    can_fly: bool = False,
                    is_ship: bool = False,
-                   unit_name: Optional[str] = None) -> Optional[str]:
+                   unit_name: Optional[str] = None,
+                   lua_content: Optional[str] = None) -> Optional[str]:
     """Convert a single S3O file to GLB."""
     model = parse_s3o(s3o_path)
     if unit_name is None:
@@ -1404,6 +1457,14 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     # Also extract unit_role (RADAR/JAMMER/SONAR) from the same file.
     # Search for {unit_name}.lua in the same BAR install tree as the script/s3o.
     unit_role: Optional[str] = None
+    is_builder: bool = False
+    # If lua_content was provided (from GitHub path), extract role/builder from it
+    if lua_content and weapon_defs is not None:
+        unit_role = parse_lua_unit_role(lua_content)
+        if unit_role:
+            print(f"  Unit role: {unit_role}")
+        if parse_lua_builder_info(lua_content):
+            is_builder = True
     if weapon_defs is None:
         def _native(p: str) -> str:
             """Convert MSYS/bash /c/... paths to Windows C:/... paths."""
@@ -1451,6 +1512,8 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                             unit_role = parse_lua_unit_role(lua_content)
                             if unit_role:
                                 print(f"  Unit role: {unit_role}")
+                            if parse_lua_builder_info(lua_content):
+                                is_builder = True
                             if re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE):
                                 can_fly = True
                             if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE):
@@ -1494,7 +1557,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
         except Exception:
             pass
 
-    glb_data = convert_with_weapons(model, weapon_info, anim_script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly, is_ship, merge_map)
+    glb_data = convert_with_weapons(model, weapon_info, anim_script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly, is_ship, merge_map, is_builder)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -1812,7 +1875,7 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
     weapon_defs = parse_lua_weapon_defs(lua_content)
     can_fly = bool(re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE))
     is_ship = bool(re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE))
-    glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs, can_fly=can_fly, is_ship=is_ship)
+    glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs, can_fly=can_fly, is_ship=is_ship, lua_content=lua_content)
     if glb_path and push and not info_only:
         push_glb_to_repo(glb_path, force=force)
     return glb_path

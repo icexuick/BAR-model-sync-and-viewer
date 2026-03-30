@@ -334,6 +334,8 @@
                 });
             }
 
+            const _orbH={corafus:92,armafus:88,legafus:96,corfus:74,legfus:33,armjuno:85,corjuno:85,legjuno:78,corgate:53,armgate:38,leggatet3:63,legdeflector:33,corgatet3:93,armgatet3:62,corafust3:184,armafust3:176,legafust3:192};
+            if(_orbH[unitName])box.expandByPoint(new THREE.Vector3(0,_orbH[unitName],0));
             const center = box.getCenter(new THREE.Vector3());
             modelScene.position.sub(center);
             const boundingSphere = new THREE.Sphere();
@@ -475,7 +477,7 @@
             }
             outputPass = new OutputPass();
             composer.addPass(outputPass);
-            window._editorCtx = { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2, ambientLight, ssaoPass, groundMesh, areShadowsVisible, scene, camera, composer, smaaPass, modelScene, lightGroup, buildpicMode, loadHDR: (url) => { rgbeLoader.load(url, (t) => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; }, undefined, (e) => console.error('HDR Error:', e)); } };
+            window._editorCtx = { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2, ambientLight, ssaoPass, groundMesh, areShadowsVisible, scene, camera, composer, smaaPass, modelScene, lightGroup, buildpicMode, unitName, timeUniform, teamColor, THREE, loadHDR: (url) => { rgbeLoader.load(url, (t) => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; }, undefined, (e) => console.error('HDR Error:', e)); } };
 
             function exportHighResPNG(w, h) {
                 const origW = container.offsetWidth, origH = container.offsetHeight;
