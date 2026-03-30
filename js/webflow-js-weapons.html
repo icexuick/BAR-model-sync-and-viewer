@@ -284,7 +284,7 @@ window._barWeaponsSetup = function(THREE, opts) {
         var rect = renderer.domElement.getBoundingClientRect();
         if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
             hideTooltip();
-            if (!e.target.closest('.uw-item-flex[data-wpn-slug]')) { setWeaponHighlight(null); setRoleHighlight(null); }
+            if (!e.target.closest('.uw-item-flex[data-wpn-slug]') && !e.target.closest('[us-type]')) { setWeaponHighlight(null); setRoleHighlight(null); }
             return;
         }
         pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
