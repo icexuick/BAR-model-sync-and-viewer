@@ -346,7 +346,7 @@
             if (aspect < 1) { distance = distance / aspect; }
             const finalDistance = distance * VIEWER_CONFIG.initialZoomMultiplier;
             if (buildpicMode) {
-                camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, 0);
+                camera.position.set(-finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
             } else {
                 camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
             }
