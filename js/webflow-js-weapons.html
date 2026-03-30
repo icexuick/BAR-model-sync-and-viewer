@@ -62,6 +62,7 @@ window._barWeaponsSetup = function(THREE, opts) {
     var constructorGroupMeshes = []; // meshes for constructor arm pieces
 
     // Register spin pieces as radar/sonar hoverable (only if unit has a relevant role)
+    console.log('[weapons] unitRole:', unitRole, 'spinPieceNames:', spinPieceNames, 'constructorPieceNames:', constructorPieceNames);
     if (unitRole && spinPieceNames && spinPieceNames.size > 0 &&
         (unitRole === 'RADAR' || unitRole === 'SONAR' || unitRole === 'RADAR_SONAR' ||
          unitRole === 'JAMMER' || unitRole === 'RADAR_JAMMER')) {
@@ -70,11 +71,14 @@ window._barWeaponsSetup = function(THREE, opts) {
             if (!node.isMesh) return;
             if (shouldHideMesh(node.name)) return;
             if (meshWeaponMap.has(node.uuid)) return; // weapons always take priority
-            if (spinPieceNames.has(node.name.toLowerCase())) {
+            var match = spinPieceNames.has(node.name.toLowerCase());
+            console.log('[weapons] mesh:', node.name, 'match:', match);
+            if (match) {
                 unitRoleMeshMap.set(node.uuid, roleLabel);
                 roleGroupMeshes.push(node);
             }
         });
+        console.log('[weapons] roleGroupMeshes:', roleGroupMeshes.length, 'unitRoleMeshMap size:', unitRoleMeshMap.size);
     }
 
     // Register constructor pieces as hoverable group
