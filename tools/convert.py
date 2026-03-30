@@ -127,28 +127,34 @@ def parse_lua_builder_info(lua_content: str) -> bool:
     return bool(re.search(r'\bbuilder\s*=\s*true', lua_content, re.IGNORECASE))
 
 
-def find_nano_parent_pieces(root_piece: 'S3OPiece') -> List[str]:
+def find_nano_parent_pieces(root_piece: 'S3OPiece', hide_pieces: set = None) -> List[str]:
     """Find parent pieces of 'nano*' pieces in the S3O tree.
     These are the visual construction arm/nozzle meshes.
     Returns list of original-case piece names (parents of nano pieces that have geometry).
-    Skips body/base pieces — only returns dedicated arm/nozzle meshes."""
+    Skips body/base pieces — only returns dedicated arm/nozzle meshes.
+    Hidden pieces (emitter markers) are treated as having no geometry."""
     results = []
+    hide_pieces = hide_pieces or set()
 
     # Collect all piece names that are "body" pieces (root, or its immediate child if root has 1 child)
     body_pieces = {id(root_piece)}
     if len(root_piece.children) == 1:
         body_pieces.add(id(root_piece.children[0]))
 
+    def has_real_geometry(piece):
+        """A piece has real geometry if it has vertices AND is not hidden."""
+        return len(piece.vertices) > 0 and piece.name.lower() not in hide_pieces
+
     def walk(piece, parent, grandparent):
         if re.match(r'^nano', piece.name, re.IGNORECASE):
-            # If the nano piece itself has geometry, use it directly
-            if len(piece.vertices) > 0:
+            # If the nano piece itself has real visible geometry, use it directly
+            if has_real_geometry(piece):
                 results.append(piece.name)
             elif parent is not None and id(parent) not in body_pieces:
                 # Use parent if it has geometry and isn't a body piece
-                if len(parent.vertices) > 0:
+                if has_real_geometry(parent):
                     results.append(parent.name)
-                elif grandparent is not None and id(grandparent) not in body_pieces and len(grandparent.vertices) > 0:
+                elif grandparent is not None and id(grandparent) not in body_pieces and has_real_geometry(grandparent):
                     results.append(grandparent.name)
         for child in piece.children:
             walk(child, piece, parent)
@@ -875,7 +881,7 @@ def convert_with_weapons(
         if is_ship:
             root_extras["is_ship"] = True
         if is_builder:
-            nano_parents = find_nano_parent_pieces(model.root_piece)
+            nano_parents = find_nano_parent_pieces(model.root_piece, hide_pieces)
             if nano_parents:
                 # Store unique parent names (lowercased for matching)
                 root_extras["constructor_pieces"] = list(dict.fromkeys(
