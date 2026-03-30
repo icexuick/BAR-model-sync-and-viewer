@@ -127,10 +127,10 @@ def parse_lua_builder_info(lua_content: str) -> bool:
     return bool(re.search(r'\bbuilder\s*=\s*true', lua_content, re.IGNORECASE))
 
 
-def find_nano_parent_pieces(root_piece: 'S3OPiece', hide_pieces: set = None) -> List[str]:
+def find_nano_parent_pieces(root_piece: 'S3OPiece', hide_pieces: set = None, is_factory: bool = False) -> List[str]:
     """Find parent pieces of nanolathe emitter pieces in the S3O tree.
-    Emitter patterns: nano*, flare* (some factories use flare as emitter name).
-    These are the visual construction arm/nozzle meshes.
+    Emitter patterns: *nano* always matches; flare* only on factories
+    (non-factory units use 'flare' for weapon fire-points, not nano emitters).
     Returns list of original-case piece names (parents of emitter pieces that have geometry).
     Skips body/base pieces — only returns dedicated arm/nozzle meshes.
     Hidden pieces (emitter markers) are treated as having no geometry."""
@@ -143,12 +143,12 @@ def find_nano_parent_pieces(root_piece: 'S3OPiece', hide_pieces: set = None) -> 
         body_pieces.add(id(root_piece.children[0]))
 
     # Emitter name patterns: *nano* always matches (catches lnano1, rnano2 etc);
-    # flare* only if hidden (to avoid matching weapon fire-point flares)
+    # flare* only on factories where hidden (non-factory flare = weapon fire-point)
     def is_emitter(piece):
         name = piece.name.lower()
         if 'nano' in name:
             return True
-        if re.match(r'^flare', name) and name in hide_pieces:
+        if is_factory and re.match(r'^flare', name) and name in hide_pieces:
             return True
         return False
 
@@ -892,16 +892,41 @@ def convert_with_weapons(
         if is_ship:
             root_extras["is_ship"] = True
         if is_builder:
-            nano_parents = find_nano_parent_pieces(model.root_piece, hide_pieces)
+            # Pre-detect factory status for emitter detection (flare* = nano on factories)
+            _is_factory_early = False
+            if script_path and os.path.isfile(script_path):
+                try:
+                    with open(script_path, 'r', errors='replace') as _ff:
+                        _bos_peek = _ff.read()
+                    _is_factory_early = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', _bos_peek, re.IGNORECASE))
+                except Exception:
+                    pass
+            nano_parents = find_nano_parent_pieces(model.root_piece, hide_pieces, _is_factory_early)
+            if not nano_parents and script_path and os.path.isfile(script_path):
+                # Fallback: parse StartBuilding() from BOS to find animated build-arm pieces
+                try:
+                    with open(script_path, 'r', errors='replace') as _ff:
+                        _bos_src = _ff.read()
+                    # Extract piece names moved in StartBuilding()
+                    _sb_match = re.search(r'StartBuilding\s*\([^)]*\)\s*\{(.*?)\n\}', _bos_src, re.DOTALL | re.IGNORECASE)
+                    if _sb_match:
+                        _sb_body = _sb_match.group(1)
+                        _moved = set(re.findall(r'\b(?:turn|move)\s+(\w+)\s+to\b', _sb_body, re.IGNORECASE))
+                        all_pieces_map = {p.name.lower(): p for p in model.all_pieces()}
+                        for pname in _moved:
+                            pl = pname.lower()
+                            if pl in all_pieces_map and len(all_pieces_map[pl].vertices) > 0 and pl not in (hide_pieces or set()):
+                                nano_parents.append(pname)
+                except Exception:
+                    pass
             if not nano_parents:
-                # Fallback: some factories have nano emitters directly on the body
-                # with no arm pieces — use 'pad' (build platform) if it exists,
+                # Final fallback: use 'pad' (build platform) if it exists,
                 # otherwise use the body piece itself so the whole factory highlights
                 all_pieces = {p.name.lower(): p for p in model.all_pieces()}
                 if 'pad' in all_pieces and len(all_pieces['pad'].vertices) > 0:
                     nano_parents = ['pad']
-                else:
-                    # Use the main body piece (root or its single child)
+                elif _is_factory_early:
+                    # Only use body fallback for factories, not regular builders
                     body = model.root_piece
                     if len(body.vertices) == 0 and len(body.children) == 1:
                         body = body.children[0]
