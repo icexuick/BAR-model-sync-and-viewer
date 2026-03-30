@@ -121,11 +121,12 @@
         unitName = unitName.replace('.glb', '').replace(/[^a-zA-Z0-9_-]/g, '');
 
         const urlParams = new URLSearchParams(window.location.search);
-        const rotateOff = urlParams.has('rotate-off');
+        const buildpicMode = urlParams.has('buildpic');
+        const rotateOff = buildpicMode || urlParams.has('rotate-off');
 
         let teamColorValue = 0x0043EE, texturePrefix = 'arm';
         let normalMapScaleY = 2.2, roughnessValue = 0.45;
-        let pbrEmissiveIntensityValue = 14.0, pulseMaxValue = 1.4;
+        let pbrEmissiveIntensityValue = 14.0, pulseMaxValue = buildpicMode ? 0.01 : 1.4;
         const cdnBase = 'https://cdn.jsdelivr.net/gh/icexuick/BAR-modelviewer@main/';
         const hdrFile = isMobile ? 'clarens_midday_1k_mobile.hdr' : 'clarens_midday_2k5.hdr';
         let armHdrUrl = cdnBase + 'hdr/' + hdrFile;
