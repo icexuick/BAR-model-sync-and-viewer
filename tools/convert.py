@@ -130,16 +130,26 @@ def parse_lua_builder_info(lua_content: str) -> bool:
 def find_nano_parent_pieces(root_piece: 'S3OPiece') -> List[str]:
     """Find parent pieces of 'nano*' pieces in the S3O tree.
     These are the visual construction arm/nozzle meshes.
-    Returns list of original-case piece names (parents of nano pieces that have geometry)."""
+    Returns list of original-case piece names (parents of nano pieces that have geometry).
+    Skips body/base pieces — only returns dedicated arm/nozzle meshes."""
     results = []
 
+    # Collect all piece names that are "body" pieces (root, or its immediate child if root has 1 child)
+    body_pieces = {id(root_piece)}
+    if len(root_piece.children) == 1:
+        body_pieces.add(id(root_piece.children[0]))
+
     def walk(piece, parent, grandparent):
-        if re.match(r'^nano', piece.name, re.IGNORECASE) and parent is not None:
-            # nano piece found — use parent if it has geometry, else grandparent
-            if len(parent.vertices) > 0:
-                results.append(parent.name)
-            elif grandparent is not None and len(grandparent.vertices) > 0:
-                results.append(grandparent.name)
+        if re.match(r'^nano', piece.name, re.IGNORECASE):
+            # If the nano piece itself has geometry, use it directly
+            if len(piece.vertices) > 0:
+                results.append(piece.name)
+            elif parent is not None and id(parent) not in body_pieces:
+                # Use parent if it has geometry and isn't a body piece
+                if len(parent.vertices) > 0:
+                    results.append(parent.name)
+                elif grandparent is not None and id(grandparent) not in body_pieces and len(grandparent.vertices) > 0:
+                    results.append(grandparent.name)
         for child in piece.children:
             walk(child, piece, parent)
 
@@ -1802,12 +1812,14 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
     with urllib.request.urlopen(req) as resp:
         lua_content = resp.read().decode("utf-8", errors="replace")
 
-    obj_match = re.search(r'objectName\s*=\s*["\']([^"\']+\.s3o)["\']', lua_content, re.IGNORECASE)
+    obj_match = re.search(r'objectName\s*=\s*["\']([^"\']+)["\']', lua_content, re.IGNORECASE)
     script_match = re.search(r'\bscript\s*=\s*["\']([^"\']+)["\']', lua_content, re.IGNORECASE)
 
     # objectName may contain a subpath like "Units/CORJUGG.s3o"
     # Keep directory casing as-is, only lowercase the filename
     s3o_raw = obj_match.group(1) if obj_match else f"{unit_name}.s3o"
+    if not s3o_raw.lower().endswith('.s3o'):
+        s3o_raw += '.s3o'
     s3o_parts = s3o_raw.replace("\\", "/").split("/")
     s3o_parts[-1] = s3o_parts[-1].lower()
     s3o_subpath = "/".join(s3o_parts)                  # e.g. "Units/corjugg.s3o"
@@ -1832,10 +1844,26 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
 
     s3o_local = os.path.join(s3o_dir, s3o_name)
     s3o_url = f"{BAR_RAW}/objects3d/{s3o_subpath}"
-    if _download_cached(s3o_url, s3o_local):
-        print(f"  Downloaded S3O: {s3o_name}")
-    else:
-        print(f"  S3O up-to-date: {s3o_name}")
+    s3o_downloaded = False
+    try:
+        if _download_cached(s3o_url, s3o_local):
+            print(f"  Downloaded S3O: {s3o_name}")
+        else:
+            print(f"  S3O up-to-date: {s3o_name}")
+        s3o_downloaded = True
+    except urllib.error.HTTPError as e:
+        if e.code == 404 and '/' not in s3o_subpath:
+            # objectname had no directory prefix — try Units/ subfolder
+            s3o_url = f"{BAR_RAW}/objects3d/Units/{s3o_subpath}"
+            if _download_cached(s3o_url, s3o_local):
+                print(f"  Downloaded S3O: {s3o_name} (from Units/ subfolder)")
+            else:
+                print(f"  S3O up-to-date: {s3o_name}")
+            s3o_downloaded = True
+        else:
+            raise
+    if not s3o_downloaded:
+        raise FileNotFoundError(f"S3O not found: {s3o_subpath}")
 
     script_ok = False
     script_local = None

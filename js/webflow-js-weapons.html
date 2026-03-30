@@ -61,8 +61,27 @@ window._barWeaponsSetup = function(THREE, opts) {
     var roleGroupMeshes = [];     // meshes for radar/sonar/jammer spin pieces
     var constructorGroupMeshes = []; // meshes for constructor arm pieces
 
+    // Filter spin pieces: remove any that are ancestors of other spin pieces
+    // (e.g. armrad turret is parent of dish — only dish should be hoverable)
+    if (spinPieceNames && spinPieceNames.size > 1) {
+        var spinNodes = [];
+        modelScene.traverse(function(node) {
+            if (spinPieceNames.has(node.name.toLowerCase())) spinNodes.push(node);
+        });
+        var ancestorNames = new Set();
+        for (var si = 0; si < spinNodes.length; si++) {
+            var p = spinNodes[si].parent;
+            while (p) {
+                if (spinPieceNames.has(p.name.toLowerCase())) ancestorNames.add(p.name.toLowerCase());
+                p = p.parent;
+            }
+        }
+        if (ancestorNames.size > 0) {
+            ancestorNames.forEach(function(n) { spinPieceNames.delete(n); });
+        }
+    }
+
     // Register spin pieces as radar/sonar hoverable (only if unit has a relevant role)
-    console.log('[weapons] unitRole:', unitRole, 'spinPieceNames:', spinPieceNames, 'constructorPieceNames:', constructorPieceNames);
     if (unitRole && spinPieceNames && spinPieceNames.size > 0 &&
         (unitRole === 'RADAR' || unitRole === 'SONAR' || unitRole === 'RADAR_SONAR' ||
          unitRole === 'JAMMER' || unitRole === 'RADAR_JAMMER')) {
@@ -71,14 +90,11 @@ window._barWeaponsSetup = function(THREE, opts) {
             if (!node.isMesh) return;
             if (shouldHideMesh(node.name)) return;
             if (meshWeaponMap.has(node.uuid)) return; // weapons always take priority
-            var match = spinPieceNames.has(node.name.toLowerCase());
-            console.log('[weapons] mesh:', node.name, 'match:', match);
-            if (match) {
+            if (spinPieceNames.has(node.name.toLowerCase())) {
                 unitRoleMeshMap.set(node.uuid, roleLabel);
                 roleGroupMeshes.push(node);
             }
         });
-        console.log('[weapons] roleGroupMeshes:', roleGroupMeshes.length, 'unitRoleMeshMap size:', unitRoleMeshMap.size);
     }
 
     // Register constructor pieces as hoverable group
