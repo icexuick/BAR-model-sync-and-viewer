@@ -390,6 +390,7 @@
 
                 const spinPieceNamesForAnim = spinPieceNames || new Set();
                 const spinClips = gltf.animations.filter(clip => {
+                    if (clip.name.startsWith('Spin_')) return true;
                     const afterUnderscore = clip.name.includes('_') ? clip.name.split('_').slice(1).join('_').toLowerCase() : '';
                     return spinPieceNamesForAnim.has(clip.name.toLowerCase()) ||
                            spinPieceNamesForAnim.has(afterUnderscore);
@@ -430,7 +431,7 @@
                 }
 
                 const toggleClipNames = new Set(['ActivateOpen', 'ActivateClose']);
-                const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c) && !toggleClipNames.has(c.name) && !c.name.startsWith('Fire_'));
+                const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c) && !toggleClipNames.has(c.name) && !c.name.startsWith('Fire_') && c.name !== 'StopWalking');
                 const walkClip = nonSpinClips.find(c => c.name.toLowerCase() === 'walk') || nonSpinClips[0];
                 if (walkClip) {
                     const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
@@ -457,6 +458,19 @@
                 renderer.domElement.style.cursor = '';
             }
             if (mixer && initFireAnims) initFireAnims(THREE, mixer, gltf.animations);
+
+            // Initialize projectile VFX system
+            let projectilesUpdate = null;
+            if (window._barProjectilesSetup) {
+                const projResult = window._barProjectilesSetup(THREE, {
+                    scene, camera, modelScene, unitName, weaponSummary, renderer
+                });
+                if (projResult) {
+                    projectilesUpdate = projResult.update;
+                    if (wpnResult.setProjectileFire) wpnResult.setProjectileFire(projResult.fireWeapon);
+                }
+            }
+
             const renderTarget = new THREE.WebGLRenderTarget(container.offsetWidth, container.offsetHeight, {
                 minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat,
                 alpha: true, type: isMobile ? THREE.UnsignedByteType : THREE.HalfFloatType, samples: isMobile ? 0 : 4
@@ -619,6 +633,7 @@
                     }
                     if (turntableActive && !didDrag && !isAltDown) modelScene.rotation.y += VIEWER_CONFIG.autoRotationSpeed * clockDelta;
                     if (mixer) mixer.update(clockDelta);
+                    if (projectilesUpdate) projectilesUpdate(clockDelta);
 
                     const lerpSpeed = 8.0 * clockDelta;
                     modelScene.traverse(child => {
