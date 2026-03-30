@@ -30,8 +30,8 @@
         keyLightIntensity: 0.7,
         keyLightColor: '#ffffff',
         keyLightX: 3, keyLightY: 6, keyLightZ: 2,
-        shadowRadius: 8,
-        shadowBlurSamples: 8,
+        shadowRadius: 4,
+        shadowBlurSamples: 12,
         fillLightIntensity: 0.1,
         fillLightColor: '#ffffff',
         fillLightX: -3, fillLightY: 2, fillLightZ: -4,
@@ -273,11 +273,17 @@
             scene.add(modelScene);
             modelScene.updateWorldMatrix(true, true);
 
+            // Detect factory early — needed for buildpic folded check and zoom exponent.
+            let isFactory = false;
+            modelScene.traverse(n => { if (n.userData && n.userData.is_factory) isFactory = true; });
+            const buildpicFolded = buildpicMode && (/com\d*$/.test(unitName) || unitName.includes('antinuke') || isFactory);
+
             // For autoplay_open units (defenses): compute bounding box at the
             // OPEN (end) pose so the camera frames the deployed state, not the
             // closed state with parts buried underground.
             let autoplayOpenForBox = false;
             modelScene.traverse(n => { if (n.userData && n.userData.autoplay_open) autoplayOpenForBox = true; });
+            if (buildpicFolded) autoplayOpenForBox = false;
             const openClipForBox = autoplayOpenForBox && gltf.animations
                 ? gltf.animations.find(c => c.name === 'ActivateOpen') : null;
             let savedTransforms = null;
@@ -334,14 +340,16 @@
             const objectRadius = boundingSphere.radius;
             const fovVertical = camera.fov * (Math.PI / 180);
             const refR = VIEWER_CONFIG.zoomReferenceRadius;
-            let isFactory = false;
-            modelScene.traverse(n => { if (n.userData && n.userData.is_factory) isFactory = true; });
             const exp = isFactory ? VIEWER_CONFIG.zoomExponentFactories : VIEWER_CONFIG.zoomExponent;
             let distance = Math.abs(refR / Math.sin(fovVertical / 2)) * Math.pow(objectRadius / refR, exp);
             const aspect = container.offsetWidth / container.offsetHeight;
             if (aspect < 1) { distance = distance / aspect; }
             const finalDistance = distance * VIEWER_CONFIG.initialZoomMultiplier;
-            camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
+            if (buildpicMode) {
+                camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, 0);
+            } else {
+                camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
+            }
             controls.target.set(0, 0, 0);
             controls.update();
             const maxDim = objectRadius * 2;
@@ -395,7 +403,7 @@
                     renderer.domElement.style.cursor = 'pointer';
                     let autoplayOpen = false;
                     modelScene.traverse(n => { if (n.userData && n.userData.autoplay_open) autoplayOpen = true; });
-                    if (autoplayOpen) {
+                    if (autoplayOpen && !buildpicFolded) {
                         setTimeout(() => {
                             toggleOpenAction = mixer.clipAction(openClip);
                             toggleOpenAction.setLoop(THREE.LoopOnce, 1);
