@@ -276,7 +276,8 @@
             // Detect factory early — needed for buildpic folded check and zoom exponent.
             let isFactory = false;
             modelScene.traverse(n => { if (n.userData && n.userData.is_factory) isFactory = true; });
-            const buildpicFolded = buildpicMode && (/com\d*$/.test(unitName) || unitName.includes('antinuke') || isFactory);
+            const isConstructor = /com\d*$/.test(unitName) || /^(arm|cor|leg)(a?c[kvas])\d*$/.test(unitName);
+            const buildpicFolded = buildpicMode && (isConstructor || unitName.includes('antinuke') || isFactory);
 
             // For autoplay_open units (defenses): compute bounding box at the
             // OPEN (end) pose so the camera frames the deployed state, not the
