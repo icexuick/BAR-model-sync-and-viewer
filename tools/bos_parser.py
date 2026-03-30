@@ -209,11 +209,14 @@ def parse_bos(filepath: str) -> BOSParseResult:
             result.weapons[wnum]._update_all()
 
         # Detect disabled weapons: AimWeapon returns 0 with no turn/move commands
-        # (e.g. drone controllers that don't actually aim)
+        # and no call-script (indirect aiming) and no return(1) (conditional aiming).
+        # e.g. drone controllers that don't actually aim
         stripped = re.sub(r'//[^\n]*', '', body)  # strip comments
         has_return_0 = bool(re.search(r'\breturn\s*\(\s*0\s*\)', stripped, re.IGNORECASE))
+        has_return_1 = bool(re.search(r'\breturn\s*\(\s*1\s*\)', stripped, re.IGNORECASE))
         has_turn_move = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', stripped, re.IGNORECASE))
-        if has_return_0 and not has_turn_move:
+        has_call_script = bool(re.search(r'\bcall-script\b', stripped, re.IGNORECASE))
+        if has_return_0 and not has_turn_move and not has_call_script and not has_return_1:
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
             result.weapons[wnum].aim_disabled = True
