@@ -81,20 +81,25 @@ window._barWeaponsSetup = function(THREE, opts) {
         }
     }
 
-    // Register spin pieces as radar/sonar hoverable (only if unit has a relevant role)
+    // Register spin pieces + their subtrees as radar/sonar hoverable
     if (unitRole && spinPieceNames && spinPieceNames.size > 0 &&
         (unitRole === 'RADAR' || unitRole === 'SONAR' || unitRole === 'RADAR_SONAR' ||
          unitRole === 'JAMMER' || unitRole === 'RADAR_JAMMER')) {
         var roleLabel = ROLE_LABELS[unitRole] || unitRole;
+        // Collect all meshes in subtrees rooted at spin pieces
+        var spinRoots = [];
         modelScene.traverse(function(node) {
-            if (!node.isMesh) return;
-            if (shouldHideMesh(node.name)) return;
-            if (meshWeaponMap.has(node.uuid)) return; // weapons always take priority
-            if (spinPieceNames.has(node.name.toLowerCase())) {
+            if (spinPieceNames.has(node.name.toLowerCase())) spinRoots.push(node);
+        });
+        for (var ri = 0; ri < spinRoots.length; ri++) {
+            spinRoots[ri].traverse(function(node) {
+                if (!node.isMesh) return;
+                if (shouldHideMesh(node.name)) return;
+                if (meshWeaponMap.has(node.uuid)) return;
                 unitRoleMeshMap.set(node.uuid, roleLabel);
                 roleGroupMeshes.push(node);
-            }
-        });
+            });
+        }
     }
 
     // Register constructor pieces as hoverable group
@@ -232,17 +237,45 @@ window._barWeaponsSetup = function(THREE, opts) {
         });
     }
 
+    // Map us-type attribute values to the role highlight label
+    var US_TYPE_MAP = { radar: null, sonar: null, nano: 'Construction Module' };
+    if (unitRole && roleGroupMeshes.length > 0) {
+        var rl = ROLE_LABELS[unitRole] || unitRole;
+        if (unitRole.indexOf('RADAR') !== -1) US_TYPE_MAP.radar = rl;
+        if (unitRole.indexOf('SONAR') !== -1) US_TYPE_MAP.sonar = rl;
+        if (unitRole === 'JAMMER' || unitRole.indexOf('JAMMER') !== -1) US_TYPE_MAP.jammer = rl;
+    }
+
     document.addEventListener('mouseover', function(e) {
-        var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
-        if (!el) return;
-        var slug = el.getAttribute('data-wpn-slug');
-        var wn = slugToWnum.get(slug);
-        if (wn !== undefined && visualMeshesByWeapon.has(wn)) { setRoleHighlight(null); setWeaponHighlight(wn); }
+        // Weapon DOM hover
+        var wpnEl = e.target.closest('.uw-item-flex[data-wpn-slug]');
+        if (wpnEl) {
+            var slug = wpnEl.getAttribute('data-wpn-slug');
+            var wn = slugToWnum.get(slug);
+            if (wn !== undefined && visualMeshesByWeapon.has(wn)) { setRoleHighlight(null); setWeaponHighlight(wn); }
+            return;
+        }
+        // Unit stat DOM hover (radar/sonar/nano)
+        var statEl = e.target.closest('[us-type]');
+        if (statEl) {
+            var usType = statEl.getAttribute('us-type');
+            if (usType === 'nano' && constructorGroupMeshes.length > 0) {
+                setWeaponHighlight(null); setRoleHighlight('Construction Module');
+            } else if (US_TYPE_MAP[usType]) {
+                setWeaponHighlight(null); setRoleHighlight(US_TYPE_MAP[usType]);
+            }
+        }
     });
     document.addEventListener('mouseout', function(e) {
-        var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
-        if (!el) return;
-        if (!el.contains(e.relatedTarget)) setWeaponHighlight(null);
+        var wpnEl = e.target.closest('.uw-item-flex[data-wpn-slug]');
+        if (wpnEl) {
+            if (!wpnEl.contains(e.relatedTarget)) setWeaponHighlight(null);
+            return;
+        }
+        var statEl = e.target.closest('[us-type]');
+        if (statEl && !statEl.contains(e.relatedTarget)) {
+            setRoleHighlight(null);
+        }
     });
 
     window.addEventListener('mousemove', function(e) {
