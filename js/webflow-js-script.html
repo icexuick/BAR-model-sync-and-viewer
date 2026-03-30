@@ -120,6 +120,9 @@
         }
         unitName = unitName.replace('.glb', '').replace(/[^a-zA-Z0-9_-]/g, '');
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const rotateOff = urlParams.has('rotate-off');
+
         let teamColorValue = 0x0043EE, texturePrefix = 'arm';
         let normalMapScaleY = 2.2, roughnessValue = 0.45;
         let pbrEmissiveIntensityValue = 14.0, pulseMaxValue = 1.4;
@@ -196,7 +199,7 @@
         let toggleOpenClip = null, toggleCloseClip = null, toggleOpenAction = null, toggleCloseAction = null, toggleState = false, toggleAnimating = false;
         const timeUniform = { value: 0.0 };
         const clock = new THREE.Clock();
-        let isAltDown = false, isTurntableEnabledByUser = true, turntableActive = false, isInteracting = false, idleTimer = null;
+        let isAltDown = false, isTurntableEnabledByUser = !rotateOff, turntableActive = false, isInteracting = false, idleTimer = null;
         let areShadowsVisible = true;
         let composer, renderPass, ssaoPass, smaaPass, outputPass;
         const textureLoader = new THREE.TextureLoader();
