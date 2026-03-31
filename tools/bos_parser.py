@@ -170,7 +170,7 @@ def parse_bos(filepath: str) -> BOSParseResult:
         # Detect BOS barrel-alternating: "pieceIndex = <piece> + <variable>"
         # variable toggles 0/1 each shot, so piece and its adjacent piece (by index) both fire.
         # We also look for the mirror piece by name (l↔r prefix/suffix swap).
-        gun_alt = re.search(r'pieceIndex\s*=\s*(\w+)\s*\+\s*(\w+)\s*;', body, re.IGNORECASE)
+        gun_alt = re.search(r'(?:piecenum|pieceIndex)\s*=\s*(\w+)\s*\+\s*(\w+)\s*;', body, re.IGNORECASE)
         if gun_alt and gun_alt.group(2).lower() in result.pieces:
             gun_alt = None  # second token is a piece name, not a variable — skip
         if gun_alt:
@@ -195,14 +195,15 @@ def parse_bos(filepath: str) -> BOSParseResult:
                     alt_piece = None
                 if alt_piece and alt_piece not in all_refs:
                     all_refs = [base_piece, alt_piece]
-        # Fallback: "pieceIndex = <variable>;" where variable is NOT a piece name.
-        # The variable acts as a piece index, cycled in FireWeaponN.
-        # Resolve by finding all assignments to that variable in the full script.
+        # Fallback: "piecenum = <variable>;" or "pieceIndex = <variable>;" where
+        # variable is NOT a piece name. The variable acts as a piece index, cycled
+        # in FireWeaponN. Resolve by finding all assignments to that variable.
+        # BOS uses "piecenum" (the function argument), some scripts use "pieceIndex".
         if not all_refs:
-            var_assign = re.search(r'pieceIndex\s*=\s*(\w+)\s*;', body, re.IGNORECASE)
+            var_assign = re.search(r'(?:piecenum|pieceIndex)\s*=\s*(\w+)\s*;', body, re.IGNORECASE)
             if var_assign:
                 var_name = var_assign.group(1).lower()
-                if var_name not in result.pieces and var_name != 'pieceindex':
+                if var_name not in result.pieces and var_name not in ('piecenum', 'pieceindex'):
                     # Find all assignments: var = <piece_or_number>
                     assigned_pieces = set()
                     for asgn in re.finditer(
@@ -232,8 +233,9 @@ def parse_bos(filepath: str) -> BOSParseResult:
                         else:
                             all_refs = sorted(assigned_pieces, key=lambda p: result.pieces.index(p))
                     else:
-                        # Variable assigned numeric values (e.g. gun_1 = 0, toggled with !gun_1)
-                        # Collect numeric assignments and !var toggles
+                        # Variable assigned numeric values (BOS 1-based piece indices).
+                        # e.g. guncount = 7; guncount = 10; guncount = 13;
+                        # These are 1-based indices into the piece declaration list.
                         has_toggle = bool(re.search(
                             rf'{re.escape(var_name)}\s*=\s*!\s*{re.escape(var_name)}', clean, re.IGNORECASE
                         ))
@@ -244,15 +246,25 @@ def parse_bos(filepath: str) -> BOSParseResult:
                             numeric_vals.add(int(asgn.group(1)))
                         if has_toggle:
                             numeric_vals.update({0, 1})
-                        # Map indices to flare/fire pieces
-                        flare_pieces = [p for p in result.pieces if p.startswith('flare') or p.startswith('fire')]
-                        if flare_pieces and numeric_vals:
-                            max_idx = max(numeric_vals)
-                            all_refs = [flare_pieces[i] for i in sorted(numeric_vals)
-                                        if i < len(flare_pieces)]
-                        elif numeric_vals:
-                            all_refs = [result.pieces[i] for i in sorted(numeric_vals)
-                                        if i < len(result.pieces)]
+                        if numeric_vals:
+                            # BOS piece indices are 1-based: convert to 0-based for list lookup
+                            # First try 1-based (standard BOS convention)
+                            refs_1based = [result.pieces[v - 1] for v in sorted(numeric_vals)
+                                           if 1 <= v <= len(result.pieces)]
+                            # Also try 0-based as fallback
+                            refs_0based = [result.pieces[v] for v in sorted(numeric_vals)
+                                           if 0 <= v < len(result.pieces)]
+                            # Prefer whichever resolves to flare/fire pieces
+                            def _has_fire_pieces(refs):
+                                return any(p.startswith('flare') or p.startswith('fire') for p in refs)
+                            if refs_1based and _has_fire_pieces(refs_1based):
+                                all_refs = refs_1based
+                            elif refs_0based and _has_fire_pieces(refs_0based):
+                                all_refs = refs_0based
+                            elif refs_1based:
+                                all_refs = refs_1based
+                            elif refs_0based:
+                                all_refs = refs_0based
         if all_refs:
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
