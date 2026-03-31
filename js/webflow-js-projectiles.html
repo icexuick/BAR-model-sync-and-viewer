@@ -86,6 +86,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         return new THREE.CanvasTexture(c);
     }
     var FT = makeRadialTex(64,64);
+    var LT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cb7ec93332ab9d5fadf7c2_flare2.png');
     var sc = document.createElement('canvas'); sc.width=128; sc.height=32;
     var sx = sc.getContext('2d'), sg = sx.createLinearGradient(0,16,128,16);
     sg.addColorStop(0,'rgba(255,255,255,0)'); sg.addColorStop(0.3,'rgba(255,255,255,0.8)');
@@ -181,12 +182,15 @@ window._barProjectilesSetup = function(THREE, opts) {
         }
         var bm=cyl(thick,thick*0.5,col,0.85,998), bc=cyl(thick*0.4,thick*0.12,0xffffff,0.95,999);
         var fs = thick*24, fl=addS(mkSprite(col,fs,1),999); fl.position.copy(o.pos);
+        var lf=addS(mkSprite(col,fs*2.2,0.9,LT),999); lf.position.copy(o.pos);
         var endPos=o.pos.clone().add(o.dir.clone().multiplyScalar(len));
         var ef=addS(mkSprite(col,fs*0.6,0.8),999); ef.position.copy(endPos);
+        var ef2=addS(mkSprite(col,fs*1.4,0.75,LT),999); ef2.position.copy(endPos);
         muzzleLight(o.pos,col,15*sc,dur);
         active.push({type:'beam',age:0,maxAge:dur,extras:{
             beam:bm.mesh,beamMat:bm.m,beamCore:bc.mesh,coreMat:bc.m,
-            flare:fl,flareMat:fl.material,endFlare:ef,endFlareMat:ef.material,
+            flare:fl,flareMat:fl.material,laserFlare:lf,laserFlareMat:lf.material,
+            endFlare:ef,endFlareMat:ef.material,endLaserFlare:ef2,endLaserFlareMat:ef2.material,
             node:o.node,beamLen:len}});
     }
 
@@ -212,9 +216,10 @@ window._barProjectilesSetup = function(THREE, opts) {
         }
         var rm=cyl(thick,thick*0.6,col,0.85,998), rc=cyl(thick*0.35,thick*0.2,0xffffff,0.95,999);
         var fl=addS(mkSprite(col,sc*14,1),999); fl.position.copy(o.pos);
+        var lf=addS(mkSprite(col,sc*28,0.85,LT),999); lf.position.copy(o.pos);
         muzzleLight(o.pos,col,8*sc,0.1);
         active.push({type:'laserround',age:0,maxAge:(d.range||400)/spd,velocity:dir.clone().multiplyScalar(spd),
-            extras:{round:rm.mesh,roundMat:rm.m,core:rc.mesh,coreMat:rc.m,flare:fl,flareMat:fl.material,dir}});
+            extras:{round:rm.mesh,roundMat:rm.m,core:rc.mesh,coreMat:rc.m,flare:fl,flareMat:fl.material,laserFlare:lf,laserFlareMat:lf.material,dir}});
     }
 
     function spawnPlasma(o, d) {
@@ -307,11 +312,13 @@ window._barProjectilesSetup = function(THREE, opts) {
                         var cur=refreshNode(ex.node);
                         ex.beam.position.copy(cur.pos); ex.beam.lookAt(cur.pos.clone().add(cur.dir));
                         ex.beamCore.position.copy(cur.pos); ex.beamCore.lookAt(cur.pos.clone().add(cur.dir));
-                        ex.flare.position.copy(cur.pos);
-                        ex.endFlare.position.copy(cur.pos.clone().add(cur.dir.clone().multiplyScalar(ex.beamLen)));
+                        ex.flare.position.copy(cur.pos); ex.laserFlare.position.copy(cur.pos);
+                        var ep2=cur.pos.clone().add(cur.dir.clone().multiplyScalar(ex.beamLen));
+                        ex.endFlare.position.copy(ep2); ex.endLaserFlare.position.copy(ep2);
                     }
                     ex.beamMat.opacity=0.85*(1-t*t); ex.coreMat.opacity=0.95*(1-t*t);
                     ex.flareMat.opacity=1-t; ex.endFlareMat.opacity=0.8*(1-t);
+                    ex.laserFlareMat.opacity=(1-t)*0.9; ex.endLaserFlareMat.opacity=0.75*(1-t);
                     ex.flare.scale.multiplyScalar(0.97); ex.endFlare.scale.multiplyScalar(0.97); break;
                 case 'bolt':
                     if (p.velocity) ex.bolt.position.addScaledVector(p.velocity,dt);
@@ -320,9 +327,11 @@ window._barProjectilesSetup = function(THREE, opts) {
                     if (p.velocity) {
                         ex.round.position.addScaledVector(p.velocity,dt); ex.round.lookAt(ex.round.position.clone().add(ex.dir));
                         ex.core.position.copy(ex.round.position); ex.core.lookAt(ex.core.position.clone().add(ex.dir));
+                        ex.laserFlare.position.copy(ex.round.position);
                     }
                     ex.roundMat.opacity=0.85*(1-t*0.5); ex.coreMat.opacity=0.95*(1-t*0.5);
-                    ex.flareMat.opacity=Math.max(0,1-t*6); ex.flare.scale.multiplyScalar(0.9); break;
+                    ex.flareMat.opacity=Math.max(0,1-t*6); ex.flare.scale.multiplyScalar(0.9);
+                    ex.laserFlareMat.opacity=0.85*(1-t*0.4); break;
                 case 'plasma':
                     if (p.velocity) { ex.ball.position.addScaledVector(p.velocity,dt); ex.core.position.copy(ex.ball.position); if (p.gravity) p.velocity.y+=p.gravity*dt; }
                     ex.ballMat.opacity=0.95*(1-t*0.7); ex.coreMat.opacity=0.7*(1-t);
@@ -364,9 +373,9 @@ window._barProjectilesSetup = function(THREE, opts) {
         function rm() { for (var i=0;i<arguments.length;i++) scene.remove(arguments[i]); }
         function dis() { for (var i=0;i<arguments.length;i++) if (arguments[i]) arguments[i].dispose(); }
         switch(p.type) {
-            case 'beam': rm(ex.beam,ex.beamCore,ex.flare,ex.endFlare); dis(ex.beam.geometry,ex.beamMat,ex.beamCore.geometry,ex.coreMat,ex.flareMat,ex.endFlareMat); break;
+            case 'beam': rm(ex.beam,ex.beamCore,ex.flare,ex.laserFlare,ex.endFlare,ex.endLaserFlare); dis(ex.beam.geometry,ex.beamMat,ex.beamCore.geometry,ex.coreMat,ex.flareMat,ex.laserFlareMat,ex.endFlareMat,ex.endLaserFlareMat); break;
             case 'bolt': rm(ex.bolt,ex.flare); dis(ex.boltMat,ex.flareMat); break;
-            case 'laserround': rm(ex.round,ex.core,ex.flare); dis(ex.round.geometry,ex.roundMat,ex.core.geometry,ex.coreMat,ex.flareMat); break;
+            case 'laserround': rm(ex.round,ex.core,ex.flare,ex.laserFlare); dis(ex.round.geometry,ex.roundMat,ex.core.geometry,ex.coreMat,ex.flareMat,ex.laserFlareMat); break;
             case 'plasma': rm(ex.ball,ex.core,ex.flash); dis(ex.ballMat,ex.coreMat,ex.flashMat); break;
             case 'rocket': rm(ex.group); dis(ex.bodyMat,ex.noseMat,ex.exhMat); ex.group.traverse(function(c){if(c.geometry)c.geometry.dispose();}); break;
             case 'flame': rm(ex.sprite); dis(ex.mat); break;
