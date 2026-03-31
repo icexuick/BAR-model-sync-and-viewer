@@ -167,10 +167,12 @@ def parse_bos(filepath: str) -> BOSParseResult:
         leg_m = re.match(rf'({_LEGACY_NAMES})', suffix, re.IGNORECASE)
         wnum = int(num_m.group(1)) if num_m else _LEGACY_WEAPON_MAP.get((leg_m.group(1) if leg_m else '').lower(), 1)
         all_refs = _extract_all_pieces_from_function(body, result.pieces)
-        # Detect BOS barrel-alternating: "pieceIndex = <piece> + gun_N"
-        # gun_N toggles 0/1 each shot, so piece and its adjacent piece (by index) both fire.
+        # Detect BOS barrel-alternating: "pieceIndex = <piece> + <variable>"
+        # variable toggles 0/1 each shot, so piece and its adjacent piece (by index) both fire.
         # We also look for the mirror piece by name (l↔r prefix/suffix swap).
-        gun_alt = re.search(r'pieceIndex\s*=\s*(\w+)\s*\+\s*gun_\d+', body, re.IGNORECASE)
+        gun_alt = re.search(r'pieceIndex\s*=\s*(\w+)\s*\+\s*(\w+)\s*;', body, re.IGNORECASE)
+        if gun_alt and gun_alt.group(2).lower() in result.pieces:
+            gun_alt = None  # second token is a piece name, not a variable — skip
         if gun_alt:
             base_piece = gun_alt.group(1).lower()
             if base_piece in result.pieces:
@@ -193,6 +195,64 @@ def parse_bos(filepath: str) -> BOSParseResult:
                     alt_piece = None
                 if alt_piece and alt_piece not in all_refs:
                     all_refs = [base_piece, alt_piece]
+        # Fallback: "pieceIndex = <variable>;" where variable is NOT a piece name.
+        # The variable acts as a piece index, cycled in FireWeaponN.
+        # Resolve by finding all assignments to that variable in the full script.
+        if not all_refs:
+            var_assign = re.search(r'pieceIndex\s*=\s*(\w+)\s*;', body, re.IGNORECASE)
+            if var_assign:
+                var_name = var_assign.group(1).lower()
+                if var_name not in result.pieces and var_name != 'pieceindex':
+                    # Find all assignments: var = <piece_or_number>
+                    assigned_pieces = set()
+                    for asgn in re.finditer(
+                        rf'\b{re.escape(var_name)}\s*=\s*(\w+)\s*;', clean, re.IGNORECASE
+                    ):
+                        val = asgn.group(1).lower()
+                        if val in result.pieces:
+                            assigned_pieces.add(val)
+                    if assigned_pieces:
+                        # Variable is assigned piece names (e.g. gun_1 = flare1)
+                        # Check if there's a ++var pattern → cycling through consecutive pieces
+                        has_increment = bool(re.search(
+                            rf'\+\+\s*{re.escape(var_name)}', clean, re.IGNORECASE
+                        ))
+                        if has_increment and len(assigned_pieces) == 1:
+                            # Cycling from initial piece upward — find the limit
+                            start_piece = list(assigned_pieces)[0]
+                            start_idx = result.pieces.index(start_piece)
+                            limit_m = re.search(
+                                rf'{re.escape(var_name)}\s*==\s*(\d+)', clean, re.IGNORECASE
+                            )
+                            count = int(limit_m.group(1)) if limit_m else 2
+                            all_refs = [result.pieces[i] for i in range(start_idx, min(start_idx + count, len(result.pieces)))
+                                        if result.pieces[i].startswith('flare') or result.pieces[i].startswith('fire')]
+                            if not all_refs:
+                                all_refs = [result.pieces[i] for i in range(start_idx, min(start_idx + count, len(result.pieces)))]
+                        else:
+                            all_refs = sorted(assigned_pieces, key=lambda p: result.pieces.index(p))
+                    else:
+                        # Variable assigned numeric values (e.g. gun_1 = 0, toggled with !gun_1)
+                        # Collect numeric assignments and !var toggles
+                        has_toggle = bool(re.search(
+                            rf'{re.escape(var_name)}\s*=\s*!\s*{re.escape(var_name)}', clean, re.IGNORECASE
+                        ))
+                        numeric_vals = set()
+                        for asgn in re.finditer(
+                            rf'\b{re.escape(var_name)}\s*=\s*(\d+)\s*;', clean, re.IGNORECASE
+                        ):
+                            numeric_vals.add(int(asgn.group(1)))
+                        if has_toggle:
+                            numeric_vals.update({0, 1})
+                        # Map indices to flare/fire pieces
+                        flare_pieces = [p for p in result.pieces if p.startswith('flare') or p.startswith('fire')]
+                        if flare_pieces and numeric_vals:
+                            max_idx = max(numeric_vals)
+                            all_refs = [flare_pieces[i] for i in sorted(numeric_vals)
+                                        if i < len(flare_pieces)]
+                        elif numeric_vals:
+                            all_refs = [result.pieces[i] for i in sorted(numeric_vals)
+                                        if i < len(result.pieces)]
         if all_refs:
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
