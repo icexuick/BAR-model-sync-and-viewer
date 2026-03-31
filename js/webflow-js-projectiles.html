@@ -319,7 +319,7 @@ window._barProjectilesSetup = function(THREE, opts) {
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         var flare = new THREE.Sprite(flareMat);
-        var flareSize = thick * 8;
+        var flareSize = thick * 24;
         flare.scale.set(flareSize, flareSize, 1);
         flare.position.copy(origin.pos);
         flare.renderOrder = 999;
@@ -337,7 +337,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         endFlare.renderOrder = 999;
         scene.add(endFlare);
 
-        spawnMuzzleLight(origin.pos, color, 5.0 * scale, duration);
+        spawnMuzzleLight(origin.pos, color, 15.0 * scale, duration);
 
         activeProjectiles.push({
             type: 'beam', age: 0, maxAge: duration,
@@ -371,12 +371,12 @@ window._barProjectilesSetup = function(THREE, opts) {
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         var flare = new THREE.Sprite(flareMat);
-        flare.scale.set(scale * 4, scale * 4, 1);
+        flare.scale.set(scale * 12, scale * 12, 1);
         flare.position.copy(origin.pos);
         flare.renderOrder = 999;
         scene.add(flare);
 
-        spawnMuzzleLight(origin.pos, color, 2.0 * scale, 0.12);
+        spawnMuzzleLight(origin.pos, color, 6.0 * scale, 0.12);
 
         activeProjectiles.push({
             type: 'bolt', age: 0, maxAge: 1.5,
@@ -420,12 +420,12 @@ window._barProjectilesSetup = function(THREE, opts) {
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         var flash = new THREE.Sprite(flashMat);
-        flash.scale.set(ballSize * 5, ballSize * 5, 1);
+        flash.scale.set(ballSize * 15, ballSize * 15, 1);
         flash.position.copy(origin.pos);
         flash.renderOrder = 999;
         scene.add(flash);
 
-        spawnMuzzleLight(origin.pos, 0xffffcc, 4.0 * scale, 0.1);
+        spawnMuzzleLight(origin.pos, 0xffffcc, 12.0 * scale, 0.1);
 
         activeProjectiles.push({
             type: 'plasma', age: 0, maxAge: 2.0,
@@ -475,7 +475,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         // Smoke trail particles
         var smokeParticles = [];
 
-        spawnMuzzleLight(origin.pos, 0xff6600, 3.0 * scale, 0.15);
+        spawnMuzzleLight(origin.pos, 0xff6600, 9.0 * scale, 0.15);
 
         activeProjectiles.push({
             type: 'rocket', age: 0, maxAge: 2.5,
@@ -490,7 +490,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         var speed = Math.max(wpnData.velocity * 0.54, 90);
         var count = 8;
 
-        spawnMuzzleLight(origin.pos, 0xff6600, 4.0 * scale, 0.2);
+        spawnMuzzleLight(origin.pos, 0xff6600, 12.0 * scale, 0.2);
 
         for (var i = 0; i < count; i++) {
             var t = i / count;
@@ -569,12 +569,12 @@ window._barProjectilesSetup = function(THREE, opts) {
             blending: THREE.AdditiveBlending, depthWrite: false
         });
         var flare = new THREE.Sprite(flareMat);
-        flare.scale.set(scale * 5, scale * 5, 1);
+        flare.scale.set(scale * 15, scale * 15, 1);
         flare.position.copy(origin.pos);
         flare.renderOrder = 999;
         scene.add(flare);
 
-        spawnMuzzleLight(origin.pos, color, 5.0 * scale, duration);
+        spawnMuzzleLight(origin.pos, color, 15.0 * scale, duration);
 
         activeProjectiles.push({
             type: 'lightning', age: 0, maxAge: duration,
@@ -609,7 +609,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         glow.renderOrder = 999;
         scene.add(glow);
 
-        spawnMuzzleLight(origin.pos, color, 8.0, 0.3);
+        spawnMuzzleLight(origin.pos, color, 24.0, 0.3);
 
         activeProjectiles.push({
             type: 'dgun', age: 0, maxAge: 1.8,
