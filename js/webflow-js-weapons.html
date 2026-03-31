@@ -478,14 +478,33 @@ window._barWeaponsSetup = function(THREE, opts) {
             }
         });
 
-        // Click on DOM weapon list item → fire (always register, even without fire anims)
-        document.addEventListener('click', function(e) {
-            if (!e.target.closest('.uw-img')) return;
-            var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
+        // Click / hold on .uw-img → fire weapon
+        var _holdInterval = null;
+        function _fireFromEl(el) {
             if (!el) return;
             var slug = el.getAttribute('data-wpn-slug');
             var wnum = slugToWnum.get(slug);
             if (wnum !== undefined) playFire(wnum);
+        }
+        function _stopHold() {
+            if (_holdInterval) { clearInterval(_holdInterval); _holdInterval = null; }
+        }
+        document.addEventListener('mousedown', function(e) {
+            if (!e.target.closest('.uw-img')) return;
+            var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
+            if (!el) return;
+            var reload = parseFloat(el.getAttribute('data-wpn-reload') || el.querySelector('[data-wpn-reload]') && el.querySelector('[data-wpn-reload]').getAttribute('data-wpn-reload')) || 2;
+            _fireFromEl(el);
+            if (reload < 0.3) {
+                var beamtime = parseFloat(el.getAttribute('data-wpn-beamtime') || (el.querySelector('[data-wpn-beamtime]') && el.querySelector('[data-wpn-beamtime]').getAttribute('data-wpn-beamtime'))) || 0.15;
+                _holdInterval = setInterval(function() { _fireFromEl(el); }, Math.max(beamtime, 0.05) * 1000);
+            }
+        });
+        document.addEventListener('mouseup', _stopHold);
+        document.addEventListener('mouseleave', _stopHold);
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.uw-img')) return;
+            // click already handled by mousedown, prevent double-fire on slow beams
         });
     }
 

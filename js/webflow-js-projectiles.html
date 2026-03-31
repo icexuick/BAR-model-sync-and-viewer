@@ -114,14 +114,17 @@ window._barProjectilesSetup = function(THREE, opts) {
         }
     }());
 
-    function playSound(url, pos) {
+    var _playingSounds = {};
+    function playSound(url, pos, allowOverlap) {
         if (!url) return;
+        if (!allowOverlap && _playingSounds[url]) return;
         ensureListener();
         function _play(buf) {
             var s = new THREE.PositionalAudio(audioListener);
             s.setBuffer(buf); s.setRefDistance(800); s.setVolume(0.4);
             s.position.copy(pos); scene.add(s); s.play();
-            s.onEnded = function(){scene.remove(s);};
+            _playingSounds[url] = s;
+            s.onEnded = function(){ scene.remove(s); delete _playingSounds[url]; };
         }
         if (audioBuffers[url]) { _play(audioBuffers[url]); return; }
         new THREE.AudioLoader().load(url, function(b){ audioBuffers[url]=b; _play(b); });
@@ -413,7 +416,8 @@ window._barProjectilesSetup = function(THREE, opts) {
     function fireWeapon(wnum) {
         var data=wpnDataByNum[String(wnum)]; if (!data) return;
         var o=getFireOrigin(wnum); if (!o) return;
-        if (data.sound) playSound(data.sound,o.pos);
+        var isBeam = getCat(data)==='beam';
+        if (data.sound) playSound(data.sound,o.pos,!isBeam);
         var fn = {beam:spawnBeam,laserround:spawnLaserRound,bolt:spawnBolt,plasma:spawnPlasma,rocket:spawnRocket,flame:spawnFlame,lightning:spawnLightning,dgun:spawnDgun};
         (fn[getCat(data)]||spawnPlasma)(o,data);
     }
