@@ -261,8 +261,9 @@ window._barProjectilesSetup = function(THREE, opts) {
         var exh=new THREE.Sprite(spr(0xff8800,0.8)); exh.scale.set(rl*2,rl*2,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
         g.position.copy(o.pos); g.lookAt(o.pos.clone().add(dir)); addS(g,998);
         muzzleLight(o.pos,0xff6600,9*sc,0.15);
-        active.push({type:'rocket',age:0,maxAge:(d.range||400)/maxSpd,velocity:dir.multiplyScalar(initSpd),
-            extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:dir.clone()}});
+        var dirUnit=dir.clone().normalize();
+        active.push({type:'rocket',age:0,maxAge:(d.range||400)/maxSpd,velocity:dirUnit.clone().multiplyScalar(initSpd),
+            extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:dirUnit}});
     }
 
     function spawnFlame(o, d) {
