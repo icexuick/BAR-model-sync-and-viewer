@@ -375,10 +375,11 @@ window._barProjectilesSetup = function(THREE, opts) {
         var sm=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
         var sphere=new THREE.Mesh(sg,sm); sphere.position.copy(o.pos); addS(sphere,998);
         var glow=addS(mkSprite(col,8,0.8),999); glow.position.copy(o.pos);
+        var flare=addS(mkSprite(new THREE.Color(0xffffff).lerp(col,0.3),20,0.9,LT),1000); flare.position.copy(o.pos);
         muzzleLight(o.pos,col,24*rs,0.3,o.dir);
         muzzleFlash(o.pos,col,8*rs,0.25,o.dir);
         active.push({type:'dgun',age:0,maxAge:1.8,velocity:o.dir.clone().multiplyScalar(spd),
-            extras:{sphere,sphereMat:sm,glow,glowMat:glow.material}});
+            extras:{sphere,sphereMat:sm,glow,glowMat:glow.material,flare,flareMat:flare.material}});
     }
 
     function spawnSmoke(pos) {
@@ -496,9 +497,10 @@ window._barProjectilesSetup = function(THREE, opts) {
                     }
                     ex.lineMat.opacity=1-t*t; ex.coreLineMat.opacity=0.8*(1-t); ex.flareMat.opacity=1-t; break;
                 case 'dgun':
-                    if (p.velocity) { ex.sphere.position.addScaledVector(p.velocity,dt); ex.glow.position.copy(ex.sphere.position); }
+                    if (p.velocity) { ex.sphere.position.addScaledVector(p.velocity,dt); ex.glow.position.copy(ex.sphere.position); ex.flare.position.copy(ex.sphere.position); }
                     var ds=2+p.age*6; ex.sphere.scale.set(ds,ds,ds); ex.sphereMat.opacity=0.9*(1-t);
-                    ex.glow.scale.set(ds*2.5,ds*2.5,1); ex.glowMat.opacity=0.8*(1-t); break;
+                    ex.glow.scale.set(ds*2.5,ds*2.5,1); ex.glowMat.opacity=0.8*(1-t);
+                    var fs=ds*3.5*(1+0.15*Math.sin(p.age*18)); ex.flare.scale.set(fs,fs,1); ex.flareMat.opacity=0.9*(1-t*t); break;
                 case 'smoke':
                     if (p.velocity) ex.sprite.position.addScaledVector(p.velocity,dt);
                     ex.mat.opacity=0.3*(1-t); ex.sprite.scale.multiplyScalar(1+dt*3); break;
@@ -538,7 +540,7 @@ window._barProjectilesSetup = function(THREE, opts) {
             case 'rocket': rm(ex.group); dis(ex.bodyMat,ex.noseMat,ex.exhMat); ex.group.traverse(function(c){if(c.geometry)c.geometry.dispose();}); break;
             case 'flame': rm(ex.sprite); dis(ex.mat); break;
             case 'lightning': rm(ex.line,ex.coreLine,ex.flare); dis(ex.geom,ex.lineMat,ex.coreLineMat,ex.flareMat); break;
-            case 'dgun': rm(ex.sphere,ex.glow); dis(ex.sphere.geometry,ex.sphereMat,ex.glowMat); break;
+            case 'dgun': rm(ex.sphere,ex.glow,ex.flare); dis(ex.sphere.geometry,ex.sphereMat,ex.glowMat,ex.flareMat); break;
             case 'smoke': rm(ex.sprite); dis(ex.mat); break;
             case 'torpedo': rm(ex.group); dis(ex.bodyMat,ex.noseMat,ex.exhMat); ex.group.traverse(function(c){if(c.geometry)c.geometry.dispose();}); break;
             case 'bubble': rm(ex.sprite); dis(ex.mat); break;

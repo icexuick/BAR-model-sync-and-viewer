@@ -358,8 +358,128 @@ window._barWeaponsSetup = function(THREE, opts) {
         }
     });
 
+    // --- Fire system: playFire + click handlers (always active, even without animations) ---
+    var _fireTimers = {};  // def → [timeoutIds] for pending stagger timers
+    var _initMixer = null, _rotaryNodes = {};
+
+    function getFireActions(wnum) {
+        if (Object.keys(fireActions).length === 0) return [];
+        var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
+        var actions = [];
+        if (def) {
+            var wnums = Object.keys(fireActions).map(Number).sort(function(a,b){return a-b;});
+            for (var i = 0; i < wnums.length; i++) {
+                var wn = wnums[i];
+                var wnDef = weaponSummary[String(wn)] ? weaponSummary[String(wn)].def : null;
+                if (wnDef === def) actions.push(fireActions[wn]);
+            }
+        }
+        if (actions.length === 0 && fireActions[wnum]) actions.push(fireActions[wnum]);
+        return actions;
+    }
+
+    function playFire(wnum) {
+        var actions = getFireActions(wnum);
+        if (actions.length === 0) {
+            if (_projectileFireFn) _projectileFireFn(wnum);
+            return;
+        }
+        var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : ('w' + wnum);
+        if (_fireTimers[def]) {
+            _fireTimers[def].forEach(function(t) { clearTimeout(t); });
+        }
+        _fireTimers[def] = [];
+        for (var j = 0; j < actions.length; j++) {
+            actions[j].stop().reset();
+        }
+        var STAGGER_MS = 400;
+        for (var i = 0; i < actions.length; i++) {
+            (function(action, delay) {
+                var tid = setTimeout(function() {
+                    action.reset().play();
+                    var clipName = action.getClip().name;
+                    var cfm = clipName.match(/^Fire_(\d+)$/);
+                    if (cfm && _projectileFireFn) _projectileFireFn(parseInt(cfm[1]));
+                    if (_initMixer) _initMixer.addEventListener('finished', function onDone(e) {
+                        if (e.action === action) {
+                            action.stop();
+                            var clipName = action.getClip().name;
+                            var rot = _rotaryNodes[clipName];
+                            if (rot) {
+                                rot.accumRad += rot.stepRad;
+                                rot.node.rotation[rot.axis] = rot.accumRad;
+                            }
+                            _initMixer.removeEventListener('finished', onDone);
+                        }
+                    });
+                }, delay);
+                _fireTimers[def].push(tid);
+            })(actions[i], i * STAGGER_MS);
+        }
+    }
+
+    // Click on 3D weapon mesh → fire
+    renderer.domElement.addEventListener('click', function(e) {
+        if (meshWeaponMap.size === 0) return;
+        var rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        var hits = raycaster.intersectObject(modelScene, true);
+        var hit = hits.find(function(h) { return meshWeaponMap.has(h.object.uuid); });
+        if (hit) {
+            var winfo = meshWeaponMap.get(hit.object.uuid);
+            playFire(winfo.num);
+        }
+    });
+
+    // Click / hold on .uw-img → fire weapon
+    var _holdInterval = null;
+    function _fireFromEl(el) {
+        if (!el) return;
+        var slug = el.getAttribute('data-wpn-slug');
+        var wnum = slugToWnum.get(slug);
+        if (wnum !== undefined) playFire(wnum);
+    }
+    function _stopHold() {
+        if (_holdInterval) { clearInterval(_holdInterval); _holdInterval = null; }
+    }
+    document.addEventListener('mousedown', function(e) {
+        if (!e.target.closest('.uw-img')) return;
+        var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
+        if (!el) return;
+        var reload = parseFloat(el.getAttribute('data-wpn-reload') || el.querySelector('[data-wpn-reload]') && el.querySelector('[data-wpn-reload]').getAttribute('data-wpn-reload')) || 2;
+        _fireFromEl(el);
+        if (reload < 0.3) {
+            var beamtime = parseFloat(el.getAttribute('data-wpn-beamtime') || (el.querySelector('[data-wpn-beamtime]') && el.querySelector('[data-wpn-beamtime]').getAttribute('data-wpn-beamtime'))) || 0.15;
+            _holdInterval = setInterval(function() { _fireFromEl(el); }, Math.max(beamtime, 0.05) * 1000);
+        }
+    });
+    document.addEventListener('mouseup', _stopHold);
+    document.addEventListener('mouseleave', _stopHold);
+
+    // Keyboard shortcuts: press 1-9 to fire weapon by number
+    document.addEventListener('keydown', function(e) {
+        var k = e.key;
+        if (k >= '1' && k <= '9' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            var tag = (e.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            var wnum = parseInt(k);
+            if (weaponSummary[String(wnum)]) {
+                e.preventDefault();
+                playFire(wnum);
+            }
+        }
+    });
+
+    // Mark weapon meshes with pointer cursor
+    if (meshWeaponMap.size > 0) {
+        renderer.domElement.style.cursor = 'pointer';
+    }
+
     function initFireAnims(THREE, mixer, animations) {
         if (!mixer || !animations) return;
+        _initMixer = mixer;
         for (var i = 0; i < animations.length; i++) {
             var clip = animations[i];
             var fm = clip.name.match(/^Fire_(\d+)$/);
@@ -371,11 +491,8 @@ window._barWeaponsSetup = function(THREE, opts) {
             fireActions[wnum] = action;
         }
 
-        var hasFireAnims = Object.keys(fireActions).length > 0;
-
         // Resolve rotary piece nodes for accumulative rotation
-        var rotaryNodes = {};  // clip_name → { node, axis, stepRad, accumRad }
-        if (hasFireAnims && fireRotary) {
+        if (Object.keys(fireActions).length > 0 && fireRotary) {
             for (var clipName in fireRotary) {
                 var info = fireRotary[clipName];
                 var targetNode = null;
@@ -383,7 +500,7 @@ window._barWeaponsSetup = function(THREE, opts) {
                     if (n.name && n.name.toLowerCase() === info.piece.toLowerCase()) targetNode = n;
                 });
                 if (targetNode) {
-                    rotaryNodes[clipName] = {
+                    _rotaryNodes[clipName] = {
                         node: targetNode,
                         axis: info.axis,
                         stepRad: info.step_deg * Math.PI / 180,
@@ -392,120 +509,6 @@ window._barWeaponsSetup = function(THREE, opts) {
                 }
             }
         }
-
-        // Mark weapon meshes with pointer cursor (weapons are clickable even without fire anims)
-        if (meshWeaponMap.size > 0) {
-            renderer.domElement.style.cursor = 'pointer';
-        }
-
-        // Collect all fire actions that share the same weapon def as wnum
-        function getFireActions(wnum) {
-            if (!hasFireAnims) return [];
-            var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
-            // Gather all actions for this def (or just this wnum if no def match)
-            var actions = [];
-            if (def) {
-                // Collect in weapon-number order so barrels fire sequentially
-                var wnums = Object.keys(fireActions).map(Number).sort(function(a,b){return a-b;});
-                for (var i = 0; i < wnums.length; i++) {
-                    var wn = wnums[i];
-                    var wnDef = weaponSummary[String(wn)] ? weaponSummary[String(wn)].def : null;
-                    if (wnDef === def) actions.push(fireActions[wn]);
-                }
-            }
-            if (actions.length === 0 && fireActions[wnum]) actions.push(fireActions[wnum]);
-            return actions;
-        }
-
-        var _fireTimers = {};  // def → [timeoutIds] for pending stagger timers
-
-        function playFire(wnum) {
-            var actions = getFireActions(wnum);
-            if (actions.length === 0) {
-                // No fire animation — still spawn projectile VFX if available
-                if (_projectileFireFn) _projectileFireFn(wnum);
-                return;
-            }
-            var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : ('w' + wnum);
-            // Cancel any pending stagger timers for this weapon def
-            if (_fireTimers[def]) {
-                _fireTimers[def].forEach(function(t) { clearTimeout(t); });
-            }
-            _fireTimers[def] = [];
-            // Stop and reset all actions for this def immediately
-            for (var j = 0; j < actions.length; j++) {
-                actions[j].stop().reset();
-            }
-            var STAGGER_MS = 400;  // delay between sequential barrel fires
-            for (var i = 0; i < actions.length; i++) {
-                (function(action, delay) {
-                    var tid = setTimeout(function() {
-                        action.reset().play();
-                        // Fire projectile VFX for this weapon
-                        var clipName = action.getClip().name;
-                        var cfm = clipName.match(/^Fire_(\d+)$/);
-                        if (cfm && _projectileFireFn) _projectileFireFn(parseInt(cfm[1]));
-                        mixer.addEventListener('finished', function onDone(e) {
-                            if (e.action === action) {
-                                action.stop();
-                                var clipName = action.getClip().name;
-                                var rot = rotaryNodes[clipName];
-                                if (rot) {
-                                    rot.accumRad += rot.stepRad;
-                                    rot.node.rotation[rot.axis] = rot.accumRad;
-                                }
-                                mixer.removeEventListener('finished', onDone);
-                            }
-                        });
-                    }, delay);
-                    _fireTimers[def].push(tid);
-                })(actions[i], i * STAGGER_MS);
-            }
-        }
-
-        // Click on 3D weapon mesh → fire (always register, even without fire anims)
-        renderer.domElement.addEventListener('click', function(e) {
-            if (meshWeaponMap.size === 0) return;
-            var rect = renderer.domElement.getBoundingClientRect();
-            pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-            pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-            raycaster.setFromCamera(pointer, camera);
-            var hits = raycaster.intersectObject(modelScene, true);
-            var hit = hits.find(function(h) { return meshWeaponMap.has(h.object.uuid); });
-            if (hit) {
-                var winfo = meshWeaponMap.get(hit.object.uuid);
-                playFire(winfo.num);
-            }
-        });
-
-        // Click / hold on .uw-img → fire weapon
-        var _holdInterval = null;
-        function _fireFromEl(el) {
-            if (!el) return;
-            var slug = el.getAttribute('data-wpn-slug');
-            var wnum = slugToWnum.get(slug);
-            if (wnum !== undefined) playFire(wnum);
-        }
-        function _stopHold() {
-            if (_holdInterval) { clearInterval(_holdInterval); _holdInterval = null; }
-        }
-        document.addEventListener('mousedown', function(e) {
-            if (!e.target.closest('.uw-img')) return;
-            var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
-            if (!el) return;
-            var reload = parseFloat(el.getAttribute('data-wpn-reload') || el.querySelector('[data-wpn-reload]') && el.querySelector('[data-wpn-reload]').getAttribute('data-wpn-reload')) || 2;
-            _fireFromEl(el);
-            if (reload < 0.3) {
-                var beamtime = parseFloat(el.getAttribute('data-wpn-beamtime') || (el.querySelector('[data-wpn-beamtime]') && el.querySelector('[data-wpn-beamtime]').getAttribute('data-wpn-beamtime'))) || 0.15;
-                _holdInterval = setInterval(function() { _fireFromEl(el); }, Math.max(beamtime, 0.05) * 1000);
-            }
-        });
-        document.addEventListener('mouseup', _stopHold);
-        document.addEventListener('mouseleave', _stopHold);
-        document.addEventListener('click', function(e) {
-            if (!e.target.closest('.uw-img')) return;
-            // click already handled by mousedown, prevent double-fire on slow beams
-        });
     }
 
     // Hook: when projectiles system is initialized, call its fireWeapon on each fire
