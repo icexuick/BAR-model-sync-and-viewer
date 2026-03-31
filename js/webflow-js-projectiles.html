@@ -66,7 +66,9 @@ window._barProjectilesSetup = function(THREE, opts) {
             aoe:       parseInt(readAttr(el, 'data-wpn-aoe')) || 0,
             largeBeam: readAttr(el, 'data-wpn-large-beam') === 'true',
             burst:     parseInt(readAttr(el, 'data-wpn-burst')) || 1,
-            sound:     readAttr(el, 'data-wpn-sound') || ''
+            sound:     readAttr(el, 'data-wpn-sound') || '',
+            accuracy:  parseFloat(readAttr(el, 'data-wpn-acc')) || 0,
+            range:     parseFloat(readAttr(el, 'data-wpn-range')) || 400
         };
     });
 
@@ -230,8 +232,10 @@ window._barProjectilesSetup = function(THREE, opts) {
         // Beams: continuous line from barrel
         if (t === 'beamlaser' || t === 'heatray' || t === 'tachyonlaserbeam' ||
             t === 'thermalordnancegenerator') return 'beam';
+        // Laser cannon: thick fast cylinder (distinct from beam laser)
+        if (t === 'lasercannon') return 'laserround';
         // Laser bolts: small fast projectiles
-        if (t === 'lasercannon' || t === 'shotguncannon') return 'laserbolt';
+        if (t === 'shotguncannon') return 'laserbolt';
         // Plasma: glowing arcing ball
         if (t === 'plasmacannon' || t === 'plasmarepeater' || t === 'plasmablast' ||
             t === 'plasmashotgun' || t === 'clusterplasmacannon' ||
@@ -261,6 +265,24 @@ window._barProjectilesSetup = function(THREE, opts) {
         // Map damage 1-5000 → scale 0.3-3.0 (log scale)
         var d = Math.max(1, Math.min(damage, 5000));
         return 0.3 + 2.7 * (Math.log(d) / Math.log(5000));
+    }
+
+    // ── Accuracy → spread angle ──────────────────────────────────────
+    // accuracy=0 → 0°, accuracy=13 → ~3°, accuracy=1000 → ~15°
+    function applySpread(dir, accuracy) {
+        if (!accuracy || accuracy <= 0) return dir.clone();
+        // Map accuracy to max spread angle in radians (log-ish curve)
+        var maxDeg = Math.min(15, accuracy * 0.015 + Math.log(1 + accuracy) * 0.8);
+        var spreadRad = (maxDeg * Math.PI / 180) * Math.random();
+        var theta = Math.random() * Math.PI * 2; // random rotation around dir
+        // Build perpendicular vectors to dir
+        var perp = new THREE.Vector3();
+        if (Math.abs(dir.x) < 0.9) perp.set(1, 0, 0); else perp.set(0, 1, 0);
+        perp.crossVectors(dir, perp).normalize();
+        var perp2 = new THREE.Vector3().crossVectors(dir, perp).normalize();
+        var spread = perp.clone().multiplyScalar(Math.sin(spreadRad) * Math.cos(theta))
+            .add(perp2.clone().multiplyScalar(Math.sin(spreadRad) * Math.sin(theta)));
+        return dir.clone().multiplyScalar(Math.cos(spreadRad)).add(spread).normalize();
     }
 
     // ── Dynamic muzzle flash light ─────────────────────────────────
@@ -352,6 +374,9 @@ window._barProjectilesSetup = function(THREE, opts) {
         var color = new THREE.Color(wpnData.color);
         var scale = damageToScale(wpnData.damage);
         var speed = Math.max(wpnData.velocity * 1.35, 270);
+        var dir = applySpread(origin.dir, wpnData.accuracy);
+        var range = wpnData.range || 400;
+        var maxAge = range / speed;
 
         // Bolt sprite
         var mat = new THREE.SpriteMaterial({
@@ -379,9 +404,67 @@ window._barProjectilesSetup = function(THREE, opts) {
         spawnMuzzleLight(origin.pos, color, 6.0 * scale, 0.12);
 
         activeProjectiles.push({
-            type: 'bolt', age: 0, maxAge: 1.5,
-            velocity: origin.dir.clone().multiplyScalar(speed),
+            type: 'bolt', age: 0, maxAge: maxAge,
+            velocity: dir.clone().multiplyScalar(speed),
             extras: { bolt: bolt, boltMat: mat, flare: flare, flareMat: flareMat, startPos: origin.pos.clone() }
+        });
+    }
+
+    // --- LASER ROUND: thick cylinder bolt (LaserCannon) ---
+    function spawnLaserRound(origin, wpnData) {
+        var color = new THREE.Color(wpnData.color);
+        var scale = damageToScale(wpnData.damage);
+        var speed = Math.max(wpnData.velocity * 1.35, 270);
+        var dir = applySpread(origin.dir, wpnData.accuracy);
+        var range = wpnData.range || 400;
+        var maxAge = range / speed;
+        var roundLen = Math.max(8, scale * 12);
+        var thick = Math.max(0.5, scale * 0.9);
+
+        // Outer glow cylinder
+        var geom = new THREE.CylinderGeometry(thick, thick * 0.6, roundLen, 6, 1, true);
+        geom.rotateX(Math.PI / 2);
+        var mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.85,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+        });
+        var round = new THREE.Mesh(geom, mat);
+        round.position.copy(origin.pos);
+        round.lookAt(origin.pos.clone().add(dir));
+        round.renderOrder = 998;
+        scene.add(round);
+
+        // Bright white core
+        var coreGeom = new THREE.CylinderGeometry(thick * 0.35, thick * 0.2, roundLen, 5, 1, true);
+        coreGeom.rotateX(Math.PI / 2);
+        var coreMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff, transparent: true, opacity: 0.95,
+            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+        });
+        var core = new THREE.Mesh(coreGeom, coreMat);
+        core.position.copy(origin.pos);
+        core.lookAt(origin.pos.clone().add(dir));
+        core.renderOrder = 999;
+        scene.add(core);
+
+        // Muzzle flare
+        var flareMat = new THREE.SpriteMaterial({
+            map: flareTexture, color: color, transparent: true, opacity: 1.0,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        var flare = new THREE.Sprite(flareMat);
+        flare.scale.set(scale * 14, scale * 14, 1);
+        flare.position.copy(origin.pos);
+        flare.renderOrder = 999;
+        scene.add(flare);
+
+        spawnMuzzleLight(origin.pos, color, 8.0 * scale, 0.1);
+
+        activeProjectiles.push({
+            type: 'laserround', age: 0, maxAge: maxAge,
+            velocity: dir.clone().multiplyScalar(speed),
+            extras: { round: round, roundMat: mat, core: core, coreMat: coreMat,
+                      flare: flare, flareMat: flareMat, dir: dir }
         });
     }
 
@@ -391,6 +474,9 @@ window._barProjectilesSetup = function(THREE, opts) {
         var scale = damageToScale(wpnData.damage);
         var speed = Math.max(wpnData.velocity * 1.08, 180);
         var ballSize = Math.max(0.4, scale * 0.6);
+        var dir = applySpread(origin.dir, wpnData.accuracy);
+        var range = wpnData.range || 400;
+        var maxAge = range / speed;
 
         // Plasma ball sprite
         var mat = new THREE.SpriteMaterial({
@@ -428,8 +514,8 @@ window._barProjectilesSetup = function(THREE, opts) {
         spawnMuzzleLight(origin.pos, 0xffffcc, 12.0 * scale, 0.1);
 
         activeProjectiles.push({
-            type: 'plasma', age: 0, maxAge: 2.0,
-            velocity: origin.dir.clone().multiplyScalar(speed),
+            type: 'plasma', age: 0, maxAge: maxAge,
+            velocity: dir.clone().multiplyScalar(speed),
             gravity: -15,
             extras: { ball: ball, ballMat: mat, core: core, coreMat: coreMat, flash: flash, flashMat: flashMat }
         });
@@ -441,6 +527,9 @@ window._barProjectilesSetup = function(THREE, opts) {
         var scale = damageToScale(wpnData.damage);
         var speed = Math.max(wpnData.velocity * 0.90, 135);
         var rocketLen = 1.5 * scale;
+        var dir = applySpread(origin.dir, wpnData.accuracy);
+        var range = wpnData.range || 400;
+        var maxAge = range / speed;
 
         // Rocket body (cone + cylinder)
         var group = new THREE.Group();
@@ -468,7 +557,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         group.add(exhaust);
 
         group.position.copy(origin.pos);
-        group.lookAt(origin.pos.clone().add(origin.dir));
+        group.lookAt(origin.pos.clone().add(dir));
         group.renderOrder = 998;
         scene.add(group);
 
@@ -478,8 +567,8 @@ window._barProjectilesSetup = function(THREE, opts) {
         spawnMuzzleLight(origin.pos, 0xff6600, 9.0 * scale, 0.15);
 
         activeProjectiles.push({
-            type: 'rocket', age: 0, maxAge: 2.5,
-            velocity: origin.dir.clone().multiplyScalar(speed),
+            type: 'rocket', age: 0, maxAge: maxAge,
+            velocity: dir.clone().multiplyScalar(speed),
             extras: { group: group, exhaust: exhaust, exhMat: exhMat, smokeParticles: smokeParticles, bodyMat: bodyMat, noseMat: noseMat, rocketLen: rocketLen }
         });
     }
@@ -488,7 +577,8 @@ window._barProjectilesSetup = function(THREE, opts) {
     function spawnFlame(origin, wpnData) {
         var scale = damageToScale(wpnData.damage);
         var speed = Math.max(wpnData.velocity * 0.54, 90);
-        var count = 8;
+        var count = 18;
+        var spreadAngle = 0.5 + (wpnData.accuracy || 0) * 0.002; // wider cone for inaccurate flamers
 
         spawnMuzzleLight(origin.pos, 0xff6600, 12.0 * scale, 0.2);
 
@@ -501,24 +591,24 @@ window._barProjectilesSetup = function(THREE, opts) {
                 blending: THREE.AdditiveBlending, depthWrite: false
             });
             var particle = new THREE.Sprite(mat);
-            var sz = (1.0 + t * 2.5) * scale;
+            // Start small, grow quickly as they travel
+            var sz = (0.4 + t * 1.5) * scale;
             particle.scale.set(sz, sz, 1);
             particle.position.copy(origin.pos);
             particle.renderOrder = 998;
             scene.add(particle);
 
-            // Spread direction slightly
             var spread = new THREE.Vector3(
-                (Math.random() - 0.5) * 0.3,
-                (Math.random() - 0.5) * 0.3,
-                (Math.random() - 0.5) * 0.3
+                (Math.random() - 0.5) * spreadAngle,
+                (Math.random() - 0.5) * spreadAngle,
+                (Math.random() - 0.5) * spreadAngle
             );
-            var vel = origin.dir.clone().multiplyScalar(speed * (0.6 + Math.random() * 0.8)).add(spread);
+            var vel = origin.dir.clone().multiplyScalar(speed * (0.5 + Math.random() * 0.9)).add(spread);
 
             activeProjectiles.push({
-                type: 'flame', age: -i * 0.03, maxAge: 0.5 + Math.random() * 0.3,
+                type: 'flame', age: -i * 0.018, maxAge: 0.4 + Math.random() * 0.3,
                 velocity: vel,
-                extras: { sprite: particle, mat: mat }
+                extras: { sprite: particle, mat: mat, scale: scale }
             });
         }
     }
@@ -684,6 +774,20 @@ window._barProjectilesSetup = function(THREE, opts) {
                     p.extras.flare.scale.multiplyScalar(0.92);
                     break;
 
+                case 'laserround':
+                    if (p.velocity) {
+                        p.extras.round.position.addScaledVector(p.velocity, delta);
+                        p.extras.round.lookAt(p.extras.round.position.clone().add(p.extras.dir));
+                        p.extras.core.position.copy(p.extras.round.position);
+                        p.extras.core.lookAt(p.extras.core.position.clone().add(p.extras.dir));
+                    }
+                    p.extras.roundMat.opacity = 0.85 * (1.0 - t * 0.5);
+                    p.extras.coreMat.opacity = 0.95 * (1.0 - t * 0.5);
+                    // Muzzle flare fades fast
+                    p.extras.flareMat.opacity = Math.max(0, 1.0 - t * 6);
+                    p.extras.flare.scale.multiplyScalar(0.90);
+                    break;
+
                 case 'plasma':
                     if (p.velocity) {
                         p.extras.ball.position.addScaledVector(p.velocity, delta);
@@ -714,10 +818,11 @@ window._barProjectilesSetup = function(THREE, opts) {
                 case 'flame':
                     if (p.velocity) {
                         p.extras.sprite.position.addScaledVector(p.velocity, delta);
-                        p.velocity.y += 5 * delta; // fire rises
+                        p.velocity.y += 8 * delta; // fire rises faster
                     }
-                    p.extras.mat.opacity = 0.9 * (1.0 - t);
-                    p.extras.sprite.scale.multiplyScalar(1.0 + delta * 2);
+                    p.extras.mat.opacity = 0.9 * (1.0 - t * t);
+                    // Grow faster and larger — 5x growth rate
+                    p.extras.sprite.scale.multiplyScalar(1.0 + delta * 6);
                     break;
 
                 case 'lightning':
@@ -787,6 +892,12 @@ window._barProjectilesSetup = function(THREE, opts) {
                 scene.remove(ex.bolt); scene.remove(ex.flare);
                 ex.boltMat.dispose(); ex.flareMat.dispose();
                 break;
+            case 'laserround':
+                scene.remove(ex.round); scene.remove(ex.core); scene.remove(ex.flare);
+                ex.round.geometry.dispose(); ex.roundMat.dispose();
+                ex.core.geometry.dispose(); ex.coreMat.dispose();
+                ex.flareMat.dispose();
+                break;
             case 'plasma':
                 scene.remove(ex.ball); scene.remove(ex.core); scene.remove(ex.flash);
                 ex.ballMat.dispose(); ex.coreMat.dispose(); ex.flashMat.dispose();
@@ -830,8 +941,9 @@ window._barProjectilesSetup = function(THREE, opts) {
         if (data.sound) playSound(data.sound, origin.pos);
 
         switch (cat) {
-            case 'beam':      spawnBeam(origin, data); break;
-            case 'laserbolt': spawnLaserBolt(origin, data); break;
+            case 'beam':        spawnBeam(origin, data); break;
+            case 'laserround':  spawnLaserRound(origin, data); break;
+            case 'laserbolt':   spawnLaserBolt(origin, data); break;
             case 'plasma':    spawnPlasma(origin, data); break;
             case 'rocket':    spawnRocket(origin, data); break;
             case 'flame':     spawnFlame(origin, data); break;
