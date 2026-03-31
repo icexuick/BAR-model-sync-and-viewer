@@ -119,7 +119,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         ensureListener();
         function _play(buf) {
             var s = new THREE.PositionalAudio(audioListener);
-            s.setBuffer(buf); s.setRefDistance(50); s.setVolume(0.4);
+            s.setBuffer(buf); s.setRefDistance(800); s.setVolume(0.4);
             s.position.copy(pos); scene.add(s); s.play();
             s.onEnded = function(){scene.remove(s);};
         }
