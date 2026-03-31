@@ -36,7 +36,7 @@ window._barProjectilesSetup = function(THREE, opts) {
             beamtime: parseFloat(readAttr(el,'data-wpn-beamtime'))||0,
             largeBeam: !!(el.querySelector('.weapon-large-beam,#wpn-large-beam-laser') || (el.closest('.uw-item') && el.closest('.uw-item').querySelector('.weapon-large-beam,#wpn-large-beam-laser'))),
             burst: parseInt(readAttr(el,'data-wpn-burst'))||1,
-            sound: readAttr(el,'data-wpn-sound')||'',
+            sound: (function(){var s=el.querySelector('.weapon-sound,#weapon-sound')||(el.closest('.uw-item')&&el.closest('.uw-item').querySelector('.weapon-sound,#weapon-sound'));return s?(s.textContent||s.innerText||'').trim():'';}()),
             accuracy: parseFloat(readAttr(el,'data-wpn-acc'))||0,
             range: parseFloat(readAttr(el,'data-wpn-range'))||400,
             startVelo: parseFloat(readAttr(el,'data-wpn-start-velo'))||0,
