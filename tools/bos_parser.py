@@ -167,6 +167,13 @@ def parse_bos(filepath: str) -> BOSParseResult:
         leg_m = re.match(rf'({_LEGACY_NAMES})', suffix, re.IGNORECASE)
         wnum = int(num_m.group(1)) if num_m else _LEGACY_WEAPON_MAP.get((leg_m.group(1) if leg_m else '').lower(), 1)
         all_refs = _extract_all_pieces_from_function(body, result.pieces)
+        # Popup-defense pattern: QueryWeapon checks is_open and returns a dummy
+        # piece (e.g. aimFlare) when closed, real fire piece when open.
+        # The viewer always shows the open state, so discard the closed-branch pieces.
+        if len(all_refs) > 1 and re.search(r'\bis_open\b', body, re.IGNORECASE):
+            open_refs = _extract_open_state_pieces(body, result.pieces)
+            if open_refs:
+                all_refs = open_refs
         # Detect BOS barrel-alternating: "pieceIndex = <piece> + <variable>"
         # variable toggles 0/1 each shot, so piece and its adjacent piece (by index) both fire.
         # We also look for the mirror piece by name (l↔r prefix/suffix swap).
@@ -328,6 +335,39 @@ def _extract_piece_from_function(body: str, known_pieces: List[str]) -> Optional
         if re.search(rf'\b{re.escape(piece)}\b', body, re.IGNORECASE):
             return piece.lower()
     return None
+
+
+def _extract_open_state_pieces(body: str, known_pieces: List[str]) -> List[str]:
+    """For popup-defense QueryWeapon bodies with is_open checks, extract only the
+    pieces from the 'open' branch.
+
+    Patterns handled:
+      if (is_open == 0) { pieceIndex = DUMMY; } else { pieceIndex = REAL; }
+      if (is_open == 1) { pieceIndex = REAL; } else { pieceIndex = DUMMY; }
+    """
+    # Find if-else block testing is_open
+    # Pattern: if (is_open == 0) { ... } else { ... }
+    m = re.search(
+        r'if\s*\(\s*is_open\s*==\s*(\d)\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
+        body, re.IGNORECASE
+    )
+    if not m:
+        # Try: if (!IsOpen) { ... } else { ... }  (IsOpen is a macro for is_open)
+        m = re.search(
+            r'if\s*\(\s*!\s*IsOpen\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
+            body, re.IGNORECASE
+        )
+        if m:
+            # !IsOpen = closed state is group 1, open state is group 2
+            open_body = m.group(2)
+        else:
+            return []
+    else:
+        val = int(m.group(1))
+        # is_open == 0 → group 2 is closed, group 3 is open
+        # is_open == 1 → group 2 is open, group 3 is closed
+        open_body = m.group(3) if val == 0 else m.group(2)
+    return _extract_all_pieces_from_function(open_body, known_pieces)
 
 
 def _extract_all_pieces_from_function(body: str, known_pieces: List[str]) -> List[str]:
