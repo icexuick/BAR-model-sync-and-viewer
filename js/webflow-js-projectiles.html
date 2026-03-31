@@ -174,7 +174,7 @@ window._barProjectilesSetup = function(THREE, opts) {
 
     function spawnBeam(o, d) {
         var col = new THREE.Color(d.color), sc = dScale(d.damage);
-        var len = 200+d.velocity*0.12, dur = Math.max(d.beamtime,1), thick = (d.largeBeam?2.5:0.8)*sc;
+        var len = 200+d.velocity*0.12, dur = Math.max(d.beamtime,0.15), thick = (d.largeBeam?2.5:0.8)*sc;
         function cyl(r1, r2, col2, op, order) {
             var g = new THREE.CylinderGeometry(r1,r2,len,8,1,true); g.rotateX(Math.PI/2); g.translate(0,0,len/2);
             var m = new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
@@ -317,10 +317,10 @@ window._barProjectilesSetup = function(THREE, opts) {
                         var ep2=cur.pos.clone().add(cur.dir.clone().multiplyScalar(ex.beamLen));
                         ex.endFlare.position.copy(ep2); ex.endLaserFlare.position.copy(ep2);
                     }
-                    ex.beamMat.opacity=0.85*(1-t*t); ex.coreMat.opacity=0.95*(1-t*t);
-                    ex.flareMat.opacity=1-t; ex.endFlareMat.opacity=0.8*(1-t);
-                    ex.laserFlareMat.opacity=(1-t)*0.9; ex.endLaserFlareMat.opacity=0.75*(1-t);
-                    ex.flare.scale.multiplyScalar(0.97); ex.endFlare.scale.multiplyScalar(0.97); break;
+                    var bf=Math.max(0,1-Math.max(0,t-0.8)/0.2);
+                    ex.beamMat.opacity=0.85*bf; ex.coreMat.opacity=0.95*bf;
+                    ex.flareMat.opacity=bf; ex.endFlareMat.opacity=0.8*bf;
+                    ex.laserFlareMat.opacity=0.9*bf; ex.endLaserFlareMat.opacity=0.75*bf; break;
                 case 'bolt':
                     if (p.velocity) ex.bolt.position.addScaledVector(p.velocity,dt);
                     ex.boltMat.opacity=0.9*(1-t); ex.flareMat.opacity=Math.max(0,1-t*5); ex.flare.scale.multiplyScalar(0.92); break;
