@@ -138,7 +138,7 @@
         scene.environmentRotation = new THREE.Euler(0, 0, 0);
         scene.background = null;
 
-        const camera = new THREE.PerspectiveCamera(35, container.offsetWidth / container.offsetHeight, 0.1, 1000);
+        const camera = new THREE.PerspectiveCamera(35, container.offsetWidth / container.offsetHeight, 0.1, 10000);
 
         const renderer = new THREE.WebGLRenderer({
             antialias: false, alpha: true, preserveDrawingBuffer: true,
@@ -158,7 +158,7 @@
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true; controls.dampingFactor = 0.05;
         controls.enableZoom = true; controls.rotateSpeed = VIEWER_CONFIG.mouseRotateSpeed;
-        controls.zoomSpeed = 1.2; controls.minDistance = 1; controls.maxDistance = 1000;
+        controls.zoomSpeed = 1.2; controls.minDistance = 1; controls.maxDistance = 5000;
 
         const downloadButton = document.getElementById('download-glb-button');
         if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = `${unitName}.glb`; }

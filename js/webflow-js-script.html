@@ -159,7 +159,8 @@
         const scene = new THREE.Scene();
         window._hdrRotY = 0;
         scene.background = null;
-        const camera = new THREE.PerspectiveCamera(35, container.offsetWidth / container.offsetHeight, 0.1, 1000);
+        const camera = new THREE.PerspectiveCamera(35, container.offsetWidth / container.offsetHeight, 0.1, 10000);
+        camera.layers.enable(1); // Layer 1 = VFX (visible to camera, excluded from SSAO)
         const renderer = new THREE.WebGLRenderer({
             antialias: false, alpha: true, preserveDrawingBuffer: true,
             powerPreference: performanceSettings.powerPreference
@@ -178,7 +179,7 @@
         const controls = new OrbitControls(camera, renderer.domElement);
         controls.enableDamping = true; controls.dampingFactor = 0.05;
         controls.enableZoom = true; controls.rotateSpeed = VIEWER_CONFIG.mouseRotateSpeed;
-        controls.zoomSpeed = 1.2; controls.minDistance = 1; controls.maxDistance = 1000;
+        controls.zoomSpeed = 1.2; controls.minDistance = 1; controls.maxDistance = 5000;
         const downloadButton = document.getElementById('download-glb-button');
         if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = `${unitName}.glb`; }
 
@@ -462,11 +463,14 @@
             }
             if (mixer && initFireAnims) initFireAnims(THREE, mixer, gltf.animations);
 
-            // Initialize projectile VFX system
+            // Initialize projectile VFX system — all in main scene.
+            // VFX materials use depthWrite:false so SSAOPass depth ignores them,
+            // but depthTest:true so model geometry occludes them correctly.
             let projectilesUpdate = null;
             if (window._barProjectilesSetup) {
                 const projResult = window._barProjectilesSetup(THREE, {
-                    scene, camera, modelScene, unitName, weaponSummary, renderer
+                    scene: scene, mainScene: scene, camera, modelScene, unitName, weaponSummary, renderer,
+                    isToggleOpen: function() { return !toggleOpenClip || toggleState; }
                 });
                 if (projResult) {
                     projectilesUpdate = projResult.update;
@@ -486,6 +490,12 @@
                 ssaoPass = new SSAOPass(scene, camera, container.offsetWidth, container.offsetHeight);
                 ssaoPass.kernelRadius = performanceSettings.ssaoKernelRadius; ssaoPass.kernelSize = performanceSettings.ssaoKernelSize;
                 ssaoPass.minDistance = VIEWER_CONFIG.ssaoMinDist; ssaoPass.maxDistance = VIEWER_CONFIG.ssaoMaxDist;
+                // Patch: hide layer-1 objects (VFX) during SSAO depth/normal pass
+                const _origOverride = ssaoPass.overrideVisibility.bind(ssaoPass);
+                ssaoPass.overrideVisibility = function() {
+                    _origOverride();
+                    this.scene.traverse(obj => { if (obj.layers.isEnabled(1)) obj.visible = false; });
+                };
                 composer.addPass(ssaoPass);
             }
             if (performanceSettings.smaaEnabled) {

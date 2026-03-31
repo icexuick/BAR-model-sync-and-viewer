@@ -38,6 +38,7 @@ window._barProjectilesSetup = function(THREE, opts) {
             beamtime: parseFloat(readAttr(el,'data-wpn-beamtime'))||0,
             largeBeam: !!(el.querySelector('.weapon-large-beam,#wpn-large-beam-laser') || (el.closest('.uw-item') && el.closest('.uw-item').querySelector('.weapon-large-beam,#wpn-large-beam-laser'))),
             burst: parseInt(readAttr(el,'data-wpn-burst'))||1,
+            burstrate: parseFloat(readAttr(el,'data-wpn-burstrate'))||0.1,
             sound: (function(){var s=el.querySelector('.weapon-sound,#weapon-sound')||(el.closest('.uw-item')&&el.closest('.uw-item').querySelector('.weapon-sound,#weapon-sound'));return s?(s.textContent||s.innerText||'').trim():'';}()),
             accuracy: parseFloat(readAttr(el,'data-wpn-acc'))||0,
             range: parseFloat(readAttr(el,'data-wpn-range'))||400,
@@ -56,7 +57,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         else {
             // Fallback: weapon exists in GLB but has no DOM data — use defaults so it still fires
             wpnDataByNum[wn] = { color:'#ffff00', type:'Cannon', reload:2, damage:100, velocity:500,
-                beamtime:0, largeBeam:false, burst:1, sound:'', accuracy:0, range:400, startVelo:0, accel:0, projectiles:1, isAA:false, name:'' };
+                beamtime:0, largeBeam:false, burst:1, burstrate:0.1, sound:'', accuracy:0, range:400, startVelo:0, accel:0, projectiles:1, isAA:false, name:'' };
         }
     }
 
@@ -305,14 +306,14 @@ window._barProjectilesSetup = function(THREE, opts) {
     function spawnPlasma(o, d) {
         var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range), bs=Math.max(0.4,sc*0.6);
         var spd=Math.max(d.velocity*1.08,180), dir=spread(o.dir,d.accuracy);
-        var wcol=col.clone().lerp(new THREE.Color(0xffee88),0.2);
+        var wcol=col.clone().lerp(new THREE.Color(0xffee88),0.4);
         var ball=addS(mkSprite(wcol,bs*5.625,0.95),998); ball.position.copy(o.pos);
         var core=addS(mkSprite(0xffffcc,bs*1.875,0.7),999); core.position.copy(o.pos);
         // Muzzle side planes: contain the shot direction, crossed at 90° around it.
         // PlaneGeometry default: X = width, Y = height, Z = normal (facing camera).
         // We want: local X = shot dir (texture stretches along barrel), local Z = side normal.
         var mfSz=bs*28.8*rs;
-        var mcol=col.clone().lerp(new THREE.Color(0xffdd44),0.3); // 70% weapon color + 30% warm yellow
+        var mcol=col.clone().lerp(new THREE.Color(0xffdd44),0.5);
         var _up=new THREE.Vector3(0,1,0); if (Math.abs(o.dir.y)>0.9) _up.set(1,0,0);
         var _side=new THREE.Vector3().crossVectors(o.dir,_up).normalize();
         var _up2=new THREE.Vector3().crossVectors(_side,o.dir).normalize();
@@ -684,26 +685,43 @@ window._barProjectilesSetup = function(THREE, opts) {
         spawnRocket(upO, d);
     }
 
-    function fireWeapon(wnum) {
-        var data=wpnDataByNum[String(wnum)]; if (!data) return;
+    var _spawnFns = {beam:spawnBeam,laserround:spawnLaserRound,bolt:spawnBolt,plasma:spawnPlasma,rocket:spawnRocket,torpedo:spawnTorpedo,starburst:spawnStarburst,flame:spawnFlame,lightning:spawnLightning,dgun:spawnDgun};
+
+    function _fireSingle(wnum, data) {
         var o=getFireOrigin(wnum); if (!o) return;
         var cat = getCat(data);
         if (data.sound) { var _pitch = cat==='beam' ? (data.largeBeam ? 0.96+Math.random()*0.08 : 1) : 0.93+Math.random()*0.14; playSound(data.sound,o.pos,true,_pitch); }
         var _fn=((data.name||'')+'|'+(data.type||'')).toLowerCase(); data._isFlak=_fn.indexOf('flak')!==-1; data._isAA=!!data.isAA;
         var hold = cat === 'beam' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : cat === 'flame' ? 0.2 : cat === 'lightning' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : 0.05;
         flashModel(Math.min(dScale(data.damage) * rScale(data.range) * 0.15, 0.25), hold);
-        var fn = {beam:spawnBeam,laserround:spawnLaserRound,bolt:spawnBolt,plasma:spawnPlasma,rocket:spawnRocket,torpedo:spawnTorpedo,starburst:spawnStarburst,flame:spawnFlame,lightning:spawnLightning,dgun:spawnDgun};
-        var spawnFn = fn[cat]||spawnPlasma;
+        var spawnFn = _spawnFns[cat]||spawnPlasma;
         var count = data.projectiles||1;
         if (count <= 1) { spawnFn(o, data); }
         else {
-            // Shotgun: spawn multiple projectiles with forced spread
             var baseAcc = Math.max(data.accuracy, 300);
             for (var pi = 0; pi < count; pi++) {
                 var shotData = {}; for (var k in data) shotData[k] = data[k];
                 shotData.accuracy = baseAcc + (Math.random()-0.5) * baseAcc * 0.5;
                 spawnFn(o, shotData);
             }
+        }
+    }
+
+    var _burstTimers = {};
+    function fireWeapon(wnum) {
+        var data=wpnDataByNum[String(wnum)]; if (!data) return;
+        var burst = data.burst||1;
+        if (burst <= 1) { _fireSingle(wnum, data); return; }
+        // Cancel any running burst for this weapon def (prevents overlap)
+        var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : ('w'+wnum);
+        if (_burstTimers[def]) { _burstTimers[def].forEach(function(t){clearTimeout(t);}); }
+        _burstTimers[def] = [];
+        var rate = (data.burstrate||0.1) * 1000; // ms between shots
+        for (var i = 0; i < burst; i++) {
+            (function(idx) {
+                var tid = setTimeout(function() { _fireSingle(wnum, data); }, idx * rate);
+                _burstTimers[def].push(tid);
+            })(i);
         }
     }
 

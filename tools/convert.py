@@ -247,6 +247,13 @@ _EXTRA_TOGGLE_TRACKS: Dict[str, list] = {
     'legbar': [('aimx1', 0, True, -15.0, 0.0, 50.0)],  # tilt turret upward when deployed
 }
 
+# Extra fire animation tracks for weapons that need aim-related piece movement.
+# Format: { 'unitname': { weapon_num: [('piece', axis, is_rotation, open_value, close_value, speed)] } }
+# The animation opens (0 → open_value) over speed, holds briefly, then closes (open_value → close_value).
+_EXTRA_FIRE_TRACKS: Dict[str, Dict[int, list]] = {
+    'corkarg': {2: [('aacover', 0, True, -150.0, 0.0, 300.0)]},  # AA hatch opens before firing
+}
+
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
@@ -590,6 +597,8 @@ def convert_with_weapons(
                                 sub = _collect_subtree(cur, children_map)
                                 # Stop if subtree contains limb joint pieces
                                 if _subtree_has_limb_joint(cur):
+                                    if best == cur:
+                                        best = None
                                     break
                                 # Stop if this ancestor's subtree overlaps other weapons' pieces
                                 if any(p in other_weapon_pieces for p in sub):
@@ -799,6 +808,28 @@ def convert_with_weapons(
 
                     print(f"  Weapon {wnum}: visual root = {visual_root}, "
                           f"subtree size = {len(subtree)}")
+
+                # Fallback: if NO visual root was found for any fire_point
+                # (e.g. fire_points are siblings of aim_pieces, not descendants),
+                # use aim_pieces with geometry as visual roots — same logic as
+                # the no-query_piece branch above.
+                if not seen_roots and wmap.aim_pieces:
+                    total_pieces = len(parent_map)
+                    for ap in wmap.aim_pieces:
+                        ap_key = ap.lower()
+                        if _is_dummy_piece(ap_key):
+                            continue
+                        ap_verts = piece_vert_count.get(ap_key, 0)
+                        if ap_verts <= 0:
+                            continue
+                        ap_sub = _collect_subtree(ap_key, children_map)
+                        if total_pieces > 0 and len(ap_sub) > total_pieces * 0.30:
+                            continue
+                        for piece_key in ap_sub:
+                            if not _is_dummy_piece(piece_key) and piece_key not in other_weapon_pieces:
+                                _add_to_lookup(piece_key, wnum, "visual")
+                        print(f"  Weapon {wnum}: visual root = {ap_key} (aim_piece fallback), "
+                              f"subtree size = {len(ap_sub)}")
 
     hide_pieces = hide_pieces or set()
 
@@ -1132,7 +1163,7 @@ def convert_with_weapons(
                     # S3O rest pose as the deployed/open state.
                     # Exception: units whose BOS Create() explicitly starts closed.
                     # Units that are known to start open despite no explicit BOS open call
-                    _FORCE_AUTOPLAY_OPEN = {'armpb', 'corasy', 'leganavymissileship'}
+                    _FORCE_AUTOPLAY_OPEN = {'armpb', 'corasy', 'leganavymissileship', 'corhrk'}
                     # Units that are known to start closed despite no explicit BOS closed call
                     _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'legeconv'}
                     _CLOSED_IN_CREATE = [
@@ -1171,22 +1202,63 @@ def convert_with_weapons(
 
             # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
             fire_clips = extract_lua_fire_animations(bos_content) if _is_lua else extract_fire_animations(bos_content)
-            if fire_clips:
-                fire_rotary = {}
-                for clip_name, clip_tracks, rotary in fire_clips:
-                    builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
+            if not fire_clips:
+                fire_clips = []
+            fire_rotary = {}
+            for clip_name, clip_tracks, rotary in fire_clips:
+                builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
+                                      piece_offsets, now_rots=now_rots)
+                if rotary:
+                    piece, axis, step_deg, _ = rotary
+                    axis_name = ['x', 'y', 'z'][axis]
+                    fire_rotary[clip_name] = {
+                        "piece": piece, "axis": axis_name,
+                        "step_deg": step_deg
+                    }
+            if fire_rotary and model.root_piece:
+                root_idx = builder.scenes[0]["nodes"][0]
+                root_extras = builder.nodes[root_idx].setdefault("extras", {})
+                root_extras["fire_rotary"] = fire_rotary
+
+            # Inject synthetic fire animations for aim-related piece movement
+            # (e.g. AA hatch opening before firing)
+            extra_fire = _EXTRA_FIRE_TRACKS.get(unit_name.lower(), {})
+            existing_fire_clips = {cn for cn, _, _ in fire_clips}
+            for wnum_extra, tracks_def in extra_fire.items():
+                clip_name = f'Fire_{wnum_extra}'
+                if clip_name in existing_fire_clips:
+                    continue  # don't overwrite existing fire animation
+                from bos_animator import BosTrack, BosKeyframe
+                synth_tracks = []
+                for piece, axis, is_rot, open_val, close_val, spd in tracks_def:
+                    # open over ~0.5s, hold at 0.5-0.7s, close over 0.7-2.0s
+                    travel = abs(open_val - close_val)
+                    open_dur = min(travel / spd, 0.5) if spd > 0 else 0.3
+                    hold_end = open_dur + 0.2
+                    close_dur = min(travel / (spd * 0.5), 1.3) if spd > 0 else 0.8
+                    total = hold_end + close_dur
+                    synth_tracks.append(BosTrack(
+                        piece=piece, axis=axis, is_rotation=is_rot,
+                        keyframes=[
+                            BosKeyframe(0.0, close_val),
+                            BosKeyframe(open_dur, open_val),
+                            BosKeyframe(hold_end, open_val),
+                            BosKeyframe(total, close_val),
+                        ]
+                    ))
+                if synth_tracks:
+                    builder.add_animation(clip_name, synth_tracks, node_name_to_idx,
                                           piece_offsets, now_rots=now_rots)
-                    if rotary:
-                        piece, axis, step_deg, _ = rotary
-                        axis_name = ['x', 'y', 'z'][axis]
-                        fire_rotary[clip_name] = {
-                            "piece": piece, "axis": axis_name,
-                            "step_deg": step_deg
-                        }
-                if fire_rotary and model.root_piece:
-                    root_idx = builder.scenes[0]["nodes"][0]
-                    root_extras = builder.nodes[root_idx].setdefault("extras", {})
-                    root_extras["fire_rotary"] = fire_rotary
+                    # Embed fire_delay so projectile spawns after hatch opens
+                    if model.root_piece:
+                        root_idx = builder.scenes[0]["nodes"][0]
+                        root_extras = builder.nodes[root_idx].setdefault("extras", {})
+                        fire_delays = root_extras.get("fire_delays", {})
+                        fire_delays[str(wnum_extra)] = open_dur
+                        root_extras["fire_delays"] = fire_delays
+                    pieces = sorted({t.piece for t in synth_tracks})
+                    print(f"  Fire animation '{clip_name}' (aim-piece inject): "
+                          f"{len(synth_tracks)} tracks, pieces: {', '.join(pieces)}")
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 

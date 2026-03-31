@@ -6,6 +6,7 @@ window._barWeaponsSetup = function(THREE, opts) {
     const weaponSummary = {};
     var unitRole = null;
     var isToggleable = false;
+    var fireDelays = {};
     modelScene.traverse(function(node) {
         if (node.userData && node.userData.weapon_summary) {
             Object.assign(weaponSummary, node.userData.weapon_summary);
@@ -15,6 +16,9 @@ window._barWeaponsSetup = function(THREE, opts) {
         }
         if (node.userData && node.userData.toggleable) {
             isToggleable = true;
+        }
+        if (node.userData && node.userData.fire_delays) {
+            Object.assign(fireDelays, node.userData.fire_delays);
         }
     });
     Object.assign(weaponSummaryOut, weaponSummary);
@@ -399,7 +403,15 @@ window._barWeaponsSetup = function(THREE, opts) {
                     action.reset().play();
                     var clipName = action.getClip().name;
                     var cfm = clipName.match(/^Fire_(\d+)$/);
-                    if (cfm && _projectileFireFn) _projectileFireFn(parseInt(cfm[1]));
+                    if (cfm && _projectileFireFn) {
+                        var fwn = parseInt(cfm[1]);
+                        var fDelay = fireDelays[String(fwn)];
+                        if (fDelay && fDelay > 0) {
+                            setTimeout(function() { _projectileFireFn(fwn); }, fDelay * 1000);
+                        } else {
+                            _projectileFireFn(fwn);
+                        }
+                    }
                     if (_initMixer) _initMixer.addEventListener('finished', function onDone(e) {
                         if (e.action === action) {
                             action.stop();
@@ -458,16 +470,21 @@ window._barWeaponsSetup = function(THREE, opts) {
     document.addEventListener('mouseup', _stopHold);
     document.addEventListener('mouseleave', _stopHold);
 
-    // Keyboard shortcuts: press 1-9 to fire weapon by number
+    // Keyboard shortcuts: press 1-9 to fire weapon group (DOM order), max 10/sec
+    var _wpnGroupEls = Array.from(document.querySelectorAll('.uw-item-flex[data-wpn-slug]'));
+    var _lastKeyFire = 0;
     document.addEventListener('keydown', function(e) {
         var k = e.key;
         if (k >= '1' && k <= '9' && !e.ctrlKey && !e.altKey && !e.metaKey) {
             var tag = (e.target.tagName || '').toLowerCase();
             if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-            var wnum = parseInt(k);
-            if (weaponSummary[String(wnum)]) {
+            var now = performance.now();
+            if (now - _lastKeyFire < 50) return;
+            _lastKeyFire = now;
+            var idx = parseInt(k) - 1;
+            if (idx < _wpnGroupEls.length) {
                 e.preventDefault();
-                playFire(wnum);
+                _fireFromEl(_wpnGroupEls[idx]);
             }
         }
     });

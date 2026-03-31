@@ -175,33 +175,34 @@ def parse_bos(filepath: str) -> BOSParseResult:
             if open_refs:
                 all_refs = open_refs
         # Detect BOS barrel-alternating: "pieceIndex = <piece> + <variable>"
-        # variable toggles 0/1 each shot, so piece and its adjacent piece (by index) both fire.
-        # We also look for the mirror piece by name (l↔r prefix/suffix swap).
+        # variable cycles 0..N-1 each shot, so piece and N-1 consecutive pieces fire.
+        # Detect cycle count from "if (variable == N) variable = 0;" or
+        # "variable = !variable" (toggle → 2).  Fallback: mirror piece l↔r.
         gun_alt = re.search(r'(?:piecenum|pieceIndex)\s*=\s*(\w+)\s*\+\s*(\w+)\s*;', body, re.IGNORECASE)
         if gun_alt and gun_alt.group(2).lower() in result.pieces:
             gun_alt = None  # second token is a piece name, not a variable — skip
         if gun_alt:
             base_piece = gun_alt.group(1).lower()
+            var_name = gun_alt.group(2).lower()
             if base_piece in result.pieces:
                 base_idx = result.pieces.index(base_piece)
-                # Try name-mirror first: swap l↔r in prefix or suffix
-                def _mirror(name):
-                    if name.startswith('l'): return 'r' + name[1:]
-                    if name.startswith('r'): return 'l' + name[1:]
-                    if name.endswith('l'): return name[:-1] + 'r'
-                    if name.endswith('r'): return name[:-1] + 'l'
-                    return None
-                mirror = _mirror(base_piece)
-                if mirror and mirror in result.pieces:
-                    alt_piece = mirror
-                elif base_idx + 1 < len(result.pieces):
-                    alt_piece = result.pieces[base_idx + 1]
-                elif base_idx - 1 >= 0:
-                    alt_piece = result.pieces[base_idx - 1]
+                # Determine cycle count from the variable's wrap logic in the full script.
+                # Pattern: "if (var == N) var = 0;" → N is the count.
+                # Find all "var == <num>" comparisons and take the max as the wrap limit.
+                cycle_count = 2  # default: toggle between 2
+                all_limits = [int(m2.group(1)) for m2 in re.finditer(
+                    rf'{re.escape(var_name)}\s*==\s*(\d+)', clean, re.IGNORECASE
+                )]
+                if all_limits:
+                    cycle_count = max(all_limits)
                 else:
-                    alt_piece = None
-                if alt_piece and alt_piece not in all_refs:
-                    all_refs = [base_piece, alt_piece]
+                    has_toggle = bool(re.search(
+                        rf'{re.escape(var_name)}\s*=\s*!\s*{re.escape(var_name)}', clean, re.IGNORECASE
+                    ))
+                    if has_toggle:
+                        cycle_count = 2
+                # Collect consecutive pieces from base_idx
+                all_refs = [result.pieces[i] for i in range(base_idx, min(base_idx + cycle_count, len(result.pieces)))]
         # Fallback: "piecenum = <variable>;" or "pieceIndex = <variable>;" where
         # variable is NOT a piece name. The variable acts as a piece index, cycled
         # in FireWeaponN. Resolve by finding all assignments to that variable.

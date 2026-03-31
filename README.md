@@ -29,7 +29,8 @@ Each file is a self-contained HTML embed for Webflow's custom code sections:
 |------|---------|
 | `webflow-js-script.html` | **Main viewer** — loads GLB, sets up scene, camera, lights, post-processing, auto-rotate, ground shadow, PNG export. Entry point for all other scripts. |
 | `webflow-js-shader.html` | **Custom shaders** — `onBeforeCompile` hooks on MeshStandardMaterial for team color blending, PBR map integration, emission/pulse effects. |
-| `webflow-js-weapons.html` | **Weapon visualization** — reads weapon metadata from GLB node extras, highlights fire points / aim pieces, plays spin animations. |
+| `webflow-js-weapons.html` | **Weapon visualization** — reads weapon metadata from GLB node extras, highlights fire points / aim pieces, plays fire/spin animations, handles fire delays for aim-piece movement (e.g. hatch opening). |
+| `webflow-js-projectiles.html` | **Projectile VFX** — spawns per-weapon-type projectile effects (plasma, beam, rocket, bolt, flame, lightning, torpedo, dgun, starburst) with muzzle flash, sound, trails, and burst firing support. |
 | `webflow-js-animtoggle.html` | **Animation UI** — toggle buttons for walk/idle animation and text overlay visibility. Persists state in localStorage. |
 | `webflow-js-editor.html` | **Editor panel** — lil-gui control panel (activated by `?editor` URL param) for tuning lights, exposure, SSAO, team color, HDR in real time. |
 
@@ -87,8 +88,8 @@ pip install numpy
 
 - **Piece hierarchy** as named glTF nodes (matching S3O piece tree)
 - **Weapon metadata** as node `extras`: `weapons` (numbers), `weapon_roles` (fire_point, aim_from, aim_piece), root `weapon_summary`
-- **Animations**: walk cycles, spin clips (radar/propeller), toggle open/close, activate loops
-- **Flags**: `is_ship`, `can_fly`, `unit_role`, `hide_pieces`, `toggleable` on root extras
+- **Animations**: walk cycles, spin clips (radar/propeller), toggle open/close, activate loops, fire/recoil animations (per-weapon)
+- **Flags**: `is_ship`, `can_fly`, `unit_role`, `hide_pieces`, `toggleable`, `fire_delays`, `fire_rotary` on root extras
 
 ### S3O Format
 
