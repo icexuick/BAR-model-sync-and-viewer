@@ -416,8 +416,7 @@ window._barProjectilesSetup = function(THREE, opts) {
     function fireWeapon(wnum) {
         var data=wpnDataByNum[String(wnum)]; if (!data) return;
         var o=getFireOrigin(wnum); if (!o) return;
-        var isBeam = getCat(data)==='beam';
-        if (data.sound) playSound(data.sound,o.pos,!isBeam);
+        if (data.sound) playSound(data.sound,o.pos,true);
         var fn = {beam:spawnBeam,laserround:spawnLaserRound,bolt:spawnBolt,plasma:spawnPlasma,rocket:spawnRocket,flame:spawnFlame,lightning:spawnLightning,dgun:spawnDgun};
         (fn[getCat(data)]||spawnPlasma)(o,data);
     }
