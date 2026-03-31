@@ -182,15 +182,14 @@ window._barProjectilesSetup = function(THREE, opts) {
         }
         var bm=d.largeBeam?cyl(thick,thick*0.5,col,0.85,998):cyl(0,thick*1.4,col,0.85,998);
         var bc=d.largeBeam?cyl(thick*0.4,thick*0.12,0xffffff,0.95,999):cyl(0,thick*0.5,0xffffff,0.95,999);
-        var fs = thick*24, fl=addS(mkSprite(col,fs,1),999); fl.position.copy(o.pos);
-        var lf=addS(mkSprite(col,fs*2.2,0.9,LT),999); lf.position.copy(o.pos);
+        var fs = thick*24, lf=addS(mkSprite(col,fs*2.2,0.9,LT),999); lf.position.copy(o.pos);
         var endPos=o.pos.clone().add(o.dir.clone().multiplyScalar(len));
         var ef=addS(mkSprite(col,fs*0.6,0.8),999); ef.position.copy(endPos);
         var ef2=addS(mkSprite(col,fs*1.4,0.75,LT),999); ef2.position.copy(endPos);
         muzzleLight(o.pos,col,15*sc,dur);
         active.push({type:'beam',age:0,maxAge:dur,extras:{
             beam:bm.mesh,beamMat:bm.m,beamCore:bc.mesh,coreMat:bc.m,
-            flare:fl,flareMat:fl.material,laserFlare:lf,laserFlareMat:lf.material,
+            laserFlare:lf,laserFlareMat:lf.material,
             endFlare:ef,endFlareMat:ef.material,endLaserFlare:ef2,endLaserFlareMat:ef2.material,
             node:o.node,beamLen:len}});
     }
@@ -313,13 +312,13 @@ window._barProjectilesSetup = function(THREE, opts) {
                         var cur=refreshNode(ex.node);
                         ex.beam.position.copy(cur.pos); ex.beam.lookAt(cur.pos.clone().add(cur.dir));
                         ex.beamCore.position.copy(cur.pos); ex.beamCore.lookAt(cur.pos.clone().add(cur.dir));
-                        ex.flare.position.copy(cur.pos); ex.laserFlare.position.copy(cur.pos);
+                        ex.laserFlare.position.copy(cur.pos);
                         var ep2=cur.pos.clone().add(cur.dir.clone().multiplyScalar(ex.beamLen));
                         ex.endFlare.position.copy(ep2); ex.endLaserFlare.position.copy(ep2);
                     }
                     var bf=Math.max(0,1-Math.max(0,t-0.8)/0.2);
                     ex.beamMat.opacity=0.85*bf; ex.coreMat.opacity=0.95*bf;
-                    ex.flareMat.opacity=bf; ex.endFlareMat.opacity=0.8*bf;
+                    ex.endFlareMat.opacity=0.8*bf;
                     ex.laserFlareMat.opacity=0.9*bf; ex.endLaserFlareMat.opacity=0.75*bf; break;
                 case 'bolt':
                     if (p.velocity) ex.bolt.position.addScaledVector(p.velocity,dt);
@@ -374,7 +373,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         function rm() { for (var i=0;i<arguments.length;i++) scene.remove(arguments[i]); }
         function dis() { for (var i=0;i<arguments.length;i++) if (arguments[i]) arguments[i].dispose(); }
         switch(p.type) {
-            case 'beam': rm(ex.beam,ex.beamCore,ex.flare,ex.laserFlare,ex.endFlare,ex.endLaserFlare); dis(ex.beam.geometry,ex.beamMat,ex.beamCore.geometry,ex.coreMat,ex.flareMat,ex.laserFlareMat,ex.endFlareMat,ex.endLaserFlareMat); break;
+            case 'beam': rm(ex.beam,ex.beamCore,ex.laserFlare,ex.endFlare,ex.endLaserFlare); dis(ex.beam.geometry,ex.beamMat,ex.beamCore.geometry,ex.coreMat,ex.laserFlareMat,ex.endFlareMat,ex.endLaserFlareMat); break;
             case 'bolt': rm(ex.bolt,ex.flare); dis(ex.boltMat,ex.flareMat); break;
             case 'laserround': rm(ex.round,ex.core,ex.flare,ex.laserFlare); dis(ex.round.geometry,ex.roundMat,ex.core.geometry,ex.coreMat,ex.flareMat,ex.laserFlareMat); break;
             case 'plasma': rm(ex.ball,ex.core,ex.flash); dis(ex.ballMat,ex.coreMat,ex.flashMat); break;
