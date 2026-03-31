@@ -167,6 +167,32 @@ def parse_bos(filepath: str) -> BOSParseResult:
         leg_m = re.match(rf'({_LEGACY_NAMES})', suffix, re.IGNORECASE)
         wnum = int(num_m.group(1)) if num_m else _LEGACY_WEAPON_MAP.get((leg_m.group(1) if leg_m else '').lower(), 1)
         all_refs = _extract_all_pieces_from_function(body, result.pieces)
+        # Detect BOS barrel-alternating: "pieceIndex = <piece> + gun_N"
+        # gun_N toggles 0/1 each shot, so piece and its adjacent piece (by index) both fire.
+        # We also look for the mirror piece by name (l↔r prefix/suffix swap).
+        gun_alt = re.search(r'pieceIndex\s*=\s*(\w+)\s*\+\s*gun_\d+', body, re.IGNORECASE)
+        if gun_alt:
+            base_piece = gun_alt.group(1).lower()
+            if base_piece in result.pieces:
+                base_idx = result.pieces.index(base_piece)
+                # Try name-mirror first: swap l↔r in prefix or suffix
+                def _mirror(name):
+                    if name.startswith('l'): return 'r' + name[1:]
+                    if name.startswith('r'): return 'l' + name[1:]
+                    if name.endswith('l'): return name[:-1] + 'r'
+                    if name.endswith('r'): return name[:-1] + 'l'
+                    return None
+                mirror = _mirror(base_piece)
+                if mirror and mirror in result.pieces:
+                    alt_piece = mirror
+                elif base_idx + 1 < len(result.pieces):
+                    alt_piece = result.pieces[base_idx + 1]
+                elif base_idx - 1 >= 0:
+                    alt_piece = result.pieces[base_idx - 1]
+                else:
+                    alt_piece = None
+                if alt_piece and alt_piece not in all_refs:
+                    all_refs = [base_piece, alt_piece]
         if all_refs:
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)

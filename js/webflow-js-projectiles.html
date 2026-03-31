@@ -28,8 +28,9 @@ window._barProjectilesSetup = function(THREE, opts) {
     var wpnDataBySlug = {};
     document.querySelectorAll('.uw-item-flex[data-wpn-slug]').forEach(function(el) {
         var slug = el.getAttribute('data-wpn-slug'); if (!slug) return;
+        var _isAA = !!(el.querySelector('#is-aa-weapon') || (el.closest('.uw-item') && el.closest('.uw-item').querySelector('#is-aa-weapon')));
         wpnDataBySlug[slug] = {
-            color: readColor(el), type: readAttr(el,'data-wpn-type')||'Cannon',
+            color: _isAA ? '#ff54b2' : readColor(el), type: readAttr(el,'data-wpn-type')||'Cannon',
             reload: parseFloat(readAttr(el,'data-wpn-reload'))||2,
             damage: parseInt(readAttr(el,'data-wpn-damage'))||100,
             velocity: parseInt(readAttr(el,'data-wpn-velocity'))||500,
@@ -193,7 +194,7 @@ window._barProjectilesSetup = function(THREE, opts) {
 
     function spawnBeam(o, d) {
         var col = new THREE.Color(d.color), sc = dScale(d.damage);
-        var len = d.range||200, dur = Math.max(d.beamtime,0.15), thick = (d.largeBeam?2.5:0.8)*sc;
+        var len = d.range||200, dur = d.reload<0.1 ? 3.0 : Math.max(d.beamtime,0.15), thick = (d.largeBeam?2.5:0.8)*sc;
         function cyl(r1, r2, col2, op, order) {
             var g = new THREE.CylinderGeometry(r1,r2,len,8,1,true); g.rotateX(Math.PI/2); g.translate(0,0,len/2);
             var m = new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
@@ -247,7 +248,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         var ball=addS(mkSprite(col,bs*3,0.95),998); ball.position.copy(o.pos);
         var core=addS(mkSprite(0xffffff,bs*1.5,0.7),999); core.position.copy(o.pos);
         var flash=addS(mkSprite(0xffffcc,bs*15,1),999); flash.position.copy(o.pos);
-        muzzleLight(o.pos,0xffffcc,12*sc,0.1);
+        muzzleLight(o.pos,col,12*sc,0.1);
         active.push({type:'plasma',age:0,maxAge:(d.range||400)/spd,velocity:dir.multiplyScalar(spd),gravity:-15,
             extras:{ball,ballMat:ball.material,core,coreMat:core.material,flash,flashMat:flash.material}});
     }
@@ -258,21 +259,22 @@ window._barProjectilesSetup = function(THREE, opts) {
         var initSpd=(d.accel>0)?Math.min(d.startVelo,maxSpd):maxSpd;
         var g=new THREE.Group();
         var bg=new THREE.CylinderGeometry(rl*0.15,rl*0.15,rl,6); bg.rotateX(Math.PI/2);
-        var bm=new THREE.MeshBasicMaterial({color:0x888888}); g.add(new THREE.Mesh(bg,bm));
+        var bm=new THREE.MeshBasicMaterial({color:col}); g.add(new THREE.Mesh(bg,bm));
         var ng=new THREE.ConeGeometry(rl*0.18,rl*0.5,6); ng.rotateX(Math.PI/2); ng.translate(0,0,rl*0.75);
         var nm=new THREE.MeshBasicMaterial({color:col}); g.add(new THREE.Mesh(ng,nm));
-        var exh=new THREE.Sprite(spr(0xff8800,0.8)); exh.scale.set(rl*2,rl*2,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
+        var exhCol=new THREE.Color(d.color).lerp(new THREE.Color(0xff8800),0.5);
+        var exh=new THREE.Sprite(spr(exhCol,0.8)); exh.scale.set(rl*2,rl*2,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
         g.position.copy(o.pos); g.lookAt(o.pos.clone().add(dir)); addS(g,998);
-        muzzleLight(o.pos,0xff6600,9*sc,0.15);
+        muzzleLight(o.pos,col,9*sc,0.15);
         var dirUnit=dir.clone().normalize();
         active.push({type:'rocket',age:0,maxAge:(d.range||400)/maxSpd,velocity:dirUnit.clone().multiplyScalar(initSpd),
             extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:dirUnit}});
     }
 
     function spawnFlame(o, d) {
-        var sc=dScale(d.damage), spd=Math.max(d.velocity*0.54,90), count=18;
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), spd=Math.max(d.velocity*0.54,90), count=18;
         var sa=0.5+(d.accuracy||0)*0.002;
-        muzzleLight(o.pos,0xff6600,12*sc,0.2);
+        muzzleLight(o.pos,col,12*sc,0.2);
         for (var i=0; i<count; i++) {
             var t=i/count, fc=new THREE.Color().setHSL(0.08-t*0.06,1,0.7-t*0.3);
             var p=new THREE.Sprite(spr(fc,0.9)); var sz=(0.4+t*1.5)*sc; p.scale.set(sz,sz,1);
