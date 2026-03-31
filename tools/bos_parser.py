@@ -159,6 +159,34 @@ def parse_bos(filepath: str) -> BOSParseResult:
                 pos += 1
         return results
 
+    # 1b. Pre-extract emit-sfx pieces from ShotN/FireWeaponN functions.
+    # These explicitly name the pieces that emit muzzle flash effects and are the
+    # most reliable indicator of actual fire points — more so than piece-index
+    # arithmetic in QueryWeaponN which can break if the piece declaration order
+    # doesn't match the intended barrel sequence (e.g. armbrawl).
+    _shot_emit_pieces: Dict[int, List[str]] = {}
+    _SHOT_PAT = rf'(?:Shot|FireWeapon)(\d+|(?:{_LEGACY_NAMES}))\s*\([^)]*\)\s*(?=\{{)'
+    for _shot_suffix, _shot_body in _extract_brace_body(clean, _SHOT_PAT):
+        _shot_num_m = re.match(r'\d+', _shot_suffix)
+        _shot_leg_m = re.match(rf'({_LEGACY_NAMES})', _shot_suffix, re.IGNORECASE)
+        if _shot_num_m:
+            _swnum = int(_shot_num_m.group())
+        elif _shot_leg_m:
+            _swnum = _LEGACY_WEAPON_MAP.get(_shot_leg_m.group(1).lower(), 1)
+        else:
+            continue
+        _emit_refs = re.findall(r'emit-sfx\s+[^;]*?\s+from\s+(\w+)', _shot_body, re.IGNORECASE)
+        if _emit_refs:
+            _seen: set = set()
+            _unique: list = []
+            for _p in _emit_refs:
+                _pl = _p.lower()
+                if _pl in [pp.lower() for pp in result.pieces] and _pl not in _seen:
+                    _seen.add(_pl)
+                    _unique.append(_pl)
+            if _unique:
+                _shot_emit_pieces[_swnum] = _unique
+
     # 2. Extract QueryWeaponN / QueryPrimary / QuerySecondary / ... functions
     # Use brace-matching so if/else chains (multi-barrel cycling) are parsed fully.
     _QUERY_PAT = rf'Query(Weapon(\d+)|({_LEGACY_NAMES}))\s*\([^)]*\)\s*(?=\{{)'
@@ -174,21 +202,27 @@ def parse_bos(filepath: str) -> BOSParseResult:
             open_refs = _extract_open_state_pieces(body, result.pieces)
             if open_refs:
                 all_refs = open_refs
-        # Detect BOS barrel-alternating: "pieceIndex = <piece> + <variable>"
+        # Detect BOS barrel-alternating: "pieceIndex = <piece_or_number> + <variable>"
         # variable cycles 0..N-1 each shot, so piece and N-1 consecutive pieces fire.
+        # Also handles "piecenum = <number> + <variable>" (e.g. cormadsam: piecenum = 3 + barrel).
         # Detect cycle count from "if (variable == N) variable = 0;" or
         # "variable = !variable" (toggle → 2).  Fallback: mirror piece l↔r.
         gun_alt = re.search(r'(?:piecenum|pieceIndex)\s*=\s*(\w+)\s*\+\s*(\w+)\s*;', body, re.IGNORECASE)
         if gun_alt and gun_alt.group(2).lower() in result.pieces:
             gun_alt = None  # second token is a piece name, not a variable — skip
         if gun_alt:
-            base_piece = gun_alt.group(1).lower()
+            base_token = gun_alt.group(1).lower()
             var_name = gun_alt.group(2).lower()
-            if base_piece in result.pieces:
-                base_idx = result.pieces.index(base_piece)
+            base_idx = None
+            if base_token in result.pieces:
+                base_idx = result.pieces.index(base_token)
+            elif base_token.isdigit():
+                base_idx = int(base_token)
+            if base_idx is not None and base_idx < len(result.pieces):
                 # Determine cycle count from the variable's wrap logic in the full script.
                 # Pattern: "if (var == N) var = 0;" → N is the count.
                 # Find all "var == <num>" comparisons and take the max as the wrap limit.
+                # Also check "var > N" patterns (e.g. "barrel > 11" with base 3 → count = 11-3+1 = 9).
                 cycle_count = 2  # default: toggle between 2
                 all_limits = [int(m2.group(1)) for m2 in re.finditer(
                     rf'{re.escape(var_name)}\s*==\s*(\d+)', clean, re.IGNORECASE
@@ -196,13 +230,58 @@ def parse_bos(filepath: str) -> BOSParseResult:
                 if all_limits:
                     cycle_count = max(all_limits)
                 else:
-                    has_toggle = bool(re.search(
-                        rf'{re.escape(var_name)}\s*=\s*!\s*{re.escape(var_name)}', clean, re.IGNORECASE
-                    ))
-                    if has_toggle:
-                        cycle_count = 2
-                # Collect consecutive pieces from base_idx
-                all_refs = [result.pieces[i] for i in range(base_idx, min(base_idx + cycle_count, len(result.pieces)))]
+                    # Check "var > N" pattern: variable resets when > N, so it ranges
+                    # from some start value up to N, giving (N - base_idx + 1) pieces
+                    # when the base is a numeric offset.
+                    gt_limits = [int(m2.group(1)) for m2 in re.finditer(
+                        rf'{re.escape(var_name)}\s*>\s*(\d+)', clean, re.IGNORECASE
+                    )]
+                    if gt_limits and base_token.isdigit():
+                        # e.g. base=3, barrel>11 → pieces at indices 3+1..3+8 = 4..10
+                        # The variable starts at some min and wraps at >max.
+                        # Find the initial assignment to determine start value.
+                        init_match = re.search(
+                            rf'{re.escape(var_name)}\s*=\s*(\d+)\s*;', clean, re.IGNORECASE
+                        )
+                        var_start = int(init_match.group(1)) if init_match else 0
+                        var_max = max(gt_limits)
+                        cycle_count = var_max - var_start + 1
+                    elif gt_limits:
+                        cycle_count = max(gt_limits)
+                    else:
+                        has_toggle = bool(re.search(
+                            rf'{re.escape(var_name)}\s*=\s*!\s*{re.escape(var_name)}', clean, re.IGNORECASE
+                        ))
+                        if has_toggle:
+                            cycle_count = 2
+                # For numeric base with variable offset, the actual piece indices are
+                # base_idx + var_start .. base_idx + var_start + cycle_count - 1
+                if base_token.isdigit():
+                    init_match = re.search(
+                        rf'{re.escape(var_name)}\s*=\s*(\d+)\s*;', clean, re.IGNORECASE
+                    )
+                    var_start = int(init_match.group(1)) if init_match else 0
+                    start_idx = base_idx + var_start
+                    all_refs = [result.pieces[i] for i in range(start_idx, min(start_idx + cycle_count, len(result.pieces)))]
+                else:
+                    # Collect consecutive pieces from base_idx
+                    all_refs = [result.pieces[i] for i in range(base_idx, min(base_idx + cycle_count, len(result.pieces)))]
+                # Sanity check: piece-index arithmetic relies on the BOS piece
+                # declaration order matching consecutive barrel pieces.  Some scripts
+                # (e.g. armbrawl) have flare1,flare2 at indices 0-1 but flare3,flare4
+                # at indices 8-9, so "flare1 + gun_1" overflows into unrelated pieces
+                # like "base".  When this happens, prefer the emit-sfx pieces from the
+                # corresponding ShotN/FireWeaponN function which explicitly name the
+                # real fire-effect pieces.
+                _FIRE_PREFIXES = ('flare', 'fire', 'emit', 'muzzle', 'barrel', 'rflare', 'lflare')
+                _has_suspect = any(
+                    not any(p.startswith(pfx) for pfx in _FIRE_PREFIXES)
+                    for p in all_refs
+                )
+                if _has_suspect and wnum in _shot_emit_pieces:
+                    emit_refs = _shot_emit_pieces[wnum]
+                    if len(emit_refs) >= len(all_refs):
+                        all_refs = emit_refs
         # Fallback: "piecenum = <variable>;" or "pieceIndex = <variable>;" where
         # variable is NOT a piece name. The variable acts as a piece index, cycled
         # in FireWeaponN. Resolve by finding all assignments to that variable.
@@ -226,6 +305,9 @@ def parse_bos(filepath: str) -> BOSParseResult:
                         has_increment = bool(re.search(
                             rf'\+\+\s*{re.escape(var_name)}', clean, re.IGNORECASE
                         ))
+                        has_toggle = bool(re.search(
+                            rf'{re.escape(var_name)}\s*=\s*!\s*{re.escape(var_name)}', clean, re.IGNORECASE
+                        ))
                         if has_increment and len(assigned_pieces) == 1:
                             # Cycling from initial piece upward — find the limit
                             start_piece = list(assigned_pieces)[0]
@@ -238,6 +320,13 @@ def parse_bos(filepath: str) -> BOSParseResult:
                                         if result.pieces[i].startswith('flare') or result.pieces[i].startswith('fire')]
                             if not all_refs:
                                 all_refs = [result.pieces[i] for i in range(start_idx, min(start_idx + count, len(result.pieces)))]
+                        elif has_toggle and len(assigned_pieces) == 1:
+                            # Toggle pattern: var = piece; ... var = !var;
+                            # BOS !var flips 0↔1, so the variable alternates between
+                            # the initial piece (index N) and the next piece (index N+1).
+                            start_piece = list(assigned_pieces)[0]
+                            start_idx = result.pieces.index(start_piece)
+                            all_refs = [result.pieces[i] for i in range(start_idx, min(start_idx + 2, len(result.pieces)))]
                         else:
                             all_refs = sorted(assigned_pieces, key=lambda p: result.pieces.index(p))
                     else:
