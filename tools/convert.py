@@ -341,8 +341,10 @@ def convert_with_weapons(
             if wmap.aim_disabled:
                 continue
 
-            if wmap.query_piece:
-                _add_to_lookup(wmap.query_piece.lower(), wnum, "fire_point")
+            # Tag ALL fire point pieces (multi-barrel weapons have flare1, flare2, etc.)
+            fire_points = wmap.query_pieces if wmap.query_pieces else ([wmap.query_piece] if wmap.query_piece else [])
+            for fp in fire_points:
+                _add_to_lookup(fp.lower(), wnum, "fire_point")
 
             if wmap.aim_from_piece:
                 _add_to_lookup(wmap.aim_from_piece.lower(), wnum, "aim_from")
@@ -873,6 +875,7 @@ def convert_with_weapons(
                 str(wnum): {
                     "def": (weapon_defs or {}).get(wnum),
                     "fire_point": wmap.query_piece,
+                    "fire_points": wmap.query_pieces if wmap.query_pieces else ([wmap.query_piece] if wmap.query_piece else []),
                     "aim_from": wmap.aim_from_piece,
                     "aim_pieces": wmap.aim_pieces,
                 }
