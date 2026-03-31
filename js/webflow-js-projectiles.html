@@ -34,7 +34,7 @@ window._barProjectilesSetup = function(THREE, opts) {
             damage: parseInt(readAttr(el,'data-wpn-damage'))||100,
             velocity: parseInt(readAttr(el,'data-wpn-velocity'))||500,
             beamtime: parseFloat(readAttr(el,'data-wpn-beamtime'))||0,
-            largeBeam: readAttr(el,'data-wpn-large-beam')==='true',
+            largeBeam: !!(el.querySelector('.weapon-large-beam,#wpn-large-beam-laser') || (el.closest('.uw-item') && el.closest('.uw-item').querySelector('.weapon-large-beam,#wpn-large-beam-laser'))),
             burst: parseInt(readAttr(el,'data-wpn-burst'))||1,
             sound: readAttr(el,'data-wpn-sound')||'',
             accuracy: parseFloat(readAttr(el,'data-wpn-acc'))||0,
