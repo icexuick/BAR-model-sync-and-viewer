@@ -336,7 +336,13 @@
 
             const _orbH={corafus:92,armafus:88,legafus:96,corfus:74,legfus:33,armjuno:85,corjuno:85,legjuno:78,corgate:53,armgate:38,leggatet3:63,legdeflector:33,corgatet3:93,armgatet3:62,corafust3:184,armafust3:176,legafust3:192};
             if(_orbH[unitName])box.expandByPoint(new THREE.Vector3(0,_orbH[unitName],0));
-            const center = box.getCenter(new THREE.Vector3());
+            // Use the higher min.y (closed pose) for vertical centering, so units
+            // whose open-animation swings parts below ground (e.g. corsolar panels)
+            // don't shift the model down and misplace the clipping plane.
+            const groundBoxEarly = (box.min.y > defaultBox.min.y) ? box : defaultBox;
+            const centerBox = box.clone();
+            centerBox.min.y = groundBoxEarly.min.y;
+            const center = centerBox.getCenter(new THREE.Vector3());
             modelScene.position.sub(center);
             const boundingSphere = new THREE.Sphere();
             box.getBoundingSphere(boundingSphere);
@@ -368,10 +374,7 @@
             groundMesh.rotation.x = -Math.PI / 2;
             let canFly = false, isShip = false;
             modelScene.traverse(n => { if (n.userData && n.userData.can_fly) canFly = true; if (n.userData && n.userData.is_ship) isShip = true; });
-            // Use whichever box has the higher min.y for the ground plane.
-            // Defenses that deploy upward: open-pose min.y > closed min.y → use open box.
-            // Units whose parts swing down when open: closed min.y > open min.y → use closed box.
-            const groundBox = (box.min.y > defaultBox.min.y) ? box : defaultBox;
+            const groundBox = groundBoxEarly;
             let groundY = groundBox.min.y - center.y - 0.01;
             if (canFly) groundY -= objectRadius * 0.66;
             else if (isShip) groundY -= objectRadius * 0.30;
