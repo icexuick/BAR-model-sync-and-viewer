@@ -480,6 +480,7 @@ window._barWeaponsSetup = function(THREE, opts) {
 
         // Click on DOM weapon list item → fire (always register, even without fire anims)
         document.addEventListener('click', function(e) {
+            if (!e.target.closest('.uw-img')) return;
             var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
             if (!el) return;
             var slug = el.getAttribute('data-wpn-slug');
