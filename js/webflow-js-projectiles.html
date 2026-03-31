@@ -238,7 +238,7 @@ window._barProjectilesSetup = function(THREE, opts) {
     function spawnRocket(o, d) {
         var col=new THREE.Color(d.color), sc=dScale(d.damage);
         var maxSpd=Math.max(d.velocity*0.9,135), dir=spread(o.dir,d.accuracy), rl=1.5*sc;
-        var initSpd=(d.startVelo>0)?Math.min(d.startVelo,maxSpd):maxSpd;
+        var initSpd=(d.accel>0)?Math.min(d.startVelo,maxSpd):maxSpd;
         var g=new THREE.Group();
         var bg=new THREE.CylinderGeometry(rl*0.15,rl*0.15,rl,6); bg.rotateX(Math.PI/2);
         var bm=new THREE.MeshBasicMaterial({color:0x888888}); g.add(new THREE.Mesh(bg,bm));
