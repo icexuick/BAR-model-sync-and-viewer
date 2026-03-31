@@ -1,963 +1,390 @@
 <script>
-// Projectile VFX system — reads weapon data from DOM data-wpn-* attributes
-// and spawns visual effects (lasers, plasma, rockets, lightning, flames) on fire.
 window._barProjectilesSetup = function(THREE, opts) {
-    var scene = opts.scene;
-    var camera = opts.camera;
-    var modelScene = opts.modelScene;
-    var unitName = opts.unitName;
-    var weaponSummary = opts.weaponSummary;
-    var renderer = opts.renderer;
+    var scene = opts.scene, camera = opts.camera, modelScene = opts.modelScene;
+    var unitName = opts.unitName, weaponSummary = opts.weaponSummary, renderer = opts.renderer;
 
-    // ── Read weapon CMS data from DOM ────────────────────────────────
-    // Webflow renders CMS fields as data-wpn-* attributes on .uw-item-flex elements.
-    // Color can also be read from a child element's background-color (give it
-    // an id like "wpn-color-dot" or a class, and set data-wpn-color-el="ID").
     function readColor(el) {
-        // 1. Explicit data attribute
         var dc = el.getAttribute('data-wpn-color');
         if (dc && dc !== '#ffffff' && dc !== 'transparent') return dc;
-        // 2. Search for color div: in el, in parent .uw-item, by class/id
-        var searchRoots = [el];
-        var parent = el.closest('.uw-item');
-        if (parent) searchRoots.push(parent);
-        for (var i = 0; i < searchRoots.length; i++) {
-            var root = searchRoots[i];
-            var dot = root.querySelector('.weapon-color-data') || root.querySelector('.wpn-color') || root.querySelector('#wpn-color') || root.querySelector('[wpn-color]');
+        var roots = [el], par = el.closest('.uw-item');
+        if (par) roots.push(par);
+        for (var i = 0; i < roots.length; i++) {
+            var dot = roots[i].querySelector('.weapon-color-data,.wpn-color,#wpn-color,[wpn-color]');
             if (dot) {
                 var bg = window.getComputedStyle(dot).backgroundColor;
-                if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
-                    var m = bg.match(/\d+/g);
-                    if (m && m.length >= 3) {
-                        return '#' + ((1 << 24) + (parseInt(m[0]) << 16) + (parseInt(m[1]) << 8) + parseInt(m[2])).toString(16).slice(1);
-                    }
-                }
+                var m = bg && bg.match(/\d+/g);
+                if (m && m.length >= 3)
+                    return '#' + ((1<<24)+(parseInt(m[0])<<16)+(parseInt(m[1])<<8)+parseInt(m[2])).toString(16).slice(1);
             }
         }
-        return '#ffff00'; // default yellow
+        return '#ffff00';
     }
-
-    // Read a data attribute from the element itself, parent .uw-item, or any child that has it
-    function readAttr(el, attr) {
-        var val = el.getAttribute(attr);
-        if (val) return val;
-        // Check parent .uw-item (attributes may live one level up)
-        var parent = el.closest('.uw-item');
-        if (parent) {
-            val = parent.getAttribute(attr);
-            if (val) return val;
-        }
-        // Check children
-        var child = el.querySelector('[' + attr + ']');
-        return child ? child.getAttribute(attr) : null;
+    function readAttr(el, a) {
+        var v = el.getAttribute(a); if (v) return v;
+        var p = el.closest('.uw-item'); if (p) { v = p.getAttribute(a); if (v) return v; }
+        var c = el.querySelector('['+a+']'); return c ? c.getAttribute(a) : null;
     }
 
     var wpnDataBySlug = {};
     document.querySelectorAll('.uw-item-flex[data-wpn-slug]').forEach(function(el) {
-        var slug = el.getAttribute('data-wpn-slug');
-        if (!slug) return;
+        var slug = el.getAttribute('data-wpn-slug'); if (!slug) return;
         wpnDataBySlug[slug] = {
-            color:     readColor(el),
-            type:      readAttr(el, 'data-wpn-type') || 'Cannon',
-            reload:    parseFloat(readAttr(el, 'data-wpn-reload')) || 2.0,
-            damage:    parseInt(readAttr(el, 'data-wpn-damage')) || 100,
-            velocity:  parseInt(readAttr(el, 'data-wpn-velocity')) || 500,
-            beamtime:  parseFloat(readAttr(el, 'data-wpn-beamtime')) || 0,
-            aoe:       parseInt(readAttr(el, 'data-wpn-aoe')) || 0,
-            largeBeam: readAttr(el, 'data-wpn-large-beam') === 'true',
-            burst:     parseInt(readAttr(el, 'data-wpn-burst')) || 1,
-            sound:     readAttr(el, 'data-wpn-sound') || '',
-            accuracy:  parseFloat(readAttr(el, 'data-wpn-acc')) || 0,
-            range:     parseFloat(readAttr(el, 'data-wpn-range')) || 400
+            color: readColor(el), type: readAttr(el,'data-wpn-type')||'Cannon',
+            reload: parseFloat(readAttr(el,'data-wpn-reload'))||2,
+            damage: parseInt(readAttr(el,'data-wpn-damage'))||100,
+            velocity: parseInt(readAttr(el,'data-wpn-velocity'))||500,
+            beamtime: parseFloat(readAttr(el,'data-wpn-beamtime'))||0,
+            largeBeam: readAttr(el,'data-wpn-large-beam')==='true',
+            burst: parseInt(readAttr(el,'data-wpn-burst'))||1,
+            sound: readAttr(el,'data-wpn-sound')||'',
+            accuracy: parseFloat(readAttr(el,'data-wpn-acc'))||0,
+            range: parseFloat(readAttr(el,'data-wpn-range'))||400
         };
     });
-
-    // Map weapon number → CMS data via slug lookup
     var wpnDataByNum = {};
-    for (var wnum in weaponSummary) {
-        var def = weaponSummary[wnum].def;
-        if (!def) continue;
-        var slug = unitName + '-' + def.replace(/_/g, '-');
-        if (wpnDataBySlug[slug]) wpnDataByNum[wnum] = wpnDataBySlug[slug];
+    for (var wn in weaponSummary) {
+        var def = weaponSummary[wn].def; if (!def) continue;
+        var slug = unitName+'-'+def.replace(/_/g,'-');
+        if (wpnDataBySlug[slug]) wpnDataByNum[wn] = wpnDataBySlug[slug];
     }
 
-    // ── Find fire_point nodes per weapon ─────────────────────────────
-    // Collect ALL fire_point nodes per wnum (multi-barrel weapons have multiple)
-    var firePointNodes = {}; // wnum → [THREE.Object3D, ...]
+    var firePointNodes = {};
     modelScene.traverse(function(node) {
-        var extras = node.userData;
-        if (!extras) return;
-        var data = extras.extras || extras;
-        var roles = data.weapon_roles;
-        var weapons = data.weapons;
-        if (!roles || !weapons) return;
-        if (roles.indexOf('fire_point') === -1) return;
-        var wlist = Array.isArray(weapons) ? weapons : [weapons];
-        for (var i = 0; i < wlist.length; i++) {
-            var w = wlist[i];
-            if (!firePointNodes[w]) firePointNodes[w] = [];
-            firePointNodes[w].push(node);
+        var d = node.userData; if (!d) return;
+        d = d.extras || d;
+        var roles = d.weapon_roles, wpns = d.weapons;
+        if (!roles || !wpns || roles.indexOf('fire_point') === -1) return;
+        var wl = Array.isArray(wpns) ? wpns : [wpns];
+        for (var i = 0; i < wl.length; i++) {
+            if (!firePointNodes[wl[i]]) firePointNodes[wl[i]] = [];
+            firePointNodes[wl[i]].push(node);
         }
     });
-
-    // Also build def→wnums grouping for round-robin across shared-def barrels
-    var defToWnums = {}; // def → [wnum, ...]
-    for (var wnum in weaponSummary) {
-        var def = weaponSummary[wnum].def;
-        if (!def) continue;
+    var defToWnums = {};
+    for (var wn in weaponSummary) {
+        var def = weaponSummary[wn].def; if (!def) continue;
         if (!defToWnums[def]) defToWnums[def] = [];
-        defToWnums[def].push(Number(wnum));
+        defToWnums[def].push(Number(wn));
     }
-    for (var def in defToWnums) defToWnums[def].sort(function(a,b){return a-b;});
-
-    // Build a flat list of all fire_point nodes per def (combines multi-wnum + multi-barrel)
-    var defFirePoints = {}; // def → [node, node, ...]
-    for (var def in defToWnums) {
-        defFirePoints[def] = [];
-        for (var i = 0; i < defToWnums[def].length; i++) {
-            var nodes = firePointNodes[defToWnums[def][i]];
-            if (nodes) {
-                for (var j = 0; j < nodes.length; j++) defFirePoints[def].push(nodes[j]);
-            }
+    for (var d in defToWnums) defToWnums[d].sort(function(a,b){return a-b;});
+    var defFirePoints = {};
+    for (var d in defToWnums) {
+        defFirePoints[d] = [];
+        for (var i = 0; i < defToWnums[d].length; i++) {
+            var ns = firePointNodes[defToWnums[d][i]];
+            if (ns) for (var j = 0; j < ns.length; j++) defFirePoints[d].push(ns[j]);
         }
     }
-    var defFireIndex = {}; // def → current round-robin index
-    console.log('[projectiles] firePointNodes:', Object.keys(firePointNodes).map(function(k) { return 'wnum ' + k + ' → ' + firePointNodes[k].length + ' (' + firePointNodes[k].map(function(n){return n.name;}).join(', ') + ')'; }));
-    console.log('[projectiles] defFirePoints:', Object.keys(defFirePoints).map(function(k) { return k + ' → ' + defFirePoints[k].length + ' (' + defFirePoints[k].map(function(n){return n.name;}).join(', ') + ')'; }));
+    var defFireIndex = {};
 
-    // ── Shared resources ─────────────────────────────────────────────
-    var textureLoader = new THREE.TextureLoader();
-
-    // Soft circle sprite for flares / muzzle flash / plasma balls
-    var flareCanvas = document.createElement('canvas');
-    flareCanvas.width = 64; flareCanvas.height = 64;
-    var fCtx = flareCanvas.getContext('2d');
-    var grad = fCtx.createRadialGradient(32, 32, 0, 32, 32, 32);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.3, 'rgba(255,255,255,0.6)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    fCtx.fillStyle = grad;
-    fCtx.fillRect(0, 0, 64, 64);
-    var flareTexture = new THREE.CanvasTexture(flareCanvas);
-
-    // Elongated streak sprite for laser bolts
-    var streakCanvas = document.createElement('canvas');
-    streakCanvas.width = 128; streakCanvas.height = 32;
-    var sCtx = streakCanvas.getContext('2d');
-    var sGrad = sCtx.createLinearGradient(0, 16, 128, 16);
-    sGrad.addColorStop(0, 'rgba(255,255,255,0)');
-    sGrad.addColorStop(0.3, 'rgba(255,255,255,0.8)');
-    sGrad.addColorStop(0.5, 'rgba(255,255,255,1)');
-    sGrad.addColorStop(0.7, 'rgba(255,255,255,0.8)');
-    sGrad.addColorStop(1, 'rgba(255,255,255,0)');
-    sCtx.fillStyle = sGrad;
-    sCtx.fillRect(0, 0, 128, 32);
-    var streakTexture = new THREE.CanvasTexture(streakCanvas);
-
-    // ── Active projectile list ───────────────────────────────────────
-    var activeProjectiles = []; // { mesh, velocity, age, maxAge, gravity, type, extras }
-
-    // ── Audio system ─────────────────────────────────────────────────
-    var audioListener = null;
-    var audioBuffers = {}; // url → AudioBuffer
-
-    function ensureAudioListener() {
-        if (audioListener) return audioListener;
-        audioListener = new THREE.AudioListener();
-        camera.add(audioListener);
-        return audioListener;
+    // Shared textures
+    function makeRadialTex(w, h) {
+        var c = document.createElement('canvas'); c.width = w; c.height = h;
+        var cx = c.getContext('2d'), g = cx.createRadialGradient(w/2,h/2,0,w/2,h/2,w/2);
+        g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.3,'rgba(255,255,255,0.6)'); g.addColorStop(1,'rgba(255,255,255,0)');
+        cx.fillStyle = g; cx.fillRect(0,0,w,h);
+        return new THREE.CanvasTexture(c);
     }
+    var FT = makeRadialTex(64,64);
+    var sc = document.createElement('canvas'); sc.width=128; sc.height=32;
+    var sx = sc.getContext('2d'), sg = sx.createLinearGradient(0,16,128,16);
+    sg.addColorStop(0,'rgba(255,255,255,0)'); sg.addColorStop(0.3,'rgba(255,255,255,0.8)');
+    sg.addColorStop(0.5,'rgba(255,255,255,1)'); sg.addColorStop(0.7,'rgba(255,255,255,0.8)'); sg.addColorStop(1,'rgba(255,255,255,0)');
+    sx.fillStyle=sg; sx.fillRect(0,0,128,32);
+    var ST = new THREE.CanvasTexture(sc);
 
-    function playSound(url, position) {
+    var ADD = THREE.AdditiveBlending, NORM = THREE.NormalBlending;
+    var active = [];
+    var audioListener = null, audioBuffers = {};
+
+    function playSound(url, pos) {
         if (!url) return;
-        var listener = ensureAudioListener();
-        if (audioBuffers[url]) {
-            var snd = new THREE.PositionalAudio(listener);
-            snd.setBuffer(audioBuffers[url]);
-            snd.setRefDistance(50);
-            snd.setVolume(0.4);
-            snd.position.copy(position);
-            scene.add(snd);
-            snd.play();
-            snd.onEnded = function() { scene.remove(snd); };
-            return;
+        if (!audioListener) { audioListener = new THREE.AudioListener(); camera.add(audioListener); }
+        function _play(buf) {
+            var s = new THREE.PositionalAudio(audioListener);
+            s.setBuffer(buf); s.setRefDistance(50); s.setVolume(0.4);
+            s.position.copy(pos); scene.add(s); s.play();
+            s.onEnded = function(){scene.remove(s);};
         }
-        var audioLoader = new THREE.AudioLoader();
-        audioLoader.load(url, function(buffer) {
-            audioBuffers[url] = buffer;
-            var snd = new THREE.PositionalAudio(listener);
-            snd.setBuffer(buffer);
-            snd.setRefDistance(50);
-            snd.setVolume(0.4);
-            snd.position.copy(position);
-            scene.add(snd);
-            snd.play();
-            snd.onEnded = function() { scene.remove(snd); };
-        });
+        if (audioBuffers[url]) { _play(audioBuffers[url]); return; }
+        new THREE.AudioLoader().load(url, function(b){ audioBuffers[url]=b; _play(b); });
     }
 
-    // ── Get fire point world position & direction ────────────────────
-    var _worldPos = new THREE.Vector3();
-    var _worldDir = new THREE.Vector3();
-
+    var _wp = new THREE.Vector3(), _wd = new THREE.Vector3();
     function getFireOrigin(wnum) {
-        // Round-robin across all fire_point nodes for this weapon's def
         var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
-        var nodes = (def && defFirePoints[def]) ? defFirePoints[def] : (firePointNodes[wnum] || []);
-        if (!nodes || nodes.length === 0) return null;
-        var key = def || wnum;
-        var idx = defFireIndex[key] || 0;
+        var nodes = (def && defFirePoints[def]) ? defFirePoints[def] : (firePointNodes[wnum]||[]);
+        if (!nodes || !nodes.length) return null;
+        var key = def||wnum, idx = defFireIndex[key]||0;
         var node = nodes[idx % nodes.length];
-        defFireIndex[key] = (idx + 1) % nodes.length;
-        node.updateWorldMatrix(true, false);
-        node.getWorldPosition(_worldPos);
-        _worldDir.set(0, 0, 1).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
-        if (_worldDir.lengthSq() < 0.01) _worldDir.set(0, 0, 1);
-        return { pos: _worldPos.clone(), dir: _worldDir.clone().normalize(), node: node };
+        defFireIndex[key] = (idx+1) % nodes.length;
+        node.updateWorldMatrix(true,false);
+        node.getWorldPosition(_wp);
+        _wd.set(0,0,1).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
+        if (_wd.lengthSq()<0.01) _wd.set(0,0,1);
+        return {pos:_wp.clone(), dir:_wd.clone().normalize(), node:node};
+    }
+    function refreshNode(node) {
+        node.updateWorldMatrix(true,false);
+        node.getWorldPosition(_wp);
+        _wd.set(0,0,1).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
+        if (_wd.lengthSq()<0.01) _wd.set(0,0,1);
+        return {pos:_wp.clone(), dir:_wd.clone().normalize()};
     }
 
-    // Re-read world position/direction from a fire point node (for attached beams)
-    function refreshOriginFromNode(node) {
-        node.updateWorldMatrix(true, false);
-        node.getWorldPosition(_worldPos);
-        _worldDir.set(0, 0, 1).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
-        if (_worldDir.lengthSq() < 0.01) _worldDir.set(0, 0, 1);
-        return { pos: _worldPos.clone(), dir: _worldDir.clone().normalize() };
-    }
-
-    // ── Classify weapon type into visual category ────────────────────
-    function getVisualCategory(wpnData) {
-        // Normalize: lowercase, strip spaces (CMS uses "Beam Laser", "Plasma Cannon" etc.)
-        var t = (wpnData.type || '').toLowerCase().replace(/[\s-]+/g, '');
-        // Beams: continuous line from barrel
-        if (t === 'beamlaser' || t === 'heatray' || t === 'tachyonlaserbeam' ||
-            t === 'thermalordnancegenerator') return 'beam';
-        // Laser cannon: thick fast cylinder (distinct from beam laser)
-        if (t === 'lasercannon') return 'laserround';
-        // Laser bolts: small fast projectiles
-        if (t === 'shotguncannon') return 'laserbolt';
-        // Plasma: glowing arcing ball
-        if (t === 'plasmacannon' || t === 'plasmarepeater' || t === 'plasmablast' ||
-            t === 'plasmashotgun' || t === 'clusterplasmacannon' ||
-            t === 'cannon') return 'plasma';
-        // Kinetic: fast bullet-like
-        if (t === 'railgun' || t === 'sniper' || t === 'gatlinggun' ||
-            t === 'flakcannon') return 'laserbolt';
-        // Flames
-        if (t === 'flamethrower' || t === 'flame' || t === 'napalmlauncher') return 'flame';
-        // Lightning / EMP
-        if (t === 'lightningcannon' || t === 'lightning' || t === 'emp' ||
-            t === 'triggerexp' || t === 'triggeremp' || t === 'junosurge') return 'lightning';
-        // D-Gun / disintegrator
-        if (t === 'dgun' || t === 'disintegratorcannon') return 'dgun';
-        // Missiles & rockets
-        if (t.indexOf('missile') !== -1 || t.indexOf('rocket') !== -1 ||
-            t.indexOf('torpedo') !== -1 || t === 'antinuke') return 'rocket';
-        // Bombs
-        if (t.indexOf('bomb') !== -1) return 'bomb';
-        // Fallback: if beamtime > 0 treat as beam, else plasma
-        if (wpnData.beamtime > 0) return 'beam';
+    function getCat(d) {
+        var t = (d.type||'').toLowerCase().replace(/[\s-]+/g,'');
+        if (t==='beamlaser'||t==='heatray'||t==='tachyonlaserbeam'||t==='thermalordnancegenerator') return 'beam';
+        if (t==='lasercannon') return 'laserround';
+        if (t==='shotguncannon'||t==='railgun'||t==='sniper'||t==='gatlinggun'||t==='flakcannon') return 'bolt';
+        if (t==='plasmacannon'||t==='plasmarepeater'||t==='plasmablast'||t==='plasmashotgun'||t==='clusterplasmacannon'||t==='cannon') return 'plasma';
+        if (t==='flamethrower'||t==='flame'||t==='napalmlauncher') return 'flame';
+        if (t==='lightningcannon'||t==='lightning'||t==='emp'||t==='triggerexp'||t==='triggeremp'||t==='junosurge') return 'lightning';
+        if (t==='dgun'||t==='disintegratorcannon') return 'dgun';
+        if (t.indexOf('missile')!==-1||t.indexOf('rocket')!==-1||t.indexOf('torpedo')!==-1||t==='antinuke') return 'rocket';
+        if (d.beamtime>0) return 'beam';
         return 'plasma';
     }
-
-    // ── Damage → visual scale mapping ────────────────────────────────
-    function damageToScale(damage) {
-        // Map damage 1-5000 → scale 0.3-3.0 (log scale)
-        var d = Math.max(1, Math.min(damage, 5000));
-        return 0.3 + 2.7 * (Math.log(d) / Math.log(5000));
+    function dScale(dmg) { var d=Math.max(1,Math.min(dmg,5000)); return 0.3+2.7*(Math.log(d)/Math.log(5000)); }
+    function spread(dir, acc) {
+        if (!acc||acc<=0) return dir.clone();
+        var maxDeg = Math.min(15, acc*0.015+Math.log(1+acc)*0.8);
+        var rad = maxDeg*Math.PI/180*Math.random(), theta = Math.random()*Math.PI*2;
+        var p1 = new THREE.Vector3(); if (Math.abs(dir.x)<0.9) p1.set(1,0,0); else p1.set(0,1,0);
+        p1.crossVectors(dir,p1).normalize();
+        var p2 = new THREE.Vector3().crossVectors(dir,p1).normalize();
+        return dir.clone().multiplyScalar(Math.cos(rad))
+            .add(p1.clone().multiplyScalar(Math.sin(rad)*Math.cos(theta)))
+            .add(p2.clone().multiplyScalar(Math.sin(rad)*Math.sin(theta))).normalize();
     }
 
-    // ── Accuracy → spread angle ──────────────────────────────────────
-    // accuracy=0 → 0°, accuracy=13 → ~3°, accuracy=1000 → ~15°
-    function applySpread(dir, accuracy) {
-        if (!accuracy || accuracy <= 0) return dir.clone();
-        // Map accuracy to max spread angle in radians (log-ish curve)
-        var maxDeg = Math.min(15, accuracy * 0.015 + Math.log(1 + accuracy) * 0.8);
-        var spreadRad = (maxDeg * Math.PI / 180) * Math.random();
-        var theta = Math.random() * Math.PI * 2; // random rotation around dir
-        // Build perpendicular vectors to dir
-        var perp = new THREE.Vector3();
-        if (Math.abs(dir.x) < 0.9) perp.set(1, 0, 0); else perp.set(0, 1, 0);
-        perp.crossVectors(dir, perp).normalize();
-        var perp2 = new THREE.Vector3().crossVectors(dir, perp).normalize();
-        var spread = perp.clone().multiplyScalar(Math.sin(spreadRad) * Math.cos(theta))
-            .add(perp2.clone().multiplyScalar(Math.sin(spreadRad) * Math.sin(theta)));
-        return dir.clone().multiplyScalar(Math.cos(spreadRad)).add(spread).normalize();
+    function spr(color, opacity, tex) {
+        return new THREE.SpriteMaterial({map:tex||FT, color:color, transparent:true, opacity:opacity, blending:ADD, depthWrite:false});
+    }
+    function mkSprite(color, sz, opacity, tex) {
+        var s = new THREE.Sprite(spr(color,opacity,tex)); s.scale.set(sz,sz,1); return s;
+    }
+    function addS(obj, order) { obj.renderOrder=order||998; scene.add(obj); return obj; }
+
+    function muzzleLight(pos, color, intensity, dur) {
+        var l = new THREE.PointLight(color, intensity, 80); l.position.copy(pos); scene.add(l);
+        active.push({type:'light', age:0, maxAge:dur||0.15, extras:{light:l, si:intensity}});
     }
 
-    // ── Dynamic muzzle flash light ─────────────────────────────────
-    function spawnMuzzleLight(position, color, intensity, duration) {
-        var light = new THREE.PointLight(color, intensity, 80);
-        light.position.copy(position);
-        scene.add(light);
-        activeProjectiles.push({
-            type: 'light', age: 0, maxAge: duration || 0.15,
-            extras: { light: light, startIntensity: intensity }
-        });
+    function spawnBeam(o, d) {
+        var col = new THREE.Color(d.color), sc = dScale(d.damage);
+        var len = 200+d.velocity*0.12, dur = Math.max(d.beamtime,1), thick = (d.largeBeam?2.5:0.8)*sc;
+        function cyl(r1, r2, col2, op, order) {
+            var g = new THREE.CylinderGeometry(r1,r2,len,8,1,true); g.rotateX(Math.PI/2); g.translate(0,0,len/2);
+            var m = new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            var mesh = new THREE.Mesh(g,m); mesh.position.copy(o.pos); mesh.lookAt(o.pos.clone().add(o.dir)); addS(mesh,order); return {mesh,m};
+        }
+        var bm=cyl(thick,thick*0.5,col,0.85,998), bc=cyl(thick*0.4,thick*0.12,0xffffff,0.95,999);
+        var fs = thick*24, fl=addS(mkSprite(col,fs,1),999); fl.position.copy(o.pos);
+        var endPos=o.pos.clone().add(o.dir.clone().multiplyScalar(len));
+        var ef=addS(mkSprite(col,fs*0.6,0.8),999); ef.position.copy(endPos);
+        muzzleLight(o.pos,col,15*sc,dur);
+        active.push({type:'beam',age:0,maxAge:dur,extras:{
+            beam:bm.mesh,beamMat:bm.m,beamCore:bc.mesh,coreMat:bc.m,
+            flare:fl,flareMat:fl.material,endFlare:ef,endFlareMat:ef.material,
+            node:o.node,beamLen:len}});
     }
 
-    // ── SPAWN functions per category ─────────────────────────────────
-
-    // --- BEAM LASER: continuous line from fire_point, fades over beamtime ---
-    function spawnBeam(origin, wpnData) {
-        var color = new THREE.Color(wpnData.color);
-        var scale = damageToScale(wpnData.damage);
-        var beamLen = 200 + wpnData.velocity * 0.12;
-        var duration = Math.max(wpnData.beamtime, 1.0);
-        var thick = (wpnData.largeBeam ? 2.5 : 0.8) * scale;
-
-        // Beam cylinder — outer glow
-        var geom = new THREE.CylinderGeometry(thick, thick * 0.5, beamLen, 8, 1, true);
-        geom.rotateX(Math.PI / 2); // align along Z
-        geom.translate(0, 0, beamLen / 2);
-        var mat = new THREE.MeshBasicMaterial({
-            color: color, transparent: true, opacity: 0.85,
-            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-        });
-        var beam = new THREE.Mesh(geom, mat);
-        beam.position.copy(origin.pos);
-        beam.lookAt(origin.pos.clone().add(origin.dir));
-        beam.renderOrder = 998;
-        scene.add(beam);
-
-        // Beam core — bright white/color center for visibility
-        var coreThick = thick * 0.4;
-        var coreGeom = new THREE.CylinderGeometry(coreThick, coreThick * 0.3, beamLen, 6, 1, true);
-        coreGeom.rotateX(Math.PI / 2);
-        coreGeom.translate(0, 0, beamLen / 2);
-        var coreMat = new THREE.MeshBasicMaterial({
-            color: 0xffffff, transparent: true, opacity: 0.95,
-            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-        });
-        var beamCore = new THREE.Mesh(coreGeom, coreMat);
-        beamCore.position.copy(origin.pos);
-        beamCore.lookAt(origin.pos.clone().add(origin.dir));
-        beamCore.renderOrder = 999;
-        scene.add(beamCore);
-
-        // Muzzle flare sprite
-        var flareMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: color, transparent: true, opacity: 1.0,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var flare = new THREE.Sprite(flareMat);
-        var flareSize = thick * 24;
-        flare.scale.set(flareSize, flareSize, 1);
-        flare.position.copy(origin.pos);
-        flare.renderOrder = 999;
-        scene.add(flare);
-
-        // Impact flare at beam end
-        var endPos = origin.pos.clone().add(origin.dir.clone().multiplyScalar(beamLen));
-        var endFlareMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: color, transparent: true, opacity: 0.8,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var endFlare = new THREE.Sprite(endFlareMat);
-        endFlare.scale.set(flareSize * 0.6, flareSize * 0.6, 1);
-        endFlare.position.copy(endPos);
-        endFlare.renderOrder = 999;
-        scene.add(endFlare);
-
-        spawnMuzzleLight(origin.pos, color, 15.0 * scale, duration);
-
-        activeProjectiles.push({
-            type: 'beam', age: 0, maxAge: duration,
-            extras: { beam: beam, beamMat: mat, beamCore: beamCore, coreMat: coreMat,
-                      flare: flare, flareMat: flareMat, endFlare: endFlare, endFlareMat: endFlareMat,
-                      node: origin.node, beamLen: beamLen }
-        });
+    function spawnBolt(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage);
+        var spd=Math.max(d.velocity*1.35,270), dir=spread(o.dir,d.accuracy);
+        var bl=2*sc, bolt=new THREE.Sprite(new THREE.SpriteMaterial({map:ST,color:col,transparent:true,opacity:0.9,blending:ADD,depthWrite:false}));
+        bolt.scale.set(bl*3,bl,1); bolt.position.copy(o.pos); addS(bolt,998);
+        var fl=addS(mkSprite(col,sc*12,1),999); fl.position.copy(o.pos);
+        muzzleLight(o.pos,col,6*sc,0.12);
+        active.push({type:'bolt',age:0,maxAge:(d.range||400)/spd,velocity:dir.multiplyScalar(spd),
+            extras:{bolt,boltMat:bolt.material,flare:fl,flareMat:fl.material}});
     }
 
-    // --- LASER BOLT: small elongated bolt that flies forward ---
-    function spawnLaserBolt(origin, wpnData) {
-        var color = new THREE.Color(wpnData.color);
-        var scale = damageToScale(wpnData.damage);
-        var speed = Math.max(wpnData.velocity * 1.35, 270);
-        var dir = applySpread(origin.dir, wpnData.accuracy);
-        var range = wpnData.range || 400;
-        var maxAge = range / speed;
-
-        // Bolt sprite
-        var mat = new THREE.SpriteMaterial({
-            map: streakTexture, color: color, transparent: true, opacity: 0.9,
-            blending: THREE.AdditiveBlending, depthWrite: false, rotation: 0
-        });
-        var bolt = new THREE.Sprite(mat);
-        var boltLen = 2.0 * scale;
-        bolt.scale.set(boltLen * 3, boltLen, 1);
-        bolt.position.copy(origin.pos);
-        bolt.renderOrder = 998;
-        scene.add(bolt);
-
-        // Muzzle flare
-        var flareMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: color, transparent: true, opacity: 1.0,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var flare = new THREE.Sprite(flareMat);
-        flare.scale.set(scale * 12, scale * 12, 1);
-        flare.position.copy(origin.pos);
-        flare.renderOrder = 999;
-        scene.add(flare);
-
-        spawnMuzzleLight(origin.pos, color, 6.0 * scale, 0.12);
-
-        activeProjectiles.push({
-            type: 'bolt', age: 0, maxAge: maxAge,
-            velocity: dir.clone().multiplyScalar(speed),
-            extras: { bolt: bolt, boltMat: mat, flare: flare, flareMat: flareMat, startPos: origin.pos.clone() }
-        });
+    function spawnLaserRound(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage);
+        var spd=Math.max(d.velocity*1.35,270), dir=spread(o.dir,d.accuracy);
+        var len=Math.max(8,sc*12), thick=Math.max(0.5,sc*0.9);
+        function cyl(r1,r2,col2,op,order) {
+            var g=new THREE.CylinderGeometry(r1,r2,len,6,1,true); g.rotateX(Math.PI/2);
+            var m=new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            var mesh=new THREE.Mesh(g,m); mesh.position.copy(o.pos); mesh.lookAt(o.pos.clone().add(dir)); addS(mesh,order); return {mesh,m};
+        }
+        var rm=cyl(thick,thick*0.6,col,0.85,998), rc=cyl(thick*0.35,thick*0.2,0xffffff,0.95,999);
+        var fl=addS(mkSprite(col,sc*14,1),999); fl.position.copy(o.pos);
+        muzzleLight(o.pos,col,8*sc,0.1);
+        active.push({type:'laserround',age:0,maxAge:(d.range||400)/spd,velocity:dir.clone().multiplyScalar(spd),
+            extras:{round:rm.mesh,roundMat:rm.m,core:rc.mesh,coreMat:rc.m,flare:fl,flareMat:fl.material,dir}});
     }
 
-    // --- LASER ROUND: thick cylinder bolt (LaserCannon) ---
-    function spawnLaserRound(origin, wpnData) {
-        var color = new THREE.Color(wpnData.color);
-        var scale = damageToScale(wpnData.damage);
-        var speed = Math.max(wpnData.velocity * 1.35, 270);
-        var dir = applySpread(origin.dir, wpnData.accuracy);
-        var range = wpnData.range || 400;
-        var maxAge = range / speed;
-        var roundLen = Math.max(8, scale * 12);
-        var thick = Math.max(0.5, scale * 0.9);
-
-        // Outer glow cylinder
-        var geom = new THREE.CylinderGeometry(thick, thick * 0.6, roundLen, 6, 1, true);
-        geom.rotateX(Math.PI / 2);
-        var mat = new THREE.MeshBasicMaterial({
-            color: color, transparent: true, opacity: 0.85,
-            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-        });
-        var round = new THREE.Mesh(geom, mat);
-        round.position.copy(origin.pos);
-        round.lookAt(origin.pos.clone().add(dir));
-        round.renderOrder = 998;
-        scene.add(round);
-
-        // Bright white core
-        var coreGeom = new THREE.CylinderGeometry(thick * 0.35, thick * 0.2, roundLen, 5, 1, true);
-        coreGeom.rotateX(Math.PI / 2);
-        var coreMat = new THREE.MeshBasicMaterial({
-            color: 0xffffff, transparent: true, opacity: 0.95,
-            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-        });
-        var core = new THREE.Mesh(coreGeom, coreMat);
-        core.position.copy(origin.pos);
-        core.lookAt(origin.pos.clone().add(dir));
-        core.renderOrder = 999;
-        scene.add(core);
-
-        // Muzzle flare
-        var flareMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: color, transparent: true, opacity: 1.0,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var flare = new THREE.Sprite(flareMat);
-        flare.scale.set(scale * 14, scale * 14, 1);
-        flare.position.copy(origin.pos);
-        flare.renderOrder = 999;
-        scene.add(flare);
-
-        spawnMuzzleLight(origin.pos, color, 8.0 * scale, 0.1);
-
-        activeProjectiles.push({
-            type: 'laserround', age: 0, maxAge: maxAge,
-            velocity: dir.clone().multiplyScalar(speed),
-            extras: { round: round, roundMat: mat, core: core, coreMat: coreMat,
-                      flare: flare, flareMat: flareMat, dir: dir }
-        });
+    function spawnPlasma(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), bs=Math.max(0.4,sc*0.6);
+        var spd=Math.max(d.velocity*1.08,180), dir=spread(o.dir,d.accuracy);
+        var ball=addS(mkSprite(col,bs*3,0.95),998); ball.position.copy(o.pos);
+        var core=addS(mkSprite(0xffffff,bs*1.5,0.7),999); core.position.copy(o.pos);
+        var flash=addS(mkSprite(0xffffcc,bs*15,1),999); flash.position.copy(o.pos);
+        muzzleLight(o.pos,0xffffcc,12*sc,0.1);
+        active.push({type:'plasma',age:0,maxAge:(d.range||400)/spd,velocity:dir.multiplyScalar(spd),gravity:-15,
+            extras:{ball,ballMat:ball.material,core,coreMat:core.material,flash,flashMat:flash.material}});
     }
 
-    // --- PLASMA: glowing ball that arcs forward ---
-    function spawnPlasma(origin, wpnData) {
-        var color = new THREE.Color(wpnData.color);
-        var scale = damageToScale(wpnData.damage);
-        var speed = Math.max(wpnData.velocity * 1.08, 180);
-        var ballSize = Math.max(0.4, scale * 0.6);
-        var dir = applySpread(origin.dir, wpnData.accuracy);
-        var range = wpnData.range || 400;
-        var maxAge = range / speed;
-
-        // Plasma ball sprite
-        var mat = new THREE.SpriteMaterial({
-            map: flareTexture, color: color, transparent: true, opacity: 0.95,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var ball = new THREE.Sprite(mat);
-        ball.scale.set(ballSize * 3, ballSize * 3, 1);
-        ball.position.copy(origin.pos);
-        ball.renderOrder = 998;
-        scene.add(ball);
-
-        // Inner bright core
-        var coreMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: 0xffffff, transparent: true, opacity: 0.7,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var core = new THREE.Sprite(coreMat);
-        core.scale.set(ballSize * 1.5, ballSize * 1.5, 1);
-        core.position.copy(origin.pos);
-        core.renderOrder = 999;
-        scene.add(core);
-
-        // Muzzle flash
-        var flashMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: 0xffffcc, transparent: true, opacity: 1.0,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var flash = new THREE.Sprite(flashMat);
-        flash.scale.set(ballSize * 15, ballSize * 15, 1);
-        flash.position.copy(origin.pos);
-        flash.renderOrder = 999;
-        scene.add(flash);
-
-        spawnMuzzleLight(origin.pos, 0xffffcc, 12.0 * scale, 0.1);
-
-        activeProjectiles.push({
-            type: 'plasma', age: 0, maxAge: maxAge,
-            velocity: dir.clone().multiplyScalar(speed),
-            gravity: -15,
-            extras: { ball: ball, ballMat: mat, core: core, coreMat: coreMat, flash: flash, flashMat: flashMat }
-        });
+    function spawnRocket(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage);
+        var spd=Math.max(d.velocity*0.9,135), dir=spread(o.dir,d.accuracy), rl=1.5*sc;
+        var g=new THREE.Group();
+        var bg=new THREE.CylinderGeometry(rl*0.15,rl*0.15,rl,6); bg.rotateX(Math.PI/2);
+        var bm=new THREE.MeshBasicMaterial({color:0x888888}); g.add(new THREE.Mesh(bg,bm));
+        var ng=new THREE.ConeGeometry(rl*0.18,rl*0.5,6); ng.rotateX(Math.PI/2); ng.translate(0,0,rl*0.75);
+        var nm=new THREE.MeshBasicMaterial({color:col}); g.add(new THREE.Mesh(ng,nm));
+        var exh=new THREE.Sprite(spr(0xff8800,0.8)); exh.scale.set(rl*2,rl*2,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
+        g.position.copy(o.pos); g.lookAt(o.pos.clone().add(dir)); addS(g,998);
+        muzzleLight(o.pos,0xff6600,9*sc,0.15);
+        active.push({type:'rocket',age:0,maxAge:(d.range||400)/spd,velocity:dir.multiplyScalar(spd),
+            extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl}});
     }
 
-    // --- ROCKET: small elongated mesh + smoke trail ---
-    function spawnRocket(origin, wpnData) {
-        var color = new THREE.Color(wpnData.color);
-        var scale = damageToScale(wpnData.damage);
-        var speed = Math.max(wpnData.velocity * 0.90, 135);
-        var rocketLen = 1.5 * scale;
-        var dir = applySpread(origin.dir, wpnData.accuracy);
-        var range = wpnData.range || 400;
-        var maxAge = range / speed;
-
-        // Rocket body (cone + cylinder)
-        var group = new THREE.Group();
-        var bodyGeom = new THREE.CylinderGeometry(rocketLen * 0.15, rocketLen * 0.15, rocketLen, 6);
-        bodyGeom.rotateX(Math.PI / 2);
-        var bodyMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
-        var body = new THREE.Mesh(bodyGeom, bodyMat);
-        group.add(body);
-
-        var noseGeom = new THREE.ConeGeometry(rocketLen * 0.18, rocketLen * 0.5, 6);
-        noseGeom.rotateX(Math.PI / 2);
-        noseGeom.translate(0, 0, rocketLen * 0.75);
-        var noseMat = new THREE.MeshBasicMaterial({ color: color });
-        var nose = new THREE.Mesh(noseGeom, noseMat);
-        group.add(nose);
-
-        // Rocket exhaust flare
-        var exhMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: 0xff8800, transparent: true, opacity: 0.8,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var exhaust = new THREE.Sprite(exhMat);
-        exhaust.scale.set(rocketLen * 2, rocketLen * 2, 1);
-        exhaust.position.set(0, 0, -rocketLen * 0.6);
-        group.add(exhaust);
-
-        group.position.copy(origin.pos);
-        group.lookAt(origin.pos.clone().add(dir));
-        group.renderOrder = 998;
-        scene.add(group);
-
-        // Smoke trail particles
-        var smokeParticles = [];
-
-        spawnMuzzleLight(origin.pos, 0xff6600, 9.0 * scale, 0.15);
-
-        activeProjectiles.push({
-            type: 'rocket', age: 0, maxAge: maxAge,
-            velocity: dir.clone().multiplyScalar(speed),
-            extras: { group: group, exhaust: exhaust, exhMat: exhMat, smokeParticles: smokeParticles, bodyMat: bodyMat, noseMat: noseMat, rocketLen: rocketLen }
-        });
-    }
-
-    // --- FLAME: rapid stream of fading fire sprites ---
-    function spawnFlame(origin, wpnData) {
-        var scale = damageToScale(wpnData.damage);
-        var speed = Math.max(wpnData.velocity * 0.54, 90);
-        var count = 18;
-        var spreadAngle = 0.5 + (wpnData.accuracy || 0) * 0.002; // wider cone for inaccurate flamers
-
-        spawnMuzzleLight(origin.pos, 0xff6600, 12.0 * scale, 0.2);
-
-        for (var i = 0; i < count; i++) {
-            var t = i / count;
-            // Color gradient: white → yellow → orange → red
-            var flameColor = new THREE.Color().setHSL(0.08 - t * 0.06, 1.0, 0.7 - t * 0.3);
-            var mat = new THREE.SpriteMaterial({
-                map: flareTexture, color: flameColor, transparent: true, opacity: 0.9,
-                blending: THREE.AdditiveBlending, depthWrite: false
-            });
-            var particle = new THREE.Sprite(mat);
-            // Start small, grow quickly as they travel
-            var sz = (0.4 + t * 1.5) * scale;
-            particle.scale.set(sz, sz, 1);
-            particle.position.copy(origin.pos);
-            particle.renderOrder = 998;
-            scene.add(particle);
-
-            var spread = new THREE.Vector3(
-                (Math.random() - 0.5) * spreadAngle,
-                (Math.random() - 0.5) * spreadAngle,
-                (Math.random() - 0.5) * spreadAngle
-            );
-            var vel = origin.dir.clone().multiplyScalar(speed * (0.5 + Math.random() * 0.9)).add(spread);
-
-            activeProjectiles.push({
-                type: 'flame', age: -i * 0.018, maxAge: 0.4 + Math.random() * 0.3,
-                velocity: vel,
-                extras: { sprite: particle, mat: mat, scale: scale }
-            });
+    function spawnFlame(o, d) {
+        var sc=dScale(d.damage), spd=Math.max(d.velocity*0.54,90), count=18;
+        var sa=0.5+(d.accuracy||0)*0.002;
+        muzzleLight(o.pos,0xff6600,12*sc,0.2);
+        for (var i=0; i<count; i++) {
+            var t=i/count, fc=new THREE.Color().setHSL(0.08-t*0.06,1,0.7-t*0.3);
+            var p=new THREE.Sprite(spr(fc,0.9)); var sz=(0.4+t*1.5)*sc; p.scale.set(sz,sz,1);
+            p.position.copy(o.pos); addS(p,998);
+            var sv=new THREE.Vector3((Math.random()-0.5)*sa,(Math.random()-0.5)*sa,(Math.random()-0.5)*sa);
+            var vel=o.dir.clone().multiplyScalar(spd*(0.5+Math.random()*0.9)).add(sv);
+            active.push({type:'flame',age:-i*0.018,maxAge:0.4+Math.random()*0.3,velocity:vel,extras:{sprite:p,mat:p.material}});
         }
     }
 
-    // --- LIGHTNING: jagged line segments from fire_point ---
-    function spawnLightning(origin, wpnData) {
-        var color = new THREE.Color(wpnData.color);
-        var scale = damageToScale(wpnData.damage);
-        var beamLen = 60 + wpnData.velocity * 0.06;
-        var duration = Math.max(wpnData.beamtime, 0.15);
-        var segments = 12;
-
-        var points = [];
-        var pos = origin.pos.clone();
-        var step = origin.dir.clone().multiplyScalar(beamLen / segments);
-        for (var i = 0; i <= segments; i++) {
-            var jitter = (i === 0 || i === segments) ? 0 : (Math.random() - 0.5) * scale * 3;
-            var jitterY = (i === 0 || i === segments) ? 0 : (Math.random() - 0.5) * scale * 3;
-            points.push(new THREE.Vector3(
-                pos.x + jitter,
-                pos.y + jitterY,
-                pos.z + jitter
-            ));
+    function spawnLightning(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage);
+        var len=60+d.velocity*0.06, dur=Math.max(d.beamtime,0.15), seg=12;
+        var pts=[], pos=o.pos.clone(), step=o.dir.clone().multiplyScalar(len/seg);
+        for (var i=0; i<=seg; i++) {
+            var jt=i===0||i===seg?0:(Math.random()-0.5)*sc*3;
+            pts.push(new THREE.Vector3(pos.x+jt,pos.y+(i===0||i===seg?0:(Math.random()-0.5)*sc*3),pos.z+jt));
             pos.add(step);
         }
-
-        var geom = new THREE.BufferGeometry().setFromPoints(points);
-        var mat = new THREE.LineBasicMaterial({
-            color: color, transparent: true, opacity: 1.0,
-            blending: THREE.AdditiveBlending, depthWrite: false, linewidth: 2
-        });
-        var line = new THREE.Line(geom, mat);
-        line.renderOrder = 998;
-        scene.add(line);
-
-        // Bright core line (thinner / whiter)
-        var coreMat = new THREE.LineBasicMaterial({
-            color: 0xffffff, transparent: true, opacity: 0.8,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var coreLine = new THREE.Line(geom.clone(), coreMat);
-        coreLine.renderOrder = 999;
-        scene.add(coreLine);
-
-        // Flare at origin
-        var flareMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: color, transparent: true, opacity: 1.0,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var flare = new THREE.Sprite(flareMat);
-        flare.scale.set(scale * 15, scale * 15, 1);
-        flare.position.copy(origin.pos);
-        flare.renderOrder = 999;
-        scene.add(flare);
-
-        spawnMuzzleLight(origin.pos, color, 15.0 * scale, duration);
-
-        activeProjectiles.push({
-            type: 'lightning', age: 0, maxAge: duration,
-            extras: { line: line, lineMat: mat, coreLine: coreLine, coreLineMat: coreMat, flare: flare, flareMat: flareMat, geom: geom, coreGeom: coreLine.geometry, points: points, scale: scale, origin: origin, node: origin.node, segments: segments, beamLen: beamLen }
-        });
+        var geom=new THREE.BufferGeometry().setFromPoints(pts);
+        var lm=new THREE.LineBasicMaterial({color:col,transparent:true,opacity:1,blending:ADD,depthWrite:false});
+        var cm=new THREE.LineBasicMaterial({color:0xffffff,transparent:true,opacity:0.8,blending:ADD,depthWrite:false});
+        var line=new THREE.Line(geom,lm); addS(line,998);
+        var core=new THREE.Line(geom.clone(),cm); addS(core,999);
+        var fl=addS(mkSprite(col,sc*15,1),999); fl.position.copy(o.pos);
+        muzzleLight(o.pos,col,15*sc,dur);
+        active.push({type:'lightning',age:0,maxAge:dur,extras:{
+            line,lineMat:lm,coreLine:core,coreLineMat:cm,flare:fl,flareMat:fl.material,
+            geom,coreGeom:core.geometry,pts,scale:sc,origin:o,node:o.node,seg,len}});
     }
 
-    // --- D-GUN: expanding disintegrator pulse ---
-    function spawnDgun(origin, wpnData) {
-        var color = new THREE.Color(wpnData.color || '#b24cff');
-        var speed = Math.max(wpnData.velocity * 0.72, 180);
-
-        // Bright expanding sphere
-        var geom = new THREE.SphereGeometry(1, 12, 8);
-        var mat = new THREE.MeshBasicMaterial({
-            color: color, transparent: true, opacity: 0.9,
-            blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
-        });
-        var sphere = new THREE.Mesh(geom, mat);
-        sphere.position.copy(origin.pos);
-        sphere.renderOrder = 998;
-        scene.add(sphere);
-
-        // Glow sprite
-        var glowMat = new THREE.SpriteMaterial({
-            map: flareTexture, color: color, transparent: true, opacity: 0.8,
-            blending: THREE.AdditiveBlending, depthWrite: false
-        });
-        var glow = new THREE.Sprite(glowMat);
-        glow.scale.set(8, 8, 1);
-        glow.position.copy(origin.pos);
-        glow.renderOrder = 999;
-        scene.add(glow);
-
-        spawnMuzzleLight(origin.pos, color, 24.0, 0.3);
-
-        activeProjectiles.push({
-            type: 'dgun', age: 0, maxAge: 1.8,
-            velocity: origin.dir.clone().multiplyScalar(speed),
-            extras: { sphere: sphere, sphereMat: mat, glow: glow, glowMat: glowMat }
-        });
+    function spawnDgun(o, d) {
+        var col=new THREE.Color(d.color||'#b24cff'), spd=Math.max(d.velocity*0.72,180);
+        var sg=new THREE.SphereGeometry(1,12,8);
+        var sm=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var sphere=new THREE.Mesh(sg,sm); sphere.position.copy(o.pos); addS(sphere,998);
+        var glow=addS(mkSprite(col,8,0.8),999); glow.position.copy(o.pos);
+        muzzleLight(o.pos,col,24,0.3);
+        active.push({type:'dgun',age:0,maxAge:1.8,velocity:o.dir.clone().multiplyScalar(spd),
+            extras:{sphere,sphereMat:sm,glow,glowMat:glow.material}});
     }
 
-    // ── Smoke puff helper (for rockets) ──────────────────────────────
-    function spawnSmokePuff(position) {
-        var mat = new THREE.SpriteMaterial({
-            map: flareTexture, color: 0x888888, transparent: true, opacity: 0.3,
-            blending: THREE.NormalBlending, depthWrite: false
-        });
-        var puff = new THREE.Sprite(mat);
-        puff.scale.set(1.5, 1.5, 1);
-        puff.position.copy(position);
-        puff.renderOrder = 997;
-        scene.add(puff);
-        activeProjectiles.push({
-            type: 'smoke', age: 0, maxAge: 0.8,
-            velocity: new THREE.Vector3(
-                (Math.random() - 0.5) * 2,
-                Math.random() * 3,
-                (Math.random() - 0.5) * 2
-            ),
-            extras: { sprite: puff, mat: mat }
-        });
+    function spawnSmoke(pos) {
+        var p=new THREE.Sprite(new THREE.SpriteMaterial({map:FT,color:0x888888,transparent:true,opacity:0.3,blending:NORM,depthWrite:false}));
+        p.scale.set(1.5,1.5,1); p.position.copy(pos); addS(p,997);
+        active.push({type:'smoke',age:0,maxAge:0.8,velocity:new THREE.Vector3((Math.random()-0.5)*2,Math.random()*3,(Math.random()-0.5)*2),extras:{sprite:p,mat:p.material}});
     }
 
-    // ── UPDATE loop — call from main animate() ───────────────────────
-    function update(delta) {
-        for (var i = activeProjectiles.length - 1; i >= 0; i--) {
-            var p = activeProjectiles[i];
-            p.age += delta;
-            if (p.age > p.maxAge) {
-                removeProjectile(p);
-                activeProjectiles.splice(i, 1);
-                continue;
-            }
-            if (p.age < 0) continue; // delayed spawn (flame particles)
-            var t = p.age / p.maxAge; // normalized 0→1
-
-            switch (p.type) {
+    function update(dt) {
+        for (var i=active.length-1; i>=0; i--) {
+            var p=active[i]; p.age+=dt;
+            if (p.age>p.maxAge) { remove(p); active.splice(i,1); continue; }
+            if (p.age<0) continue;
+            var t=p.age/p.maxAge, ex=p.extras;
+            switch(p.type) {
                 case 'beam':
-                    // Attach beam to fire point node — follow model rotation
-                    if (p.extras.node) {
-                        var cur = refreshOriginFromNode(p.extras.node);
-                        p.extras.beam.position.copy(cur.pos);
-                        p.extras.beam.lookAt(cur.pos.clone().add(cur.dir));
-                        p.extras.beamCore.position.copy(cur.pos);
-                        p.extras.beamCore.lookAt(cur.pos.clone().add(cur.dir));
-                        p.extras.flare.position.copy(cur.pos);
-                        var endPos = cur.pos.clone().add(cur.dir.clone().multiplyScalar(p.extras.beamLen));
-                        p.extras.endFlare.position.copy(endPos);
+                    if (ex.node) {
+                        var cur=refreshNode(ex.node);
+                        ex.beam.position.copy(cur.pos); ex.beam.lookAt(cur.pos.clone().add(cur.dir));
+                        ex.beamCore.position.copy(cur.pos); ex.beamCore.lookAt(cur.pos.clone().add(cur.dir));
+                        ex.flare.position.copy(cur.pos);
+                        ex.endFlare.position.copy(cur.pos.clone().add(cur.dir.clone().multiplyScalar(ex.beamLen)));
                     }
-                    p.extras.beamMat.opacity = 0.85 * (1.0 - t * t);
-                    p.extras.coreMat.opacity = 0.95 * (1.0 - t * t);
-                    p.extras.flareMat.opacity = 1.0 - t;
-                    p.extras.endFlareMat.opacity = 0.8 * (1.0 - t);
-                    p.extras.flare.scale.multiplyScalar(0.97);
-                    p.extras.endFlare.scale.multiplyScalar(0.97);
-                    break;
-
+                    ex.beamMat.opacity=0.85*(1-t*t); ex.coreMat.opacity=0.95*(1-t*t);
+                    ex.flareMat.opacity=1-t; ex.endFlareMat.opacity=0.8*(1-t);
+                    ex.flare.scale.multiplyScalar(0.97); ex.endFlare.scale.multiplyScalar(0.97); break;
                 case 'bolt':
-                    if (p.velocity) {
-                        p.extras.bolt.position.addScaledVector(p.velocity, delta);
-                    }
-                    p.extras.boltMat.opacity = 0.9 * (1.0 - t);
-                    // Muzzle flare fades fast
-                    p.extras.flareMat.opacity = Math.max(0, 1.0 - t * 5);
-                    p.extras.flare.scale.multiplyScalar(0.92);
-                    break;
-
+                    if (p.velocity) ex.bolt.position.addScaledVector(p.velocity,dt);
+                    ex.boltMat.opacity=0.9*(1-t); ex.flareMat.opacity=Math.max(0,1-t*5); ex.flare.scale.multiplyScalar(0.92); break;
                 case 'laserround':
                     if (p.velocity) {
-                        p.extras.round.position.addScaledVector(p.velocity, delta);
-                        p.extras.round.lookAt(p.extras.round.position.clone().add(p.extras.dir));
-                        p.extras.core.position.copy(p.extras.round.position);
-                        p.extras.core.lookAt(p.extras.core.position.clone().add(p.extras.dir));
+                        ex.round.position.addScaledVector(p.velocity,dt); ex.round.lookAt(ex.round.position.clone().add(ex.dir));
+                        ex.core.position.copy(ex.round.position); ex.core.lookAt(ex.core.position.clone().add(ex.dir));
                     }
-                    p.extras.roundMat.opacity = 0.85 * (1.0 - t * 0.5);
-                    p.extras.coreMat.opacity = 0.95 * (1.0 - t * 0.5);
-                    // Muzzle flare fades fast
-                    p.extras.flareMat.opacity = Math.max(0, 1.0 - t * 6);
-                    p.extras.flare.scale.multiplyScalar(0.90);
-                    break;
-
+                    ex.roundMat.opacity=0.85*(1-t*0.5); ex.coreMat.opacity=0.95*(1-t*0.5);
+                    ex.flareMat.opacity=Math.max(0,1-t*6); ex.flare.scale.multiplyScalar(0.9); break;
                 case 'plasma':
-                    if (p.velocity) {
-                        p.extras.ball.position.addScaledVector(p.velocity, delta);
-                        p.extras.core.position.copy(p.extras.ball.position);
-                        if (p.gravity) p.velocity.y += p.gravity * delta;
-                    }
-                    p.extras.ballMat.opacity = 0.95 * (1.0 - t * 0.7);
-                    p.extras.coreMat.opacity = 0.7 * (1.0 - t);
-                    // Muzzle flash fades instantly
-                    p.extras.flashMat.opacity = Math.max(0, 1.0 - t * 8);
-                    p.extras.flash.scale.multiplyScalar(0.88);
-                    break;
-
+                    if (p.velocity) { ex.ball.position.addScaledVector(p.velocity,dt); ex.core.position.copy(ex.ball.position); if (p.gravity) p.velocity.y+=p.gravity*dt; }
+                    ex.ballMat.opacity=0.95*(1-t*0.7); ex.coreMat.opacity=0.7*(1-t);
+                    ex.flashMat.opacity=Math.max(0,1-t*8); ex.flash.scale.multiplyScalar(0.88); break;
                 case 'rocket':
-                    if (p.velocity) {
-                        p.extras.group.position.addScaledVector(p.velocity, delta);
-                        // Accelerate slightly
-                        p.velocity.multiplyScalar(1.0 + delta * 0.5);
-                    }
-                    // Smoke puffs every few frames
-                    if (Math.random() < delta * 12) {
-                        spawnSmokePuff(p.extras.group.position.clone());
-                    }
-                    // Exhaust flicker
-                    p.extras.exhMat.opacity = 0.5 + Math.random() * 0.4;
-                    break;
-
+                    if (p.velocity) { ex.group.position.addScaledVector(p.velocity,dt); p.velocity.multiplyScalar(1+dt*0.5); }
+                    if (Math.random()<dt*12) spawnSmoke(ex.group.position.clone());
+                    ex.exhMat.opacity=0.5+Math.random()*0.4; break;
                 case 'flame':
-                    if (p.velocity) {
-                        p.extras.sprite.position.addScaledVector(p.velocity, delta);
-                        p.velocity.y += 8 * delta; // fire rises faster
-                    }
-                    p.extras.mat.opacity = 0.9 * (1.0 - t * t);
-                    // Grow faster and larger — 5x growth rate
-                    p.extras.sprite.scale.multiplyScalar(1.0 + delta * 6);
-                    break;
-
+                    if (p.velocity) { ex.sprite.position.addScaledVector(p.velocity,dt); p.velocity.y+=8*dt; }
+                    ex.mat.opacity=0.9*(1-t*t); ex.sprite.scale.multiplyScalar(1+dt*6); break;
                 case 'lightning':
-                    // Attach to fire point node — follow model rotation
-                    var lOrig = p.extras.origin;
-                    if (p.extras.node) {
-                        lOrig = refreshOriginFromNode(p.extras.node);
-                        p.extras.flare.position.copy(lOrig.pos);
-                    }
-                    // Re-jitter the lightning segments for flickering
-                    if (Math.random() < delta * 20) {
-                        var pts = p.extras.points;
-                        var s = p.extras.scale;
-                        var step = lOrig.dir.clone().multiplyScalar(p.extras.beamLen / p.extras.segments);
-                        var pos = lOrig.pos.clone();
-                        for (var j = 0; j <= p.extras.segments; j++) {
-                            var jit = (j === 0 || j === p.extras.segments) ? 0 : (Math.random() - 0.5) * s * 3;
-                            var jitY = (j === 0 || j === p.extras.segments) ? 0 : (Math.random() - 0.5) * s * 3;
-                            pts[j].set(pos.x + jit, pos.y + jitY, pos.z + jit);
-                            pos.add(step);
+                    var lo=ex.origin; if (ex.node) { lo=refreshNode(ex.node); ex.flare.position.copy(lo.pos); }
+                    if (Math.random()<dt*20) {
+                        var step2=lo.dir.clone().multiplyScalar(ex.len/ex.seg), lp=lo.pos.clone();
+                        for (var j=0;j<=ex.seg;j++) {
+                            var jt=j===0||j===ex.seg?0:(Math.random()-0.5)*ex.scale*3;
+                            ex.pts[j].set(lp.x+jt,lp.y+(j===0||j===ex.seg?0:(Math.random()-0.5)*ex.scale*3),lp.z+jt);
+                            lp.add(step2);
                         }
-                        p.extras.geom.setFromPoints(pts);
-                        p.extras.coreGeom.setFromPoints(pts);
+                        ex.geom.setFromPoints(ex.pts); ex.coreGeom.setFromPoints(ex.pts);
                     }
-                    p.extras.lineMat.opacity = 1.0 - t * t;
-                    p.extras.coreLineMat.opacity = 0.8 * (1.0 - t);
-                    p.extras.flareMat.opacity = 1.0 - t;
-                    break;
-
+                    ex.lineMat.opacity=1-t*t; ex.coreLineMat.opacity=0.8*(1-t); ex.flareMat.opacity=1-t; break;
                 case 'dgun':
-                    if (p.velocity) {
-                        p.extras.sphere.position.addScaledVector(p.velocity, delta);
-                        p.extras.glow.position.copy(p.extras.sphere.position);
-                    }
-                    // Expand sphere
-                    var dgunScale = 2 + p.age * 6;
-                    p.extras.sphere.scale.set(dgunScale, dgunScale, dgunScale);
-                    p.extras.sphereMat.opacity = 0.9 * (1.0 - t);
-                    p.extras.glow.scale.set(dgunScale * 2.5, dgunScale * 2.5, 1);
-                    p.extras.glowMat.opacity = 0.8 * (1.0 - t);
-                    break;
-
+                    if (p.velocity) { ex.sphere.position.addScaledVector(p.velocity,dt); ex.glow.position.copy(ex.sphere.position); }
+                    var ds=2+p.age*6; ex.sphere.scale.set(ds,ds,ds); ex.sphereMat.opacity=0.9*(1-t);
+                    ex.glow.scale.set(ds*2.5,ds*2.5,1); ex.glowMat.opacity=0.8*(1-t); break;
                 case 'smoke':
-                    if (p.velocity) p.extras.sprite.position.addScaledVector(p.velocity, delta);
-                    p.extras.mat.opacity = 0.3 * (1.0 - t);
-                    p.extras.sprite.scale.multiplyScalar(1.0 + delta * 3);
-                    break;
-
+                    if (p.velocity) ex.sprite.position.addScaledVector(p.velocity,dt);
+                    ex.mat.opacity=0.3*(1-t); ex.sprite.scale.multiplyScalar(1+dt*3); break;
                 case 'light':
-                    p.extras.light.intensity = p.extras.startIntensity * (1.0 - t);
-                    break;
+                    ex.light.intensity=ex.si*(1-t); break;
             }
         }
     }
 
-    // ── Cleanup helpers ──────────────────────────────────────────────
-    function removeProjectile(p) {
-        var ex = p.extras;
-        switch (p.type) {
-            case 'beam':
-                scene.remove(ex.beam); scene.remove(ex.beamCore); scene.remove(ex.flare); scene.remove(ex.endFlare);
-                ex.beam.geometry.dispose(); ex.beamMat.dispose();
-                ex.beamCore.geometry.dispose(); ex.coreMat.dispose();
-                ex.flareMat.dispose(); ex.endFlareMat.dispose();
-                break;
-            case 'bolt':
-                scene.remove(ex.bolt); scene.remove(ex.flare);
-                ex.boltMat.dispose(); ex.flareMat.dispose();
-                break;
-            case 'laserround':
-                scene.remove(ex.round); scene.remove(ex.core); scene.remove(ex.flare);
-                ex.round.geometry.dispose(); ex.roundMat.dispose();
-                ex.core.geometry.dispose(); ex.coreMat.dispose();
-                ex.flareMat.dispose();
-                break;
-            case 'plasma':
-                scene.remove(ex.ball); scene.remove(ex.core); scene.remove(ex.flash);
-                ex.ballMat.dispose(); ex.coreMat.dispose(); ex.flashMat.dispose();
-                break;
-            case 'rocket':
-                scene.remove(ex.group);
-                ex.bodyMat.dispose(); ex.noseMat.dispose(); ex.exhMat.dispose();
-                ex.group.traverse(function(c) { if (c.geometry) c.geometry.dispose(); });
-                break;
-            case 'flame':
-                scene.remove(ex.sprite); ex.mat.dispose();
-                break;
-            case 'lightning':
-                scene.remove(ex.line); scene.remove(ex.coreLine); scene.remove(ex.flare);
-                ex.geom.dispose(); ex.lineMat.dispose(); ex.coreLineMat.dispose(); ex.flareMat.dispose();
-                break;
-            case 'dgun':
-                scene.remove(ex.sphere); scene.remove(ex.glow);
-                ex.sphere.geometry.dispose(); ex.sphereMat.dispose(); ex.glowMat.dispose();
-                break;
-            case 'smoke':
-                scene.remove(ex.sprite); ex.mat.dispose();
-                break;
-            case 'light':
-                scene.remove(ex.light); ex.light.dispose();
-                break;
+    function remove(p) {
+        var ex=p.extras;
+        function rm() { for (var i=0;i<arguments.length;i++) scene.remove(arguments[i]); }
+        function dis() { for (var i=0;i<arguments.length;i++) if (arguments[i]) arguments[i].dispose(); }
+        switch(p.type) {
+            case 'beam': rm(ex.beam,ex.beamCore,ex.flare,ex.endFlare); dis(ex.beam.geometry,ex.beamMat,ex.beamCore.geometry,ex.coreMat,ex.flareMat,ex.endFlareMat); break;
+            case 'bolt': rm(ex.bolt,ex.flare); dis(ex.boltMat,ex.flareMat); break;
+            case 'laserround': rm(ex.round,ex.core,ex.flare); dis(ex.round.geometry,ex.roundMat,ex.core.geometry,ex.coreMat,ex.flareMat); break;
+            case 'plasma': rm(ex.ball,ex.core,ex.flash); dis(ex.ballMat,ex.coreMat,ex.flashMat); break;
+            case 'rocket': rm(ex.group); dis(ex.bodyMat,ex.noseMat,ex.exhMat); ex.group.traverse(function(c){if(c.geometry)c.geometry.dispose();}); break;
+            case 'flame': rm(ex.sprite); dis(ex.mat); break;
+            case 'lightning': rm(ex.line,ex.coreLine,ex.flare); dis(ex.geom,ex.lineMat,ex.coreLineMat,ex.flareMat); break;
+            case 'dgun': rm(ex.sphere,ex.glow); dis(ex.sphere.geometry,ex.sphereMat,ex.glowMat); break;
+            case 'smoke': rm(ex.sprite); dis(ex.mat); break;
+            case 'light': rm(ex.light); ex.light.dispose(); break;
         }
     }
 
-    // ── Public: fire a weapon (called from weapons.html playFire) ────
     function fireWeapon(wnum) {
-        var data = wpnDataByNum[String(wnum)];
-        if (!data) { console.warn('[projectiles] no data for wnum', wnum, 'available:', Object.keys(wpnDataByNum)); return; }
-        var origin = getFireOrigin(wnum);
-        if (!origin) { console.warn('[projectiles] no fire_point for wnum', wnum, 'available:', Object.keys(firePointNodes)); return; }
-
-        var cat = getVisualCategory(data);
-        console.log('[projectiles] FIRE wnum=' + wnum, 'cat=' + cat, 'color=' + data.color, 'pos=', origin.pos, 'dir=', origin.dir);
-
-        // Play sound
-        if (data.sound) playSound(data.sound, origin.pos);
-
-        switch (cat) {
-            case 'beam':        spawnBeam(origin, data); break;
-            case 'laserround':  spawnLaserRound(origin, data); break;
-            case 'laserbolt':   spawnLaserBolt(origin, data); break;
-            case 'plasma':    spawnPlasma(origin, data); break;
-            case 'rocket':    spawnRocket(origin, data); break;
-            case 'flame':     spawnFlame(origin, data); break;
-            case 'lightning': spawnLightning(origin, data); break;
-            case 'dgun':      spawnDgun(origin, data); break;
-            default:          spawnPlasma(origin, data); break;
-        }
+        var data=wpnDataByNum[String(wnum)]; if (!data) return;
+        var o=getFireOrigin(wnum); if (!o) return;
+        if (data.sound) playSound(data.sound,o.pos);
+        var fn = {beam:spawnBeam,laserround:spawnLaserRound,bolt:spawnBolt,plasma:spawnPlasma,rocket:spawnRocket,flame:spawnFlame,lightning:spawnLightning,dgun:spawnDgun};
+        (fn[getCat(data)]||spawnPlasma)(o,data);
     }
 
-    // ── Return public API ────────────────────────────────────────────
-    return {
-        fireWeapon: fireWeapon,
-        update: update,
-        wpnDataByNum: wpnDataByNum
-    };
+    return {fireWeapon, update, wpnDataByNum};
 };
 </script>

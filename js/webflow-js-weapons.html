@@ -90,7 +90,11 @@ window._barWeaponsSetup = function(THREE, opts) {
     }
 
     // Register spin pieces + their subtrees as radar/sonar hoverable
+    // Only for dedicated radar/sonar/jammer units (no weapons).
+    // Combat units (commanders, scouts) have radar as secondary ability —
+    // their spin pieces are decorative, not hoverable radar modules.
     if (unitRole && spinPieceNames && spinPieceNames.size > 0 &&
+        meshWeaponMap.size === 0 &&
         (unitRole === 'RADAR' || unitRole === 'SONAR' || unitRole === 'RADAR_SONAR' ||
          unitRole === 'JAMMER' || unitRole === 'RADAR_JAMMER')) {
         var roleLabel = ROLE_LABELS[unitRole] || unitRole;
@@ -366,11 +370,12 @@ window._barWeaponsSetup = function(THREE, opts) {
             action.clampWhenFinished = false;
             fireActions[wnum] = action;
         }
-        if (Object.keys(fireActions).length === 0) return;
+
+        var hasFireAnims = Object.keys(fireActions).length > 0;
 
         // Resolve rotary piece nodes for accumulative rotation
         var rotaryNodes = {};  // clip_name → { node, axis, stepRad, accumRad }
-        if (fireRotary) {
+        if (hasFireAnims && fireRotary) {
             for (var clipName in fireRotary) {
                 var info = fireRotary[clipName];
                 var targetNode = null;
@@ -388,15 +393,14 @@ window._barWeaponsSetup = function(THREE, opts) {
             }
         }
 
-        // Mark weapon meshes that have fire anims with pointer cursor
-        meshWeaponMap.forEach(function(winfo) {
-            if (fireActions[winfo.num]) {
-                renderer.domElement.style.cursor = 'pointer';
-            }
-        });
+        // Mark weapon meshes with pointer cursor (weapons are clickable even without fire anims)
+        if (meshWeaponMap.size > 0) {
+            renderer.domElement.style.cursor = 'pointer';
+        }
 
         // Collect all fire actions that share the same weapon def as wnum
         function getFireActions(wnum) {
+            if (!hasFireAnims) return [];
             var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
             // Gather all actions for this def (or just this wnum if no def match)
             var actions = [];
@@ -417,7 +421,11 @@ window._barWeaponsSetup = function(THREE, opts) {
 
         function playFire(wnum) {
             var actions = getFireActions(wnum);
-            if (actions.length === 0) return;
+            if (actions.length === 0) {
+                // No fire animation — still spawn projectile VFX if available
+                if (_projectileFireFn) _projectileFireFn(wnum);
+                return;
+            }
             var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : ('w' + wnum);
             // Cancel any pending stagger timers for this weapon def
             if (_fireTimers[def]) {
@@ -433,6 +441,10 @@ window._barWeaponsSetup = function(THREE, opts) {
                 (function(action, delay) {
                     var tid = setTimeout(function() {
                         action.reset().play();
+                        // Fire projectile VFX for this weapon
+                        var clipName = action.getClip().name;
+                        var cfm = clipName.match(/^Fire_(\d+)$/);
+                        if (cfm && _projectileFireFn) _projectileFireFn(parseInt(cfm[1]));
                         mixer.addEventListener('finished', function onDone(e) {
                             if (e.action === action) {
                                 action.stop();
@@ -451,7 +463,7 @@ window._barWeaponsSetup = function(THREE, opts) {
             }
         }
 
-        // Click on 3D weapon mesh → fire
+        // Click on 3D weapon mesh → fire (always register, even without fire anims)
         renderer.domElement.addEventListener('click', function(e) {
             if (meshWeaponMap.size === 0) return;
             var rect = renderer.domElement.getBoundingClientRect();
@@ -462,22 +474,26 @@ window._barWeaponsSetup = function(THREE, opts) {
             var hit = hits.find(function(h) { return meshWeaponMap.has(h.object.uuid); });
             if (hit) {
                 var winfo = meshWeaponMap.get(hit.object.uuid);
-                if (getFireActions(winfo.num).length) playFire(winfo.num);
+                playFire(winfo.num);
             }
         });
 
-        // Click on DOM weapon list item → fire
+        // Click on DOM weapon list item → fire (always register, even without fire anims)
         document.addEventListener('click', function(e) {
             var el = e.target.closest('.uw-item-flex[data-wpn-slug]');
             if (!el) return;
             var slug = el.getAttribute('data-wpn-slug');
             var wnum = slugToWnum.get(slug);
-            if (wnum !== undefined && getFireActions(wnum).length) playFire(wnum);
+            if (wnum !== undefined) playFire(wnum);
         });
     }
 
+    // Hook: when projectiles system is initialized, call its fireWeapon on each fire
+    var _projectileFireFn = null;
+    function setProjectileFire(fn) { _projectileFireFn = fn; }
+
     return { spinPieceNames: spinPieceNames, hideTooltip: hideTooltip, setWeaponHighlight: setWeaponHighlight,
              meshWeaponMap: meshWeaponMap, unitRoleMeshMap: unitRoleMeshMap, visualMeshesByWeapon: visualMeshesByWeapon,
-             initFireAnims: initFireAnims };
+             initFireAnims: initFireAnims, setProjectileFire: setProjectileFire };
 };
 </script>
