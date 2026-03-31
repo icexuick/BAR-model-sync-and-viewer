@@ -174,7 +174,7 @@ window._barProjectilesSetup = function(THREE, opts) {
 
     function spawnBeam(o, d) {
         var col = new THREE.Color(d.color), sc = dScale(d.damage);
-        var len = 200+d.velocity*0.12, dur = Math.max(d.beamtime,0.15), thick = (d.largeBeam?2.5:0.8)*sc;
+        var len = d.range||200, dur = Math.max(d.beamtime,0.15), thick = (d.largeBeam?2.5:0.8)*sc;
         function cyl(r1, r2, col2, op, order) {
             var g = new THREE.CylinderGeometry(r1,r2,len,8,1,true); g.rotateX(Math.PI/2); g.translate(0,0,len/2);
             var m = new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
