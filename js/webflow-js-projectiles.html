@@ -38,7 +38,9 @@ window._barProjectilesSetup = function(THREE, opts) {
             burst: parseInt(readAttr(el,'data-wpn-burst'))||1,
             sound: readAttr(el,'data-wpn-sound')||'',
             accuracy: parseFloat(readAttr(el,'data-wpn-acc'))||0,
-            range: parseFloat(readAttr(el,'data-wpn-range'))||400
+            range: parseFloat(readAttr(el,'data-wpn-range'))||400,
+            startVelo: parseFloat(readAttr(el,'data-wpn-start-velo'))||0,
+            accel: parseFloat(readAttr(el,'data-wpn-accel'))||0
         };
     });
     var wpnDataByNum = {};
@@ -235,7 +237,8 @@ window._barProjectilesSetup = function(THREE, opts) {
 
     function spawnRocket(o, d) {
         var col=new THREE.Color(d.color), sc=dScale(d.damage);
-        var spd=Math.max(d.velocity*0.9,135), dir=spread(o.dir,d.accuracy), rl=1.5*sc;
+        var maxSpd=Math.max(d.velocity*0.9,135), dir=spread(o.dir,d.accuracy), rl=1.5*sc;
+        var initSpd=(d.startVelo>0)?Math.min(d.startVelo,maxSpd):maxSpd;
         var g=new THREE.Group();
         var bg=new THREE.CylinderGeometry(rl*0.15,rl*0.15,rl,6); bg.rotateX(Math.PI/2);
         var bm=new THREE.MeshBasicMaterial({color:0x888888}); g.add(new THREE.Mesh(bg,bm));
@@ -244,8 +247,8 @@ window._barProjectilesSetup = function(THREE, opts) {
         var exh=new THREE.Sprite(spr(0xff8800,0.8)); exh.scale.set(rl*2,rl*2,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
         g.position.copy(o.pos); g.lookAt(o.pos.clone().add(dir)); addS(g,998);
         muzzleLight(o.pos,0xff6600,9*sc,0.15);
-        active.push({type:'rocket',age:0,maxAge:(d.range||400)/spd,velocity:dir.multiplyScalar(spd),
-            extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl}});
+        active.push({type:'rocket',age:0,maxAge:(d.range||400)/maxSpd,velocity:dir.multiplyScalar(initSpd),
+            extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:dir.clone()}});
     }
 
     function spawnFlame(o, d) {
@@ -337,7 +340,13 @@ window._barProjectilesSetup = function(THREE, opts) {
                     ex.ballMat.opacity=0.95*(1-t*0.7); ex.coreMat.opacity=0.7*(1-t);
                     ex.flashMat.opacity=Math.max(0,1-t*8); ex.flash.scale.multiplyScalar(0.88); break;
                 case 'rocket':
-                    if (p.velocity) { ex.group.position.addScaledVector(p.velocity,dt); p.velocity.multiplyScalar(1+dt*0.5); }
+                    if (p.velocity) {
+                        if (ex.accel>0) {
+                            var spd=p.velocity.length();
+                            if (spd<ex.maxSpd) { spd=Math.min(spd+ex.accel*dt,ex.maxSpd); p.velocity.copy(ex.dir).multiplyScalar(spd); }
+                        }
+                        ex.group.position.addScaledVector(p.velocity,dt);
+                    }
                     if (Math.random()<dt*12) spawnSmoke(ex.group.position.clone());
                     ex.exhMat.opacity=0.5+Math.random()*0.4; break;
                 case 'flame':
