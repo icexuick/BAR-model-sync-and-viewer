@@ -100,9 +100,23 @@ window._barProjectilesSetup = function(THREE, opts) {
     var active = [];
     var audioListener = null, audioBuffers = {};
 
+    function ensureListener() {
+        if (!audioListener) { audioListener = new THREE.AudioListener(); camera.add(audioListener); }
+    }
+    // Pre-cache all weapon sounds
+    (function() {
+        var urls = {};
+        for (var wn in wpnDataByNum) { var s=wpnDataByNum[wn].sound; if (s) urls[s]=1; }
+        for (var url in urls) {
+            (function(u) {
+                new THREE.AudioLoader().load(u, function(b){ ensureListener(); audioBuffers[u]=b; });
+            })(url);
+        }
+    }());
+
     function playSound(url, pos) {
         if (!url) return;
-        if (!audioListener) { audioListener = new THREE.AudioListener(); camera.add(audioListener); }
+        ensureListener();
         function _play(buf) {
             var s = new THREE.PositionalAudio(audioListener);
             s.setBuffer(buf); s.setRefDistance(50); s.setVolume(0.4);
