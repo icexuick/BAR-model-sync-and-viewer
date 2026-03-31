@@ -180,7 +180,8 @@ window._barProjectilesSetup = function(THREE, opts) {
             var m = new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
             var mesh = new THREE.Mesh(g,m); mesh.position.copy(o.pos); mesh.lookAt(o.pos.clone().add(o.dir)); addS(mesh,order); return {mesh,m};
         }
-        var bm=cyl(thick,thick*0.5,col,0.85,998), bc=cyl(thick*0.4,thick*0.12,0xffffff,0.95,999);
+        var bm=d.largeBeam?cyl(thick,thick*0.5,col,0.85,998):cyl(0,thick*1.4,col,0.85,998);
+        var bc=d.largeBeam?cyl(thick*0.4,thick*0.12,0xffffff,0.95,999):cyl(0,thick*0.5,0xffffff,0.95,999);
         var fs = thick*24, fl=addS(mkSprite(col,fs,1),999); fl.position.copy(o.pos);
         var lf=addS(mkSprite(col,fs*2.2,0.9,LT),999); lf.position.copy(o.pos);
         var endPos=o.pos.clone().add(o.dir.clone().multiplyScalar(len));
