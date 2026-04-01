@@ -323,12 +323,31 @@ def convert_with_weapons(
             return any(kw in low for kw in _DUMMY_PIECE_KEYWORDS)
 
         if weapon_defs:
+            # Save BOS weapons before filtering — needed for slot remapping below.
+            _bos_weapons_all = dict(weapon_info.weapons)
             # Drop any BOS weapon number not present in the unitdef weapons table.
             weapon_info.weapons = {wn: wm for wn, wm in weapon_info.weapons.items()
                                    if wn in weapon_defs}
             # Also drop weapons whose def is a known dummy/targeting type.
             weapon_info.weapons = {wn: wm for wn, wm in weapon_info.weapons.items()
                                    if not _is_dummy_def(weapon_defs.get(wn, ''))}
+            # Remap mismatched BOS weapon slots: if a unitdef weapon slot has no
+            # BOS data but a dropped BOS weapon has fire_point info, remap it.
+            # This handles scripts like legavantinuke where QueryWeapon2 defines
+            # the fire_point but the unit only has weapon slot 1.
+            _dropped = {wn: wm for wn, wm in _bos_weapons_all.items()
+                        if wn not in weapon_info.weapons and wm.query_piece}
+            _empty_slots = [wn for wn in weapon_defs
+                            if wn not in weapon_info.weapons and not _is_dummy_def(weapon_defs[wn])]
+            if _dropped and _empty_slots:
+                for slot in _empty_slots:
+                    if not _dropped:
+                        break
+                    donor_wn, donor_wm = next(iter(_dropped.items()))
+                    donor_wm.weapon_num = slot
+                    weapon_info.weapons[slot] = donor_wm
+                    del _dropped[donor_wn]
+                    print(f"  Remapped BOS weapon {donor_wn} -> slot {slot} (fire_point: {donor_wm.query_piece})")
             # Add empty entries for real weapons present in unitdef but absent in BOS
             # (e.g. anti-nuke launchers that have no QueryWeapon function).
             from bos_parser import WeaponPieceMapping
