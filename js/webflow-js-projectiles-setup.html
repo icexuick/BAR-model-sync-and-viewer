@@ -1,0 +1,596 @@
+<script>
+window._barProjectilesSetup = function(THREE, opts) {
+    var scene = opts.scene, mainScene = opts.mainScene || opts.scene, camera = opts.camera, modelScene = opts.modelScene;
+    var unitName = opts.unitName, weaponSummary = opts.weaponSummary, renderer = opts.renderer;
+    var isToggleOpen = opts.isToggleOpen || function() { return true; };
+    var canFly = !!opts.canFly;
+
+    function readColor(el) {
+        var dc = el.getAttribute('data-wpn-color');
+        if (dc && dc !== '#ffffff' && dc !== 'transparent') return dc;
+        var roots = [el], par = el.closest('.uw-item');
+        if (par) roots.push(par);
+        for (var i = 0; i < roots.length; i++) {
+            var dot = roots[i].querySelector('.weapon-color-data,.wpn-color,#wpn-color,[wpn-color]');
+            if (dot) {
+                var bg = window.getComputedStyle(dot).backgroundColor;
+                var m = bg && bg.match(/\d+/g);
+                if (m && m.length >= 3)
+                    return '#' + ((1<<24)+(parseInt(m[0])<<16)+(parseInt(m[1])<<8)+parseInt(m[2])).toString(16).slice(1);
+            }
+        }
+        return '#ffff00';
+    }
+    function readAttr(el, a) {
+        var v = el.getAttribute(a); if (v) return v;
+        var p = el.closest('.uw-item'); if (p) { v = p.getAttribute(a); if (v) return v; }
+        var c = el.querySelector('['+a+']'); return c ? c.getAttribute(a) : null;
+    }
+
+    var wpnDataBySlug = {};
+    document.querySelectorAll('.uw-item-flex[data-wpn-slug]').forEach(function(el) {
+        var slug = el.getAttribute('data-wpn-slug'); if (!slug) return;
+        var _isAA = !!(el.querySelector('#is-aa-weapon') || (el.closest('.uw-item') && el.closest('.uw-item').querySelector('#is-aa-weapon')));
+        var _isEMP = !!(el.querySelector('#is-emp-weapon') || (el.closest('.uw-item') && el.closest('.uw-item').querySelector('#is-emp-weapon')));
+        wpnDataBySlug[slug] = {
+            color: _isAA ? '#ff54b2' : readColor(el), type: readAttr(el,'data-wpn-type')||'Cannon',
+            reload: parseFloat(readAttr(el,'data-wpn-reload'))||2,
+            damage: Math.max(parseInt(readAttr(el,'data-wpn-damage'))||100, parseInt(readAttr(el,'data-wpn-damage-vtol'))||0, parseInt(readAttr(el,'data-wpn-damage-subs'))||0),
+            velocity: parseInt(readAttr(el,'data-wpn-velocity'))||500,
+            beamtime: parseFloat(readAttr(el,'data-wpn-beamtime'))||0,
+            largeBeam: !!(el.querySelector('.weapon-large-beam,#wpn-large-beam-laser') || (el.closest('.uw-item') && el.closest('.uw-item').querySelector('.weapon-large-beam,#wpn-large-beam-laser'))),
+            burst: parseInt(readAttr(el,'data-wpn-burst'))||1,
+            burstrate: parseFloat(readAttr(el,'data-wpn-burstrate'))||0.1,
+            sound: (function(){var s=el.querySelector('.weapon-sound,#weapon-sound')||(el.closest('.uw-item')&&el.closest('.uw-item').querySelector('.weapon-sound,#weapon-sound'));return s?(s.textContent||s.innerText||'').trim():'';}()),
+            accuracy: parseFloat(readAttr(el,'data-wpn-acc'))||0,
+            range: parseFloat(readAttr(el,'data-wpn-range'))||400,
+            startVelo: parseFloat(readAttr(el,'data-wpn-start-velo'))||0,
+            accel: parseFloat(readAttr(el,'data-wpn-accel'))||0,
+            projectiles: parseInt(readAttr(el,'data-wpn-projectiles'))||1,
+            isAA: _isAA, isEMP: _isEMP,
+            name: readAttr(el,'data-wpn-name')||(function(){var n=el.querySelector('#weapon-cat-name')||(el.closest('.uw-item')&&el.closest('.uw-item').querySelector('#weapon-cat-name'));return n?(n.textContent||n.innerText||'').trim():'';})()
+        };
+    });
+    var wpnDataByNum = {};
+    for (var wn in weaponSummary) {
+        var def = weaponSummary[wn].def; if (!def) continue;
+        var slug = unitName+'-'+def.replace(/_/g,'-');
+        if (wpnDataBySlug[slug]) { wpnDataByNum[wn] = wpnDataBySlug[slug]; }
+        else {
+            // Fallback: weapon exists in GLB but has no DOM data — use defaults so it still fires
+            wpnDataByNum[wn] = { color:'#ffff00', type:'Cannon', reload:2, damage:100, velocity:500,
+                beamtime:0, largeBeam:false, burst:1, burstrate:0.1, sound:'', accuracy:0, range:400, startVelo:0, accel:0, projectiles:1, isAA:false, isEMP:false, name:'' };
+        }
+    }
+
+    var firePointNodes = {};
+    modelScene.traverse(function(node) {
+        var d = node.userData; if (!d) return;
+        d = d.extras || d;
+        var roles = d.weapon_roles, wpns = d.weapons;
+        if (!roles || !wpns || roles.indexOf('fire_point') === -1) return;
+        var wl = Array.isArray(wpns) ? wpns : [wpns];
+        for (var i = 0; i < wl.length; i++) {
+            if (!firePointNodes[wl[i]]) firePointNodes[wl[i]] = [];
+            firePointNodes[wl[i]].push(node);
+        }
+    });
+    var defToWnums = {};
+    for (var wn in weaponSummary) {
+        var def = weaponSummary[wn].def; if (!def) continue;
+        if (!defToWnums[def]) defToWnums[def] = [];
+        defToWnums[def].push(Number(wn));
+    }
+    for (var d in defToWnums) defToWnums[d].sort(function(a,b){return a-b;});
+    var defFirePoints = {};
+    for (var d in defToWnums) {
+        defFirePoints[d] = [];
+        for (var i = 0; i < defToWnums[d].length; i++) {
+            var ns = firePointNodes[defToWnums[d][i]];
+            if (ns) for (var j = 0; j < ns.length; j++) defFirePoints[d].push(ns[j]);
+        }
+    }
+    var defFireIndex = {};
+
+    // Shared textures
+    function makeRadialTex(w, h) {
+        var c = document.createElement('canvas'); c.width = w; c.height = h;
+        var cx = c.getContext('2d'), g = cx.createRadialGradient(w/2,h/2,0,w/2,h/2,w/2);
+        g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(0.3,'rgba(255,255,255,0.6)'); g.addColorStop(1,'rgba(255,255,255,0)');
+        cx.fillStyle = g; cx.fillRect(0,0,w,h);
+        return new THREE.CanvasTexture(c);
+    }
+    var FT = makeRadialTex(64,64);
+    var LT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cb7ec93332ab9d5fadf7c2_flare2.png');
+    var MT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cba0b296a1ebd325dc5c91_muzzleside.png');
+    var MF = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cba26f25bb9076827629e6_muzzlefront.png');
+    var BT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbc2806488ab28bd3e38cb_bubbletexture.png');
+    var DT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbda83c9b8dff28c72325a_dirtbar.png');
+    var FLMT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbe5af5ffd6ccb4c2e2033_flame.png');
+    var sc = document.createElement('canvas'); sc.width=128; sc.height=32;
+    var sx = sc.getContext('2d'), sg = sx.createLinearGradient(0,16,128,16);
+    sg.addColorStop(0,'rgba(255,255,255,0)'); sg.addColorStop(0.3,'rgba(255,255,255,0.8)');
+    sg.addColorStop(0.5,'rgba(255,255,255,1)'); sg.addColorStop(0.7,'rgba(255,255,255,0.8)'); sg.addColorStop(1,'rgba(255,255,255,0)');
+    sx.fillStyle=sg; sx.fillRect(0,0,128,32);
+    var ST = new THREE.CanvasTexture(sc);
+
+    var ADD = THREE.AdditiveBlending, NORM = THREE.NormalBlending;
+    var active = [];
+    var audioListener = null, audioBuffers = {};
+
+    function ensureListener() {
+        if (!audioListener) { audioListener = new THREE.AudioListener(); camera.add(audioListener); }
+    }
+    // Pre-cache all weapon sounds
+    (function() {
+        var urls = {};
+        for (var wn in wpnDataByNum) { var s=wpnDataByNum[wn].sound; if (s) urls[s]=1; }
+        for (var url in urls) {
+            (function(u) {
+                new THREE.AudioLoader().load(u, function(b){ ensureListener(); audioBuffers[u]=b; });
+            })(url);
+        }
+    }());
+
+    var _playingSounds = {};
+    function playSound(url, pos, allowOverlap, pitch) {
+        if (!url) return;
+        if (!allowOverlap && _playingSounds[url]) return;
+        ensureListener();
+        function _play(buf) {
+            var s = new THREE.PositionalAudio(audioListener);
+            s.setBuffer(buf); s.setRefDistance(800); s.setVolume(0.4);
+            if (pitch) s.setPlaybackRate(pitch);
+            s.position.copy(pos); mainScene.add(s); s.play();
+            _playingSounds[url] = s;
+            s.onEnded = function(){ mainScene.remove(s); delete _playingSounds[url]; };
+        }
+        if (audioBuffers[url]) { _play(audioBuffers[url]); return; }
+        new THREE.AudioLoader().load(url, function(b){ audioBuffers[url]=b; _play(b); });
+    }
+
+    var _wp = new THREE.Vector3(), _wd = new THREE.Vector3(), _pp = new THREE.Vector3();
+    var _aimFixUnits = {'armcom':1,'corcom':1,'corkorg':1};
+    function nodeFireDir(node) {
+        node.getWorldPosition(_wp);
+        // Parent→child barrel direction only for specific commander units
+        if (_aimFixUnits[unitName] && node.parent) {
+            node.parent.updateWorldMatrix(true,false);
+            node.parent.getWorldPosition(_pp);
+            _wd.copy(_wp).sub(_pp);
+            if (_wd.lengthSq() > 0.01) return _wd.normalize();
+        }
+        // Default: node's local Z axis
+        _wd.set(0,0,1).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
+        if (_wd.lengthSq()<0.01) _wd.set(0,0,1);
+        return _wd.normalize();
+    }
+    function getFireOrigin(wnum) {
+        var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
+        var nodes = (def && defFirePoints[def]) ? defFirePoints[def] : (firePointNodes[wnum]||[]);
+        if (!nodes || !nodes.length) return null;
+        var key = def||wnum, idx = defFireIndex[key]||0;
+        var node = nodes[idx % nodes.length];
+        defFireIndex[key] = (idx+1) % nodes.length;
+        node.updateWorldMatrix(true,false);
+        node.getWorldPosition(_wp);
+        var dir = nodeFireDir(node);
+        return {pos:_wp.clone(), dir:dir.clone(), node:node};
+    }
+    function refreshNode(node) {
+        node.updateWorldMatrix(true,false);
+        node.getWorldPosition(_wp);
+        var dir = nodeFireDir(node);
+        return {pos:_wp.clone(), dir:dir.clone()};
+    }
+
+    function getCat(d) {
+        var t = (d.type||'').toLowerCase().replace(/[\s-]+/g,'');
+        if (t==='beamlaser'||t==='heatray'||t==='tachyonlaserbeam'||t==='thermalordnancegenerator') return 'beam';
+        if (t==='lasercannon') return 'laserround';
+        if (t==='shotguncannon'||t==='railgun'||t==='sniper'||t==='gatlinggun'||t==='flakcannon') return 'bolt';
+        if (t==='plasmacannon'||t==='plasmarepeater'||t==='plasmablast'||t==='plasmashotgun'||t==='clusterplasmacannon'||t==='cannon') return 'plasma';
+        if (t==='flamethrower'||t==='flame'||t==='napalmlauncher') return 'flame';
+        if (t==='lightningcannon'||t==='lightning'||t==='emp'||t==='triggerexp'||t==='triggeremp'||t==='junosurge') return 'lightning';
+        if (t==='dgun'||t==='disintegratorcannon') return 'dgun';
+        if (t==='aircraftbomb') return 'bomb';
+        if (t==='starburstlauncher'||t==='starburst') return 'starburst';
+        if (t.indexOf('torpedo')!==-1) return 'torpedo';
+        if (t.indexOf('missile')!==-1||t.indexOf('rocket')!==-1||t==='antinuke') return 'rocket';
+        if (d.beamtime>0) return 'beam';
+        return 'plasma';
+    }
+    function dScale(dmg) { var d=Math.max(1,Math.min(dmg,5000)); return 0.3+2.7*(Math.log(d)/Math.log(5000)); }
+    function rScale(range) { var r=Math.max(80,Math.min(range||400,1600)); return 0.5+0.5*(Math.log(r/80)/Math.log(1600/80)); }
+    function spread(dir, acc) {
+        if (!acc||acc<=0) return dir.clone();
+        var maxDeg = Math.min(15, acc*0.002+Math.log(1+acc)*0.17);
+        var rad = maxDeg*Math.PI/180*Math.random(), theta = Math.random()*Math.PI*2;
+        var p1 = new THREE.Vector3(); if (Math.abs(dir.x)<0.9) p1.set(1,0,0); else p1.set(0,1,0);
+        p1.crossVectors(dir,p1).normalize();
+        var p2 = new THREE.Vector3().crossVectors(dir,p1).normalize();
+        return dir.clone().multiplyScalar(Math.cos(rad))
+            .add(p1.clone().multiplyScalar(Math.sin(rad)*Math.cos(theta)))
+            .add(p2.clone().multiplyScalar(Math.sin(rad)*Math.sin(theta))).normalize();
+    }
+
+    function spr(color, opacity, tex) {
+        return new THREE.SpriteMaterial({map:tex||FT, color:color, transparent:true, opacity:opacity, blending:ADD, depthWrite:false});
+    }
+    function mkSprite(color, sz, opacity, tex) {
+        var s = new THREE.Sprite(spr(color,opacity,tex)); s.scale.set(sz,sz,1); return s;
+    }
+    function addS(obj, order) { obj.renderOrder=order||998; obj.layers.enable(1); scene.add(obj); return obj; }
+
+    var MIN_FLASH_DUR = 0.18; // minimum muzzle flash duration in seconds
+    function muzzleLight(pos, color, intensity, dur, dir) {
+        var lp = pos.clone(); if (dir) lp.addScaledVector(dir, 8);
+        var d = Math.max((dur||0.15)*1.5, MIN_FLASH_DUR);
+        var si = intensity*8;
+        var l = new THREE.PointLight(color, si, 80, 1); l.position.copy(lp); mainScene.add(l);
+        active.push({type:'light', age:0, maxAge:d, extras:{light:l, si:si}});
+    }
+    // Standalone muzzle flash sprite with guaranteed minimum duration
+    function muzzleFlash(pos, color, size, dur, dir) {
+        var d = Math.max(dur||0.15, MIN_FLASH_DUR);
+        var fp = pos.clone(); if (dir) fp.addScaledVector(dir, 2);
+        var fl = addS(mkSprite(color, size, 1), 999); fl.position.copy(fp);
+        var lf = addS(mkSprite(color, size*1.8, 0.85, LT), 999); lf.position.copy(fp);
+        active.push({type:'mflash', age:0, maxAge:d, extras:{flare:fl, flareMat:fl.material, lflare:lf, lflareMat:lf.material, initSize:size}});
+    }
+
+    function spawnBeam(o, d) {
+        var col = new THREE.Color(d.color), sc = dScale(d.damage), rs = rScale(d.range);
+        var len = d.range||200, dur = d.reload<0.1 ? 3.0 : Math.max(d.beamtime,0.15), thick = (d.largeBeam?2.5:0.8)*sc;
+        function cyl(r1, r2, col2, op, order) {
+            var g = new THREE.CylinderGeometry(r1,r2,len,8,1,true); g.rotateX(Math.PI/2); g.translate(0,0,len/2);
+            var m = new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            var mesh = new THREE.Mesh(g,m); mesh.position.copy(o.pos); mesh.lookAt(o.pos.clone().add(o.dir)); addS(mesh,order); return {mesh,m};
+        }
+        var bm=d.largeBeam?cyl(thick,thick*0.5,col,0.85,998):cyl(0,thick*1.4,col,0.85,998);
+        var bc=d.largeBeam?cyl(thick*0.4,thick*0.12,0xffffff,0.95,999):cyl(0,thick*0.5,0xffffff,0.95,999);
+        var fs = Math.min(thick*24, 63), lf=addS(mkSprite(col,fs*2.2,0.9,LT),999); lf.position.copy(o.pos);
+        var endPos=o.pos.clone().add(o.dir.clone().multiplyScalar(len));
+        var ef=addS(mkSprite(col,fs*0.6,0.8),999); ef.position.copy(endPos);
+        var ef2=addS(mkSprite(col,fs*1.4,0.75,LT),999); ef2.position.copy(endPos);
+        var blp=o.pos.clone(); if(o.dir) blp.addScaledVector(o.dir,8);
+        var bsi=15*sc*rs*8, bl=new THREE.PointLight(col,bsi,80,1); bl.position.copy(blp); mainScene.add(bl);
+        active.push({type:'beam',age:0,maxAge:dur+0.5,extras:{
+            beam:bm.mesh,beamMat:bm.m,beamCore:bc.mesh,coreMat:bc.m,
+            laserFlare:lf,laserFlareMat:lf.material,
+            endFlare:ef,endFlareMat:ef.material,endLaserFlare:ef2,endLaserFlareMat:ef2.material,
+            node:o.node,beamLen:len,light:bl,lightSi:bsi,beamDur:dur}});
+    }
+
+    function spawnBolt(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range);
+        var spd=Math.max(d.velocity*1.35,270), dir=spread(o.dir,d.accuracy);
+        var bl=2*sc, bolt=new THREE.Sprite(new THREE.SpriteMaterial({map:ST,color:col,transparent:true,opacity:0.9,blending:ADD,depthWrite:false}));
+        bolt.scale.set(bl*3,bl,1); bolt.position.copy(o.pos); addS(bolt,998);
+        var fl=addS(mkSprite(col,sc*12,1),999); fl.position.copy(o.pos);
+        muzzleLight(o.pos,col,6*sc*rs,0.12,o.dir);
+        muzzleFlash(o.pos,col,sc*10*rs,0.18,o.dir);
+        var trail=null, trailMat=null;
+        if (d._isFlak) {
+            var tl=sc*66, tr=sc*1.8;
+            var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
+            trailMat=new THREE.MeshBasicMaterial({color:0xdd55cc,transparent:true,opacity:0.55,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
+        }
+        active.push({type:'bolt',age:0,maxAge:(d.range||400)/spd,velocity:dir.multiplyScalar(spd),
+            extras:{bolt,boltMat:bolt.material,flare:fl,flareMat:fl.material,trail:trail,trailMat:trailMat,dir:dir.clone().normalize()}});
+    }
+
+    function spawnLaserRound(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range);
+        var spd=Math.max(d.velocity*1.35,270), dir=spread(o.dir,d.accuracy);
+        var len=Math.max(8,sc*12), thick=Math.max(0.5,sc*0.9);
+        function cyl(r1,r2,col2,op,order) {
+            var g=new THREE.CylinderGeometry(r1,r2,len,6,1,true); g.rotateX(Math.PI/2);
+            var m=new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            var mesh=new THREE.Mesh(g,m); mesh.position.copy(o.pos); mesh.lookAt(o.pos.clone().add(dir)); addS(mesh,order); return {mesh,m};
+        }
+        var rm=cyl(thick,thick*0.6,col,0.85,998), rc=cyl(thick*0.35,thick*0.2,0xffffff,0.95,999);
+        var fl=addS(mkSprite(col,sc*14,1),999); fl.position.copy(o.pos);
+        var lf=addS(mkSprite(col,sc*28,0.85,LT),999); lf.position.copy(o.pos);
+        muzzleLight(o.pos,col,8*sc*rs,0.1,o.dir);
+        muzzleFlash(o.pos,col,sc*12*rs,0.18,o.dir);
+        var trail=null, trailMat=null;
+        if (d._isFlak || d._isAA) {
+            var tl=sc*99, tr=thick*3;
+            var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
+            trailMat=new THREE.MeshBasicMaterial({color:d._isFlak?0xdd55cc:col,transparent:true,opacity:0.55,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
+        }
+        active.push({type:'laserround',age:0,maxAge:(d.range||400)/spd,velocity:dir.clone().multiplyScalar(spd),
+            extras:{round:rm.mesh,roundMat:rm.m,core:rc.mesh,coreMat:rc.m,flare:fl,flareMat:fl.material,laserFlare:lf,laserFlareMat:lf.material,dir,trail:trail,trailMat:trailMat}});
+    }
+
+    function spawnPlasma(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range), bs=Math.max(0.4,sc*0.6);
+        var spd=Math.max(d.velocity*1.08,180), dir=spread(o.dir,d.accuracy);
+        var wcol=col.clone().lerp(new THREE.Color(0xffee88),0.4);
+        var ball=addS(mkSprite(wcol,bs*5.625,0.95),998); ball.position.copy(o.pos);
+        var core=addS(mkSprite(0xffffcc,bs*1.875,0.7),999); core.position.copy(o.pos);
+        // Muzzle side planes: contain the shot direction, crossed at 90° around it.
+        // PlaneGeometry default: X = width, Y = height, Z = normal (facing camera).
+        // We want: local X = shot dir (texture stretches along barrel), local Z = side normal.
+        var mfSz=bs*28.8*rs;
+        var mcol=col.clone().lerp(new THREE.Color(0xffdd44),0.5);
+        var _up=new THREE.Vector3(0,1,0); if (Math.abs(o.dir.y)>0.9) _up.set(1,0,0);
+        var _side=new THREE.Vector3().crossVectors(o.dir,_up).normalize();
+        var _up2=new THREE.Vector3().crossVectors(_side,o.dir).normalize();
+        // Plane 1: normal = _side (visible from left/right)
+        var _m1=new THREE.Matrix4().makeBasis(o.dir,_up2,_side);
+        var _q1=new THREE.Quaternion().setFromRotationMatrix(_m1);
+        // Plane 2: normal = _up2 (visible from top/bottom), 90° rotated around shot dir
+        var _m2=new THREE.Matrix4().makeBasis(o.dir,_side.clone().negate(),_up2);
+        var _q2=new THREE.Quaternion().setFromRotationMatrix(_m2);
+        var mfG=new THREE.PlaneGeometry(mfSz,mfSz);
+        var mfM=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:1,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var _offset=o.dir.clone().multiplyScalar(mfSz*0.4);
+        var mf=new THREE.Mesh(mfG,mfM); mf.position.copy(o.pos).add(_offset); mf.quaternion.copy(_q1); mf.scale.set(1,0.575,1); addS(mf,999);
+        var mfG2=new THREE.PlaneGeometry(mfSz,mfSz);
+        var mfM2=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:0.7,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var mf2=new THREE.Mesh(mfG2,mfM2); mf2.position.copy(o.pos).add(_offset); mf2.quaternion.copy(_q2); mf2.scale.set(1,0.575,1); addS(mf2,999);
+        // Muzzle front plane: perpendicular to shot direction (ring/shockwave effect)
+        var mfFG=new THREE.PlaneGeometry(mfSz*1.2,mfSz*1.2);
+        var mfFM=new THREE.MeshBasicMaterial({map:MF,color:mcol,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var mff=new THREE.Mesh(mfFG,mfFM); mff.position.copy(o.pos); mff.lookAt(o.pos.clone().add(o.dir)); mff.scale.set(1,1,1); addS(mff,999);
+        muzzleLight(o.pos,mcol,12*sc*rs,0.1,o.dir);
+        var trail=null, trailMat=null;
+        if (d._isFlak) {
+            var tl=sc*66, tr=bs*3;
+            var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
+            trailMat=new THREE.MeshBasicMaterial({color:0xdd55cc,transparent:true,opacity:0.55,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
+        }
+        active.push({type:'plasma',age:0,maxAge:(d.range||400)/spd,velocity:dir.multiplyScalar(spd),gravity:-90,
+            extras:{ball,ballMat:ball.material,core,coreMat:core.material,flash:mf,flashMat:mfM,flash2:mf2,flashMat2:mfM2,flash3:mff,flashMat3:mff.material,trail:trail,trailMat:trailMat,dir:dir.clone().normalize()}});
+    }
+
+    function spawnRocket(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), rocketCol=new THREE.Color(0x444444);
+        var noseCol=d._isAA?new THREE.Color('#ff54b2'):new THREE.Color('#cc2200');
+        var maxSpd=Math.max(d.velocity*0.9,135), dir=spread(o.dir,d.accuracy), rl=1.5*sc*1.5;
+        var initSpd=(d.accel>0)?Math.min(d.startVelo,maxSpd):maxSpd;
+        var g=new THREE.Group();
+        var bg=new THREE.CylinderGeometry(rl*0.15,rl*0.15,rl,6); bg.rotateX(Math.PI/2);
+        var bm=new THREE.MeshBasicMaterial({color:rocketCol,depthWrite:false}); g.add(new THREE.Mesh(bg,bm));
+        var ng=new THREE.ConeGeometry(rl*0.18,rl*0.5,6); ng.rotateX(Math.PI/2); ng.translate(0,0,rl*0.75);
+        var nm=new THREE.MeshBasicMaterial({color:noseCol,depthWrite:false}); g.add(new THREE.Mesh(ng,nm));
+        var exhCol=d._isAA?new THREE.Color('#ff54b2'):new THREE.Color(d.color).lerp(new THREE.Color(0xff8800),0.5);
+        var exh=new THREE.Sprite(spr(exhCol,0.8)); exh.scale.set(rl*2,rl*2,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
+        g.position.copy(o.pos); g.lookAt(o.pos.clone().add(dir)); addS(g,998);
+        muzzleLight(o.pos,d._isAA?new THREE.Color('#ff54b2'):exhCol,8*sc,0.12,o.dir);
+        var dirUnit=dir.clone().normalize();
+        var trail=null, trailMat=null;
+        if (d._isAA) {
+            var tl=sc*44, tr=rl*0.35;
+            var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
+            trailMat=new THREE.MeshBasicMaterial({color:0xff54b2,transparent:true,opacity:0.5,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
+        }
+        active.push({type:'rocket',age:0,maxAge:10,dist:0,range:d.range||400,velocity:dirUnit.clone().multiplyScalar(initSpd),
+            extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:dirUnit,isAA:!!d.isAA,trail:trail,trailMat:trailMat}});
+    }
+
+    function spawnFlame(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range), spd=Math.max(d.velocity*0.68,120);
+        var acc=(d.accuracy||0), sa=1.5+acc*0.012;
+        var nGlow=14, nTex=26, total=nGlow+nTex;
+        muzzleLight(o.pos,col,12*sc*rs,0.2,o.dir);
+        // Glow balls (additive soft circles)
+        for (var i=0; i<nGlow; i++) {
+            var t=i/nGlow, fc=new THREE.Color().setHSL(0.08-t*0.06,1,0.7-t*0.3);
+            var p=new THREE.Sprite(spr(fc,0.9)); var sz=3.5*sc; p.scale.set(sz,sz,1);
+            p.position.copy(o.pos); addS(p,998);
+            var sv=new THREE.Vector3((Math.random()-0.5)*sa,(Math.random()-0.5)*sa,(Math.random()-0.5)*sa);
+            var vel=o.dir.clone().multiplyScalar(spd*(0.5+Math.random()*0.9)).add(sv);
+            active.push({type:'flame',age:-i*0.016,maxAge:0.4+Math.random()*0.21,velocity:vel,extras:{sprite:p,mat:p.material}});
+        }
+        // Textured flame sprites (varied hue, opacity, rotation, size)
+        for (var j=0; j<nTex; j++) {
+            var t2=j/nTex, hue=0.06+Math.random()*0.06, lit=0.35+Math.random()*0.4;
+            var tc=new THREE.Color().setHSL(hue,1,lit);
+            var fop=0.5+Math.random()*0.4;
+            var fm=new THREE.SpriteMaterial({map:FLMT,color:tc,transparent:true,opacity:fop,blending:ADD,depthWrite:false,rotation:Math.random()*Math.PI*2});
+            var fs=new THREE.Sprite(fm); var tsz=4.2*sc*(0.6+Math.random()*0.8); fs.scale.set(tsz,tsz,1);
+            fs.position.copy(o.pos); addS(fs,997);
+            var sv2=new THREE.Vector3((Math.random()-0.5)*sa,(Math.random()-0.5)*sa,(Math.random()-0.5)*sa);
+            var vel2=o.dir.clone().multiplyScalar(spd*(0.4+Math.random()*1.0)).add(sv2);
+            var rotSpd=(1.2+Math.random()*2.0)*(Math.random()<0.5?1:-1);
+            var noBoost=j%2===0;
+            active.push({type:'flame',age:-j*0.014,maxAge:0.5+Math.random()*0.27,velocity:vel2,extras:{sprite:fs,mat:fm,rotSpd:rotSpd,baseOp:fop,isTex:true,noBoost:noBoost}});
+        }
+    }
+
+    function buildBoltTube(pts, radius, radSegs) {
+        var n=pts.length, rs=radSegs||5, verts=[], idx=[], uvs=[];
+        for (var i=0;i<n;i++) {
+            var fwd; if (i<n-1) fwd=new THREE.Vector3().subVectors(pts[i+1],pts[i]).normalize(); else fwd=new THREE.Vector3().subVectors(pts[i],pts[i-1]).normalize();
+            var up=new THREE.Vector3(0,1,0); if(Math.abs(fwd.y)>0.9) up.set(1,0,0);
+            var side=new THREE.Vector3().crossVectors(fwd,up).normalize();
+            up.crossVectors(side,fwd).normalize();
+            var r=radius*(i===0||i===n-1?0.3:1);
+            for (var j=0;j<rs;j++) {
+                var a=j/rs*Math.PI*2;
+                verts.push(pts[i].x+Math.cos(a)*r*side.x+Math.sin(a)*r*up.x, pts[i].y+Math.cos(a)*r*side.y+Math.sin(a)*r*up.y, pts[i].z+Math.cos(a)*r*side.z+Math.sin(a)*r*up.z);
+                uvs.push(j/rs,i/(n-1));
+            }
+            if (i<n-1) { for (var j=0;j<rs;j++) { var c=i*rs+j, cn=i*rs+(j+1)%rs, nn=(i+1)*rs+j, nnn=(i+1)*rs+(j+1)%rs; idx.push(c,nn,cn,cn,nn,nnn); } }
+        }
+        var g=new THREE.BufferGeometry();
+        g.setAttribute('position',new THREE.Float32BufferAttribute(verts,3));
+        g.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
+        g.setIndex(idx); g.computeVertexNormals();
+        return g;
+    }
+    function updateBoltTube(geom, pts, radius, radSegs) {
+        var n=pts.length, rs=radSegs||5, pos=geom.attributes.position.array;
+        for (var i=0;i<n;i++) {
+            var fwd; if (i<n-1) fwd=new THREE.Vector3().subVectors(pts[i+1],pts[i]).normalize(); else fwd=new THREE.Vector3().subVectors(pts[i],pts[i-1]).normalize();
+            var up=new THREE.Vector3(0,1,0); if(Math.abs(fwd.y)>0.9) up.set(1,0,0);
+            var side=new THREE.Vector3().crossVectors(fwd,up).normalize();
+            up.crossVectors(side,fwd).normalize();
+            var r=radius*(i===0||i===n-1?0.3:1);
+            for (var j=0;j<rs;j++) {
+                var a=j/rs*Math.PI*2, vi=(i*rs+j)*3;
+                pos[vi]=pts[i].x+Math.cos(a)*r*side.x+Math.sin(a)*r*up.x;
+                pos[vi+1]=pts[i].y+Math.cos(a)*r*side.y+Math.sin(a)*r*up.y;
+                pos[vi+2]=pts[i].z+Math.cos(a)*r*side.z+Math.sin(a)*r*up.z;
+            }
+        }
+        geom.attributes.position.needsUpdate=true;
+    }
+    function makeBolt(pts, tubeR, radS, col, scene2) {
+        var tG=buildBoltTube(pts,tubeR,radS);
+        var tM=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.85,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var t=new THREE.Mesh(tG,tM); addS(t,998);
+        var cG=buildBoltTube(pts,tubeR*0.25,radS);
+        var cM=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.95,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var c=new THREE.Mesh(cG,cM); addS(c,999);
+        return {tube:t,tubeMat:tM,tubeG:tG,core:c,coreMat:cM,coreG:cG,pts:pts};
+    }
+    function genBoltPts(origin, dir, len, seg, jitter) {
+        var pts=[], pos=origin.clone(), step=dir.clone().multiplyScalar(len/seg);
+        for (var i=0;i<=seg;i++) {
+            var jt=i===0||i===seg?0:(Math.random()-0.5)*jitter;
+            pts.push(new THREE.Vector3(pos.x+jt,pos.y+(i===0||i===seg?0:(Math.random()-0.5)*jitter),pos.z+jt));
+            pos.add(step);
+        }
+        return pts;
+    }
+    function spawnLightning(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range);
+        var len=d.range||200, dur=Math.max(d.beamtime,0.15);
+        var seg=Math.round(Math.max(10,Math.min(20,12+(len-300)*6/300)));
+        var jitter=sc*5;
+        var tubeR=sc*0.7, radS=6;
+        var b1=makeBolt(genBoltPts(o.pos,o.dir,len,seg,jitter),tubeR,radS,col);
+        var b2=makeBolt(genBoltPts(o.pos,o.dir,len,seg,jitter),tubeR,radS,col);
+        var fl=addS(mkSprite(col,sc*15,1),999); fl.position.copy(o.pos);
+        var endPos=o.pos.clone().add(o.dir.clone().multiplyScalar(len));
+        var efl=addS(mkSprite(col,sc*10,0.8),999); efl.position.copy(endPos);
+        muzzleLight(o.pos,col,15*sc*rs,dur,o.dir);
+        active.push({type:'lightning',age:0,maxAge:dur,extras:{
+            bolts:[b1,b2],flare:fl,flareMat:fl.material,endFlare:efl,endFlareMat:efl.material,
+            scale:sc,jitter:jitter,origin:o,node:o.node,seg:seg,len:len,tubeR:tubeR,radS:radS}});
+    }
+
+    function spawnDgun(o, d) {
+        var col=new THREE.Color(d.color||'#b24cff'), rs=rScale(d.range), spd=Math.max(d.velocity*0.72,180);
+        var sg=new THREE.SphereGeometry(1,12,8);
+        var sm=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var sphere=new THREE.Mesh(sg,sm); sphere.position.copy(o.pos); addS(sphere,998);
+        var glow=addS(mkSprite(col,8,0.8),999); glow.position.copy(o.pos);
+        var flare=addS(mkSprite(new THREE.Color(0xffffff).lerp(col,0.3),88,0.9,LT),1000); flare.position.copy(o.pos);
+        muzzleLight(o.pos,col,24*rs,0.3,o.dir);
+        muzzleFlash(o.pos,col,8*rs,0.25,o.dir);
+        active.push({type:'dgun',age:0,maxAge:1.8,velocity:o.dir.clone().multiplyScalar(spd),
+            extras:{sphere,sphereMat:sm,glow,glowMat:glow.material,flare,flareMat:flare.material}});
+    }
+
+    function spawnSmoke(pos) {
+        var sop=0.1+Math.random()*0.6;
+        var m=new THREE.SpriteMaterial({map:DT,color:0x555555,transparent:true,opacity:sop,blending:NORM,depthWrite:false,rotation:Math.random()*Math.PI*2});
+        var p=new THREE.Sprite(m);
+        var ssz=5.75*(0.8+Math.random()*0.4);
+        p.scale.set(ssz,ssz,1); p.position.copy(pos); addS(p,997);
+        var rotSpd=(0.3+Math.random()*0.7)*(Math.random()<0.5?1:-1);
+        var life=1.44+Math.random()*1.17;
+        active.push({type:'smoke',age:0,maxAge:life,velocity:new THREE.Vector3((Math.random()-0.5)*2,Math.random()*3,(Math.random()-0.5)*2),extras:{sprite:p,mat:m,rotSpd:rotSpd,sop:sop}});
+    }
+
+    function spawnBubble(pos) {
+        var sz=0.6+Math.random()*1.2;
+        var p=new THREE.Sprite(new THREE.SpriteMaterial({map:BT,color:0xffffff,transparent:true,opacity:0.5,blending:NORM,depthWrite:false}));
+        p.scale.set(sz,sz,1); p.position.copy(pos); addS(p,997);
+        active.push({type:'bubble',age:0,maxAge:0.6+Math.random()*0.5,velocity:new THREE.Vector3((Math.random()-0.5)*1.5,Math.random()*4+1,(Math.random()-0.5)*1.5),extras:{sprite:p,mat:p.material,sz:sz}});
+    }
+
+    function spawnTorpedo(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), torpCol=new THREE.Color(0x444444);
+        var noseCol=new THREE.Color('#3366cc');
+        var maxSpd=Math.max(d.velocity*0.9,135), dir=spread(o.dir,d.accuracy), rl=1.5*sc*1.5;
+        var initSpd=(d.accel>0)?Math.min(d.startVelo,maxSpd):maxSpd;
+        var g=new THREE.Group();
+        var bg=new THREE.CylinderGeometry(rl*0.15,rl*0.15,rl,6); bg.rotateX(Math.PI/2);
+        var bm=new THREE.MeshBasicMaterial({color:torpCol,depthWrite:false}); g.add(new THREE.Mesh(bg,bm));
+        var ng=new THREE.ConeGeometry(rl*0.18,rl*0.5,6); ng.rotateX(Math.PI/2); ng.translate(0,0,rl*0.75);
+        var nm=new THREE.MeshBasicMaterial({color:noseCol,depthWrite:false}); g.add(new THREE.Mesh(ng,nm));
+        var exhCol=new THREE.Color(0xddeeff);
+        var exh=new THREE.Sprite(spr(exhCol,0.6)); exh.scale.set(rl*1.5,rl*1.5,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
+        g.position.copy(o.pos);
+        var dirUnit=dir.clone().normalize();
+        // Air-dropped torpedo: starts falling, then activates forward thrust after 2s
+        if (canFly) {
+            var fwdDir=new THREE.Vector3(o.dir.x,0,o.dir.z).normalize();
+            g.lookAt(o.pos.clone().add(fwdDir));
+            var vel=new THREE.Vector3(fwdDir.x*30,0,fwdDir.z*30);
+            addS(g,998);
+            active.push({type:'torpedo',age:0,maxAge:10,dist:0,range:d.range||400,velocity:vel,
+                extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:fwdDir,airDrop:true,dropTime:0.8}});
+        } else {
+            g.lookAt(o.pos.clone().add(dir)); addS(g,998);
+            active.push({type:'torpedo',age:0,maxAge:10,dist:0,range:d.range||400,velocity:dirUnit.clone().multiplyScalar(initSpd),
+                extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:dirUnit}});
+        }
+    }
+
+    function spawnBomb(o, d) {
+        var sc=dScale(d.damage), bombCol=new THREE.Color(0x333333);
+        var noseCol=d.isEMP ? new THREE.Color('#4488ff') : new THREE.Color('#cc4400');
+        var empScale=d.isEMP ? 0.7 : 1;
+        var bl=2.5*sc*empScale;
+        // Thickness scales with damage: thin for light bombs, fat for heavy
+        var thick=bl*(0.2+0.2*Math.min(1,d.damage/1000));
+        var g=new THREE.Group();
+        // Fat cylindrical body
+        var bg=new THREE.CylinderGeometry(thick,thick,bl,8); bg.rotateX(Math.PI/2);
+        var bm=new THREE.MeshBasicMaterial({color:bombCol,depthWrite:false}); g.add(new THREE.Mesh(bg,bm));
+        // Rounded nose
+        var ng=new THREE.SphereGeometry(thick,8,6,0,Math.PI*2,0,Math.PI/2);
+        ng.rotateX(Math.PI/2); ng.translate(0,0,bl*0.5);
+        var nm=new THREE.MeshBasicMaterial({color:noseCol,depthWrite:false}); g.add(new THREE.Mesh(ng,nm));
+        // Tail fins (two crossed planes)
+        var finG=new THREE.PlaneGeometry(bl*0.5,bl*0.35);
+        var finM=new THREE.MeshBasicMaterial({color:0x555555,depthWrite:false,side:THREE.DoubleSide});
+        var fin1=new THREE.Mesh(finG,finM); fin1.position.set(0,0,-bl*0.4); g.add(fin1);
+        var finG2=new THREE.PlaneGeometry(bl*0.5,bl*0.35);
+        var fin2=new THREE.Mesh(finG2,finM.clone()); fin2.position.set(0,0,-bl*0.4); fin2.rotation.z=Math.PI/2; g.add(fin2);
+        g.position.copy(o.pos);
+        // Bombs drop downward — initial velocity is slight forward + down
+        var vel=new THREE.Vector3(o.dir.x*30,0,o.dir.z*30);
+        g.lookAt(g.position.clone().add(new THREE.Vector3(vel.x,0,vel.z)));
+        addS(g,998);
+        active.push({type:'bomb',age:0,maxAge:8,velocity:vel,
+            extras:{group:g,bodyMat:bm,noseMat:nm,finMat:finM,bl:bl}});
+    }
+
+    function spawnStarburst(o, d) {
+        // Starburst missiles launch straight up regardless of fire_point direction
+        var upO = {pos: o.pos.clone(), dir: new THREE.Vector3(0,1,0), node: o.node};
+        spawnRocket(upO, d);
+    }
+
+    // Export shared context for projectiles-update script
+    return {
+        wpnDataByNum: wpnDataByNum, weaponSummary: weaponSummary,
+        scene: scene, mainScene: mainScene, camera: camera, modelScene: modelScene,
+        unitName: unitName, active: active, THREE: THREE,
+        getCat: getCat, dScale: dScale, rScale: rScale, spread: spread,
+        addS: addS, mkSprite: mkSprite, spr: spr, muzzleLight: muzzleLight, muzzleFlash: muzzleFlash,
+        refreshNode: refreshNode, getFireOrigin: getFireOrigin, playSound: playSound,
+        spawnSmoke: spawnSmoke, spawnBubble: spawnBubble,
+        FT: FT, LT: LT, ST: ST, ADD: ADD, NORM: NORM, DT: DT, BT: BT,
+        updateBoltTube: updateBoltTube,
+        spawnBeam: spawnBeam, spawnBolt: spawnBolt, spawnLaserRound: spawnLaserRound,
+        spawnPlasma: spawnPlasma, spawnRocket: spawnRocket, spawnFlame: spawnFlame,
+        spawnLightning: spawnLightning, spawnDgun: spawnDgun, spawnTorpedo: spawnTorpedo,
+        spawnBomb: spawnBomb, spawnStarburst: spawnStarburst,
+        canFly: canFly,
+        isToggleOpen: isToggleOpen
+    };
+};
+</script>
