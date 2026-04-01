@@ -60,7 +60,7 @@ window._barProjectilesUpdate = function(ctx) {
                     if (p.velocity) {
                         ex.round.position.addScaledVector(p.velocity,dt); ex.round.lookAt(ex.round.position.clone().add(ex.dir));
                         ex.core.position.copy(ex.round.position); ex.core.lookAt(ex.core.position.clone().add(ex.dir));
-                        ex.laserFlare.position.copy(ex.round.position);
+                        ex.laserFlare.position.copy(ex.round.position).addScaledVector(ex.dir,ex.lrHalfLen);
                     }
                     ex.roundMat.opacity=0.85*(1-t*0.5); ex.coreMat.opacity=0.95*(1-t*0.5);
                     ex.flareMat.opacity=Math.max(0,1-t*6); ex.flare.scale.multiplyScalar(0.9);
@@ -194,15 +194,20 @@ window._barProjectilesUpdate = function(ctx) {
 
     var _spawnFns = {beam:spawnBeam,laserround:spawnLaserRound,bolt:spawnBolt,plasma:spawnPlasma,rocket:spawnRocket,torpedo:spawnTorpedo,starburst:spawnStarburst,flame:spawnFlame,lightning:spawnLightning,dgun:spawnDgun,bomb:spawnBomb};
 
+    var _fireCount = 0;
     function _fireSingle(wnum, data, burstIdx) {
+        var _t0 = performance.now(), _isFirst = _fireCount < 3; _fireCount++;
         var o=getFireOrigin(wnum); if (!o) return;
+        var _t1 = performance.now();
         var cat = getCat(data);
         if (data.sound) { var _pitch = cat==='beam' ? (data.largeBeam ? 0.96+Math.random()*0.08 : 1) : 0.93+Math.random()*0.14; playSound(data.sound,o.pos,true,_pitch); }
+        var _t2 = performance.now();
         var _fn=((data.name||'')+'|'+(data.type||'')).toLowerCase(); data._isFlak=_fn.indexOf('flak')!==-1; data._isAA=!!data.isAA;
         var hold = cat === 'beam' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : cat === 'flame' ? 0.2 : cat === 'lightning' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : 0.05;
         flashModel(Math.min(dScale(data.damage) * rScale(data.range) * 0.15, 0.25), hold);
         var spawnFn = _spawnFns[cat]||spawnPlasma;
         var count = data.projectiles||1;
+        var _t3 = performance.now();
         if (count <= 1) { spawnFn(o, data); }
         else {
             var baseAcc = Math.max(data.accuracy, 300);
@@ -212,6 +217,8 @@ window._barProjectilesUpdate = function(ctx) {
                 spawnFn(o, shotData);
             }
         }
+        var _t4 = performance.now();
+        if (_isFirst) console.log('[FIRE #'+_fireCount+'] origin:'+(_t1-_t0).toFixed(1)+'ms sound:'+(_t2-_t1).toFixed(1)+'ms spawn:'+(_t4-_t3).toFixed(1)+'ms total:'+(_t4-_t0).toFixed(1)+'ms cat:'+cat);
     }
 
     var _burstTimers = {};
