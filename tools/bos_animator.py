@@ -1727,8 +1727,15 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
             rotary_info = (rm.group(1).lower(), AXIS_INDEX[rm.group(2).lower()],
                             float(rm.group(3)), 360.0)
 
-    # Merge all branches into one body so all barrels animate simultaneously
-    merged = pre_branch + '\n'.join(branch_bodies) + post_branch
+    # For rotary weapons (gatling spindle), use only the first branch so
+    # the clip fires one barrel per shot.  The JS viewer accumulates the
+    # spindle rotation, cycling through barrels on each click.
+    # For non-rotary multi-barrel weapons, merge all branches so all
+    # barrels animate simultaneously (staggered by the JS player).
+    if rotary_info:
+        merged = pre_branch + branch_bodies[0] + post_branch
+    else:
+        merged = pre_branch + '\n'.join(branch_bodies) + post_branch
     return merged, num_branches, rotary_info
 
 
@@ -1955,24 +1962,16 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
             kfs.append(BosKeyframe(time=t_cursor_end + return_dur, value=0.0))
 
     # Add rotary advance track if detected (e.g. gatling spindle rotation)
+    # Always a single step per clip — the JS viewer accumulates rotation on each fire.
     if rotary_info:
         r_piece, r_axis, step_deg, r_speed = rotary_info
         r_key = (r_piece, r_axis, True)
-        # For sequenced branches: rotate N steps spread across the total duration
-        # For single branch: rotate 1 step at the end
-        n_steps = max(num_branches, 1)
-        total_rot = step_deg * n_steps
-        # Spread rotary steps evenly across the animation duration
-        if t_cursor > 0.01 and n_steps > 1:
-            step_interval = t_cursor / n_steps
-        else:
-            step_interval = t_cursor
         r_dur_per_step = step_deg / max(r_speed, 1.0)
-        r_kfs = [BosKeyframe(time=0.0, value=0.0)]
-        for s in range(n_steps):
-            r_start = step_interval * s
-            r_kfs.append(BosKeyframe(time=r_start, value=step_deg * s))
-            r_kfs.append(BosKeyframe(time=r_start + r_dur_per_step, value=step_deg * (s + 1)))
+        r_kfs = [
+            BosKeyframe(time=0.0, value=0.0),
+            BosKeyframe(time=0.0, value=0.0),
+            BosKeyframe(time=r_dur_per_step, value=step_deg),
+        ]
         track_kfs[r_key] = r_kfs
 
     # Compute total duration
@@ -1993,10 +1992,8 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
         piece, axis, is_rot = key
         tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot, keyframes=kfs))
 
-    # Adjust rotary info to reflect total rotation in this clip (not per-step)
-    if rotary_info and num_branches > 1:
-        r_piece, r_axis, r_step, r_speed = rotary_info
-        rotary_info = (r_piece, r_axis, r_step * num_branches, r_speed)
+    # rotary_info stays as single-step (step_deg per shot) —
+    # the JS viewer accumulates rotation across fires.
 
     return tracks, total_duration, rotary_info
 
