@@ -3,6 +3,7 @@ window._barProjectilesSetup = function(THREE, opts) {
     var scene = opts.scene, mainScene = opts.mainScene || opts.scene, camera = opts.camera, modelScene = opts.modelScene;
     var unitName = opts.unitName, weaponSummary = opts.weaponSummary, renderer = opts.renderer;
     var isToggleOpen = opts.isToggleOpen || function() { return true; };
+    var triggerOpen = opts.triggerOpen || null;
     var canFly = !!opts.canFly;
 
     function readColor(el) {
@@ -236,12 +237,33 @@ window._barProjectilesSetup = function(THREE, opts) {
     }
     function addS(obj, order) { obj.renderOrder=order||998; obj.layers.enable(1); scene.add(obj); return obj; }
 
+    // PointLight pool: fixed set of lights always in scene to avoid shader recompilation.
+    // Three.js bakes light count into shader hash — adding/removing lights triggers recompile.
+    var _POOL_SIZE = 16, _lightPool = [], _lightPoolFree = [];
+    for (var _lpi = 0; _lpi < _POOL_SIZE; _lpi++) {
+        var _pl = new THREE.PointLight(0x000000, 0.001, 0.01, 1);
+        mainScene.add(_pl);
+        _lightPool.push(_pl);
+        _lightPoolFree.push(_pl);
+    }
+    function _acquireLight(color, intensity, distance, pos) {
+        var l = _lightPoolFree.length > 0 ? _lightPoolFree.pop() : null;
+        if (!l) { l = _lightPool[0]; } // fallback: reuse first (shouldn't happen)
+        l.color.set(color); l.intensity = intensity; l.distance = distance; l.decay = 1;
+        l.position.copy(pos);
+        return l;
+    }
+    function _releaseLight(l) {
+        l.intensity = 0.001; l.distance = 0.01; l.color.set(0x000000);
+        if (_lightPoolFree.indexOf(l) === -1) _lightPoolFree.push(l);
+    }
+
     var MIN_FLASH_DUR = 0.18; // minimum muzzle flash duration in seconds
     function muzzleLight(pos, color, intensity, dur, dir) {
         var lp = pos.clone(); if (dir) lp.addScaledVector(dir, 8);
         var d = Math.max((dur||0.15)*1.5, MIN_FLASH_DUR);
         var si = intensity*8;
-        var l = new THREE.PointLight(color, si, 80, 1); l.position.copy(lp); mainScene.add(l);
+        var l = _acquireLight(color, si, 80, lp);
         active.push({type:'light', age:0, maxAge:d, extras:{light:l, si:si}});
     }
     // Standalone muzzle flash sprite with guaranteed minimum duration
@@ -268,7 +290,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         var ef=addS(mkSprite(col,fs*0.6,0.8),999); ef.position.copy(endPos);
         var ef2=addS(mkSprite(col,fs*1.4,0.75,LT),999); ef2.position.copy(endPos);
         var blp=o.pos.clone(); if(o.dir) blp.addScaledVector(o.dir,8);
-        var bsi=15*sc*rs*8, bl=new THREE.PointLight(col,bsi,80,1); bl.position.copy(blp); mainScene.add(bl);
+        var bsi=15*sc*rs*8, bl=_acquireLight(col,bsi,80,blp);
         active.push({type:'beam',age:0,maxAge:dur+0.5,extras:{
             beam:bm.mesh,beamMat:bm.m,beamCore:bc.mesh,coreMat:bc.m,
             laserFlare:lf,laserFlareMat:lf.material,
@@ -595,7 +617,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         scene: scene, mainScene: mainScene, camera: camera, modelScene: modelScene,
         unitName: unitName, active: active, THREE: THREE,
         getCat: getCat, dScale: dScale, rScale: rScale, spread: spread,
-        addS: addS, mkSprite: mkSprite, spr: spr, muzzleLight: muzzleLight, muzzleFlash: muzzleFlash,
+        addS: addS, mkSprite: mkSprite, spr: spr, muzzleLight: muzzleLight, muzzleFlash: muzzleFlash, releaseLight: _releaseLight,
         refreshNode: refreshNode, getFireOrigin: getFireOrigin, playSound: playSound,
         spawnSmoke: spawnSmoke, spawnBubble: spawnBubble,
         FT: FT, LT: LT, ST: ST, ADD: ADD, NORM: NORM, DT: DT, BT: BT,
@@ -605,7 +627,8 @@ window._barProjectilesSetup = function(THREE, opts) {
         spawnLightning: spawnLightning, spawnDgun: spawnDgun, spawnTorpedo: spawnTorpedo,
         spawnBomb: spawnBomb, spawnStarburst: spawnStarburst,
         canFly: canFly,
-        isToggleOpen: isToggleOpen
+        isToggleOpen: isToggleOpen,
+        triggerOpen: triggerOpen
     };
 };
 </script>
