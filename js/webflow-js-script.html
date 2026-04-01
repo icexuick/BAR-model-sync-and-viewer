@@ -468,10 +468,16 @@
             // but depthTest:true so model geometry occludes them correctly.
             let projectilesUpdate = null;
             if (window._barProjectilesSetup) {
-                const projResult = window._barProjectilesSetup(THREE, {
+                const projCtx = window._barProjectilesSetup(THREE, {
                     scene: scene, mainScene: scene, camera, modelScene, unitName, weaponSummary, renderer,
-                    isToggleOpen: function() { return !toggleOpenClip || toggleState; }
+                    isToggleOpen: function() { return !toggleOpenClip || toggleState; },
+                    canFly: canFly
                 });
+                var projResult = null;
+                if (projCtx && window._barProjectilesUpdate) {
+                    projResult = window._barProjectilesUpdate(projCtx);
+                }
+                if (!projResult) console.warn('[BAR] projectiles-update script not loaded — check embed order');
                 if (projResult) {
                     projectilesUpdate = projResult.update;
                     if (wpnResult.setProjectileFire) wpnResult.setProjectileFire(projResult.fireWeapon);
@@ -628,6 +634,32 @@
             if (shadowToggleButton) shadowToggleButton.addEventListener('click', () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; });
             const envRotMat4 = new THREE.Matrix4();
             const envRotMat3 = new THREE.Matrix3();
+
+            // Warmup: add tiny invisible VFX objects to the real scene and render
+            // one frame through the full composer pipeline (RenderPass+SSAO+SMAA+Output).
+            // This pre-compiles all shader variants so the first weapon fire is stutter-free.
+            (function() {
+                var ADD = THREE.AdditiveBlending, DS = THREE.DoubleSide;
+                var wObjs = [];
+                function w(o) { o.renderOrder = 998; o.layers.enable(1); scene.add(o); wObjs.push(o); return o; }
+                // SpriteMaterial (additive) — the main VFX material
+                w(new THREE.Sprite(new THREE.SpriteMaterial({color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false}))).scale.set(0.001,0.001,1);
+                // MeshBasicMaterial + CylinderGeometry (beams, bolts, laser rounds)
+                var cg = new THREE.CylinderGeometry(0.001,0.001,0.001,4,1,true);
+                w(new THREE.Mesh(cg, new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false,side:DS})));
+                // MeshBasicMaterial opaque (rocket/torpedo body)
+                w(new THREE.Mesh(cg.clone(), new THREE.MeshBasicMaterial({color:0x444444,depthWrite:false})));
+                // PlaneGeometry (muzzle flash)
+                w(new THREE.Mesh(new THREE.PlaneGeometry(0.001,0.001), new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false,side:DS})));
+                // ConeGeometry (rocket nose)
+                w(new THREE.Mesh(new THREE.ConeGeometry(0.001,0.001,4), new THREE.MeshBasicMaterial({color:0xffffff,depthWrite:false})));
+                // SphereGeometry (dgun)
+                w(new THREE.Mesh(new THREE.SphereGeometry(0.001,6,4), new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false})));
+                // PointLight (muzzle light)
+                var pl = new THREE.PointLight(0xffffff,0.001,1,1); scene.add(pl); wObjs.push(pl);
+                composer.render();
+                for (var i = 0; i < wObjs.length; i++) { scene.remove(wObjs[i]); if (wObjs[i].geometry) wObjs[i].geometry.dispose(); if (wObjs[i].material) wObjs[i].material.dispose(); }
+            })();
 
             const fpsLimit = 120;
             const interval = 1000 / fpsLimit;

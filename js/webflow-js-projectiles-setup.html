@@ -101,18 +101,12 @@ window._barProjectilesSetup = function(THREE, opts) {
         return new THREE.CanvasTexture(c);
     }
     var FT = makeRadialTex(64,64);
-    var _texLoader = new THREE.TextureLoader();
-    var _texPending = 0, _texDone = false;
-    function _loadTex(url) {
-        _texPending++;
-        return _texLoader.load(url, function() { if (--_texPending === 0) _warmupRender(); });
-    }
-    var LT = _loadTex('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cb7ec93332ab9d5fadf7c2_flare2.png');
-    var MT = _loadTex('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cba0b296a1ebd325dc5c91_muzzleside.png');
-    var MF = _loadTex('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cba26f25bb9076827629e6_muzzlefront.png');
-    var BT = _loadTex('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbc2806488ab28bd3e38cb_bubbletexture.png');
-    var DT = _loadTex('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbda83c9b8dff28c72325a_dirtbar.png');
-    var FLMT = _loadTex('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbe5af5ffd6ccb4c2e2033_flame.png');
+    var LT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cb7ec93332ab9d5fadf7c2_flare2.png');
+    var MT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cba0b296a1ebd325dc5c91_muzzleside.png');
+    var MF = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cba26f25bb9076827629e6_muzzlefront.png');
+    var BT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbc2806488ab28bd3e38cb_bubbletexture.png');
+    var DT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbda83c9b8dff28c72325a_dirtbar.png');
+    var FLMT = new THREE.TextureLoader().load('https://cdn.prod.website-files.com/5c68622246b367adf6f3041d/69cbe5af5ffd6ccb4c2e2033_flame.png');
     var sc = document.createElement('canvas'); sc.width=128; sc.height=32;
     var sx = sc.getContext('2d'), sg = sx.createLinearGradient(0,16,128,16);
     sg.addColorStop(0,'rgba(255,255,255,0)'); sg.addColorStop(0.3,'rgba(255,255,255,0.8)');
@@ -123,48 +117,6 @@ window._barProjectilesSetup = function(THREE, opts) {
     var ADD = THREE.AdditiveBlending, NORM = THREE.NormalBlending;
     var active = [];
     var audioListener = null, audioBuffers = {};
-
-    // Pre-compile all projectile shader+texture variants once textures are loaded,
-    // so the first shot doesn't cause a GPU stutter from lazy shader compilation.
-    function _warmupRender() {
-        if (_texDone) return; _texDone = true;
-        var wScene = new THREE.Scene();
-        var textures = [FT, LT, ST, MT, MF, BT, DT, FLMT];
-        for (var ti = 0; ti < textures.length; ti++) {
-            var s = new THREE.Sprite(new THREE.SpriteMaterial({map:textures[ti],color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false}));
-            s.scale.set(0.001,0.001,1); wScene.add(s);
-        }
-        // NormalBlending sprite (smoke, bubbles)
-        wScene.add(new THREE.Sprite(new THREE.SpriteMaterial({map:DT,color:0xffffff,transparent:true,opacity:0.001,blending:NORM,depthWrite:false})));
-        wScene.add(new THREE.Sprite(new THREE.SpriteMaterial({map:BT,color:0xffffff,transparent:true,opacity:0.001,blending:NORM,depthWrite:false})));
-        // MeshBasicMaterial + CylinderGeometry (beams, bolts, laser rounds)
-        var cg = new THREE.CylinderGeometry(0.001,0.001,0.001,4,1,true);
-        wScene.add(new THREE.Mesh(cg, new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false,side:THREE.DoubleSide})));
-        // MeshBasicMaterial opaque (rocket body)
-        wScene.add(new THREE.Mesh(cg.clone(), new THREE.MeshBasicMaterial({color:0x444444,depthWrite:false})));
-        // PlaneGeometry with textures (muzzle flash planes)
-        var pg = new THREE.PlaneGeometry(0.001,0.001);
-        wScene.add(new THREE.Mesh(pg, new THREE.MeshBasicMaterial({map:MT,color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false,side:THREE.DoubleSide})));
-        wScene.add(new THREE.Mesh(pg.clone(), new THREE.MeshBasicMaterial({map:MF,color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false,side:THREE.DoubleSide})));
-        // PointLight
-        wScene.add(new THREE.PointLight(0xffffff,0.001,1,1));
-        // SphereGeometry (dgun)
-        wScene.add(new THREE.Mesh(new THREE.SphereGeometry(0.001,6,4), new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false})));
-        // TubeGeometry (lightning)
-        var curve = new THREE.CatmullRomCurve3([new THREE.Vector3(0,0,0),new THREE.Vector3(0,0,0.001)]);
-        wScene.add(new THREE.Mesh(new THREE.TubeGeometry(curve,2,0.001,3,false), new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.001,blending:ADD,depthWrite:false})));
-        // ConeGeometry (rocket nose)
-        wScene.add(new THREE.Mesh(new THREE.ConeGeometry(0.001,0.001,4), new THREE.MeshBasicMaterial({color:0xffffff,depthWrite:false})));
-        // Do a real render to a tiny offscreen target — compile() alone doesn't
-        // always trigger the full GPU pipeline (link, upload, etc.)
-        var rt = new THREE.WebGLRenderTarget(1, 1);
-        renderer.setRenderTarget(rt);
-        renderer.render(wScene, camera);
-        renderer.setRenderTarget(null);
-        rt.dispose();
-        // Dispose
-        wScene.traverse(function(c) { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
-    }
 
     function ensureListener() {
         if (!audioListener) { audioListener = new THREE.AudioListener(); camera.add(audioListener); }
