@@ -678,7 +678,9 @@
                     }
                     if (turntableActive && !didDrag && !isAltDown) modelScene.rotation.y += VIEWER_CONFIG.autoRotationSpeed * clockDelta;
                     if (mixer) mixer.update(clockDelta);
+                    var _pT0 = performance.now();
                     if (projectilesUpdate) projectilesUpdate(clockDelta);
+                    var _pT1 = performance.now();
 
                     const lerpSpeed = 8.0 * clockDelta;
                     modelScene.traverse(child => {
@@ -686,8 +688,11 @@
                         child.userData._highlightVal += (child.userData._targetHighlight - child.userData._highlightVal) * Math.min(lerpSpeed, 1.0);
                         child.userData._dimVal      += (child.userData._targetDim      - child.userData._dimVal     ) * Math.min(lerpSpeed, 1.0);
                     });
+                    var _pT2 = performance.now();
                     controls.update();
                     composer.render();
+                    var _pT3 = performance.now();
+                    if (_pT3 - _pT0 > 30) console.log('[FRAME] projUpdate:'+(_pT1-_pT0).toFixed(1)+'ms traverse:'+(_pT2-_pT1).toFixed(1)+'ms render:'+(_pT3-_pT2).toFixed(1)+'ms total:'+(_pT3-_pT0).toFixed(1)+'ms activeVFX:'+((projectilesUpdate&&window._barProjActive)?window._barProjActive():'?'));
                 }
             };
             const handleResize = () => {
