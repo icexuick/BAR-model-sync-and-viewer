@@ -203,7 +203,8 @@ window._barProjectilesSetup = function(THREE, opts) {
         var t = (d.type||'').toLowerCase().replace(/[\s-]+/g,'');
         if (t==='beamlaser'||t==='heatray'||t==='tachyonlaserbeam'||t==='thermalordnancegenerator') return 'beam';
         if (t==='lasercannon') return 'laserround';
-        if (t==='shotguncannon'||t==='railgun'||t==='sniper'||t==='gatlinggun'||t==='flakcannon') return 'bolt';
+        if (t==='shotguncannon'||t==='gatlinggun') return 'laserround';
+        if (t==='railgun'||t==='sniper'||t==='flakcannon') return 'bolt';
         if (t==='plasmacannon'||t==='plasmarepeater'||t==='plasmablast'||t==='plasmashotgun'||t==='clusterplasmacannon'||t==='cannon') return 'plasma';
         if (t==='flamethrower'||t==='flame'||t==='napalmlauncher') return 'flame';
         if (t==='lightningcannon'||t==='lightning'||t==='emp'||t==='triggerexp'||t==='triggeremp'||t==='junosurge') return 'lightning';
@@ -320,7 +321,8 @@ window._barProjectilesSetup = function(THREE, opts) {
     function spawnLaserRound(o, d) {
         var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range);
         var spd=Math.max(d.velocity*1.35,270), dir=spread(o.dir,d.accuracy);
-        var len=Math.max(8,sc*12), thick=Math.max(0.5,sc*0.9);
+        var isSG=!!d._isShotgun, thickMul=isSG?0.34:1;
+        var len=Math.max(8,sc*12)*thickMul, thick=Math.max(0.5,sc*0.9)*thickMul;
         function cyl(r1,r2,col2,op,order) {
             var g=new THREE.CylinderGeometry(r1,r2,len,6,1,true); g.rotateX(Math.PI/2);
             var m=new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
@@ -328,10 +330,10 @@ window._barProjectilesSetup = function(THREE, opts) {
         }
         var rm=cyl(thick,thick*0.6,col,0.85,998), rc=cyl(thick*0.35,thick*0.2,0xffffff,0.95,999);
         var frontPos=o.pos.clone().addScaledVector(dir,len/2);
-        var fl=addS(mkSprite(col,sc*14,1),999); fl.position.copy(o.pos);
-        var lf=addS(mkSprite(col,sc*28,0.85,LT),999); lf.position.copy(frontPos);
-        muzzleLight(o.pos,col,8*sc*rs,0.1,o.dir);
-        muzzleFlash(o.pos,col,sc*12*rs,0.18,o.dir);
+        var fl=isSG?null:addS(mkSprite(col,sc*14,1),999); if(fl) fl.position.copy(o.pos);
+        var lf=isSG?null:addS(mkSprite(col,sc*28,0.85,LT),999); if(lf) lf.position.copy(frontPos);
+        muzzleLight(o.pos,col,(isSG?4:8)*sc*rs,0.1,o.dir);
+        muzzleFlash(o.pos,col,sc*(isSG?6:12)*rs,0.18,o.dir);
         var trail=null, trailMat=null;
         if (d._isFlak || d._isAA) {
             var tl=sc*99, tr=thick*3;
@@ -340,7 +342,7 @@ window._barProjectilesSetup = function(THREE, opts) {
             trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
         }
         active.push({type:'laserround',age:0,maxAge:(d.range||400)/spd,velocity:dir.clone().multiplyScalar(spd),
-            extras:{round:rm.mesh,roundMat:rm.m,core:rc.mesh,coreMat:rc.m,flare:fl,flareMat:fl.material,laserFlare:lf,laserFlareMat:lf.material,dir,lrHalfLen:len/2,trail:trail,trailMat:trailMat}});
+            extras:{round:rm.mesh,roundMat:rm.m,core:rc.mesh,coreMat:rc.m,flare:fl,flareMat:fl?fl.material:null,laserFlare:lf,laserFlareMat:lf?lf.material:null,dir,lrHalfLen:len/2,trail:trail,trailMat:trailMat}});
     }
 
     function spawnPlasma(o, d) {
