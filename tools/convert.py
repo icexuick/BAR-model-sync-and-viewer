@@ -1207,10 +1207,18 @@ def convert_with_weapons(
                     is_factory = bool(re.search(r'\bOpenYard\s*\(|FACTORY_OPEN_BUILD', bos_content, re.IGNORECASE))
                     if is_factory:
                         builder.nodes[root_idx].setdefault("extras", {})["is_factory"] = True
+                    # AimWeapon-based deploys (Deploy/Undeploy functions or
+                    # deploy_state variable) always start closed — the weapon
+                    # only deploys when aiming.
+                    _is_aim_deploy = bool(
+                        re.search(r'\bDeploy\s*\(', bos_content) and
+                        re.search(r'\bUndeploy\s*\(', bos_content)
+                    ) or bool(re.search(r'\bdeploy_state\b', bos_content, re.IGNORECASE))
                     starts_closed = (
                         unit_name.lower() not in _FORCE_AUTOPLAY_OPEN and
                         not is_factory and
                         (
+                            _is_aim_deploy or
                             unit_name.lower() in _FORCE_STARTS_CLOSED or
                             any(re.search(p, create_body, re.IGNORECASE) for p in _CLOSED_IN_CREATE)
                         )

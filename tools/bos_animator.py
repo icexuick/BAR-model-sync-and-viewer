@@ -1473,12 +1473,15 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         has_many_deploy_pieces = len(_non_aim_pieces) >= 3
         has_open_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', aim_clean, re.IGNORECASE))
         has_close_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', restore_clean, re.IGNORECASE))
+        # A "move ... to y-axis" in AimWeapon is a deploy translation (e.g. turret
+        # rising out of the body), not turret aiming.  Treat it as a deploy piece.
+        has_deploy_move = bool(re.search(r'\bmove\s+\w+\s+to\s+[xyz]-axis\s+\[', aim_clean, re.IGNORECASE))
         # Don't conflict with existing Open()/Close() pattern
         has_open_close_fn = bool(_extract_function_body(bos_content, 'Open') and
                                  _extract_function_body(bos_content, 'Close'))
         # Skip if only aim-related pieces are animated — that's just turret
         # aiming, not a deploy (e.g. corwolv, armart artillery units).
-        has_non_aim_pieces = len(_non_aim_pieces) >= 1
+        has_non_aim_pieces = len(_non_aim_pieces) >= 1 or has_deploy_move
         if (has_open_wait or has_many_deploy_pieces) and has_open_moves and has_close_moves and not has_open_close_fn and has_non_aim_pieces:
             # Parse close first to get closed pose (= rest position targets)
             close_tracks_raw, _ = _parse_turn_move_to_tracks(restore_body)
