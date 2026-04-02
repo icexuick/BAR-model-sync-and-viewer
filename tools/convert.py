@@ -1504,7 +1504,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
 
     # Piece name fragments that are always hidden in the viewer regardless of unit.
     # These are cosmetic/award pieces shown by in-game Lua widgets, not BOS Create().
-    _GLOBAL_HIDE_FRAGMENTS = ('crown', 'medal')
+    _GLOBAL_HIDE_FRAGMENTS = ('crown', 'medal', 'hatpoint')
 
     # Per-unit pieces to hide in the viewer (incorrectly positioned in rest pose).
     _UNIT_HIDE_PIECES: Dict[str, set] = {
