@@ -144,6 +144,25 @@ def _strip_comments(text: str) -> str:
     return text
 
 
+def _simplify_angle_exprs(text: str) -> str:
+    """Simplify BOS angle expressions like '<0.0> - <90.0>' → '<-90.0>'.
+
+    BOS scripts use <angle> notation for degrees.  Expressions like
+    ``<A> + <B>`` or ``<A> - <B>`` are common (e.g. armthor missile launchers:
+    ``turn llauncher to x-axis <0.0> - <90.0> speed <60.0>``).
+    The parsers only understand single ``<value>`` tokens, so we pre-evaluate
+    these two-operand expressions into a single ``<result>`` token.
+    """
+    def _eval(m):
+        a = float(m.group(1))
+        op = m.group(2)
+        b = float(m.group(3))
+        result = a + b if op == '+' else a - b
+        # Use compact formatting: strip trailing zeros
+        return f'<{result:g}>'
+    return re.sub(r'<([-\d.]+)>\s*([+-])\s*<([-\d.]+)>', _eval, text)
+
+
 def _inline_call_scripts(body: str, bos_content: str, depth: int = 0) -> str:
     """Replace 'call-script FuncName()' with the body of that function (max 3 levels deep).
 
@@ -1050,7 +1069,7 @@ def _parse_turn_move_to_tracks(body: str, start_pose: Optional[Dict[Tuple, float
 
     Returns (tracks, duration_seconds).
     """
-    clean = _strip_comments(body)
+    clean = _simplify_angle_exprs(_strip_comments(body))
 
     # Track in-flight commands: key → (start_time, start_val, target_val, speed)
     InFlight = Tuple[float, float, float, float]  # t_start, v_start, v_target, speed
@@ -1828,7 +1847,7 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
                 float(rm_direct.group(4))
             )
 
-    clean = _strip_comments(body)
+    clean = _simplify_angle_exprs(_strip_comments(body))
 
     # Tokenize into: (type, data) where type is 'move', 'turn', 'sleep', 'wait'
     tokens = []
@@ -2038,6 +2057,32 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
                 tracks, dur, rotary = _parse_fire_body_to_tracks(shot_body)
                 if tracks:
                     func_name = f'Shot{n}'
+        # If still no tracks, check AimWeaponN for deploy movements (e.g. armthor
+        # missile launchers that tilt to -90° before firing).  Only use literal-angle
+        # turn/move commands — skip heading/pitch variable-based aiming.
+        # Uses _parse_turn_move_to_tracks (not _parse_fire_body_to_tracks) because
+        # deploy animations should NOT return to rest — pieces stay deployed.
+        if not tracks:
+            aim_body_n = _extract_function_body(bos_content, f'AimWeapon{n}')
+            if aim_body_n:
+                aim_body_n = _inline_call_scripts(aim_body_n, bos_content)
+                aim_clean_n = _simplify_angle_exprs(_strip_comments(aim_body_n))
+                # Only use if there are literal-angle turns (not heading/pitch aiming)
+                has_literal_turns = bool(re.search(
+                    r'\bturn\s+\w+\s+to\s+[xyz]-axis\s+<[-\d.]+>',
+                    aim_clean_n, re.IGNORECASE))
+                has_aim_vars = bool(re.search(
+                    r'\bturn\s+\w+\s+to\s+[xyz]-axis\s+(?:heading|pitch)',
+                    aim_clean_n, re.IGNORECASE))
+                # Must have wait-for-turn (deploy waits for completion before firing)
+                has_wait = bool(re.search(r'wait-for-turn', aim_clean_n, re.IGNORECASE))
+                if has_literal_turns and not has_aim_vars and has_wait:
+                    deploy_tracks, deploy_dur = _parse_turn_move_to_tracks(aim_body_n)
+                    if deploy_tracks and deploy_dur >= 0.1:
+                        tracks = deploy_tracks
+                        dur = deploy_dur
+                        rotary = None
+                        func_name = f'AimWeapon{n}'
         if tracks:
             clip_name = f'Fire_{n}'
             pieces = sorted({t.piece for t in tracks})
