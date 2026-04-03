@@ -229,7 +229,7 @@ _ANIM_DURATION_OVERRIDE: Dict[str, float] = {
 
 # Units whose toggle animation is too complex for the current single-pass parser
 # (multi-phase sequential BOS with wait-for-turn sync points, corecont y-offsets, etc.)
-_TOGGLE_SKIP: set = {'legsolar', 'corlab', 'armpw'}
+_TOGGLE_SKIP: set = {'legsolar', 'corlab', 'armpw', 'armrock'}
 
 # Units whose activate-loop animation should be skipped entirely
 # (e.g. FiringMode with 0.02s duration that jitters turret pieces)
@@ -245,7 +245,6 @@ _SKIP_ACTIVATE_FLYPOSE: set = {'legsolar'}
 # These tracks are appended to the extracted toggle clips to add missing visual movements.
 _EXTRA_TOGGLE_TRACKS: Dict[str, list] = {
     'legbar': [('aimx1', 0, True, -15.0, 0.0, 50.0)],  # tilt turret upward when deployed
-    'armrock': [('aimx1', 0, True, -90.0, 0.0, 180.0)],  # missile pod flips forward to fire
 }
 
 # Extra fire animation tracks for weapons that need aim-related piece movement.
