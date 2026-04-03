@@ -229,7 +229,7 @@ _ANIM_DURATION_OVERRIDE: Dict[str, float] = {
 
 # Units whose toggle animation is too complex for the current single-pass parser
 # (multi-phase sequential BOS with wait-for-turn sync points, corecont y-offsets, etc.)
-_TOGGLE_SKIP: set = {'legsolar', 'corlab'}
+_TOGGLE_SKIP: set = {'legsolar', 'corlab', 'armpw'}
 
 # Units whose activate-loop animation should be skipped entirely
 # (e.g. FiringMode with 0.02s duration that jitters turret pieces)
@@ -953,6 +953,10 @@ def convert_with_weapons(
             root_extras["weapon_summary"] = ws
         if unit_role:
             root_extras["unit_role"] = unit_role
+            if 'RADAR' in unit_role or 'SONAR' in unit_role:
+                root_extras["has_radar"] = True
+            if 'JAMMER' in unit_role:
+                root_extras["has_jammer"] = True
         if can_fly:
             root_extras["can_fly"] = True
         if is_ship:
@@ -1253,6 +1257,43 @@ def convert_with_weapons(
                     if not starts_closed:
                         extras["autoplay_open"] = True
                         builder.apply_animation_t0_as_default_pose('ActivateOpen')
+
+                    # Detect ping-pong toggle: Activate() has a while(TRUE) loop
+                    # that oscillates the same pieces as the toggle animation
+                    # (e.g. armmark dishes sweeping back and forth continuously).
+                    if not starts_closed and not _is_lua:
+                        _act_body_pp = ''
+                        _act_m = re.search(r'\bActivate\s*\(\s*\)\s*\{', bos_content, re.IGNORECASE)
+                        if _act_m:
+                            _d, _i = 1, _act_m.end()
+                            while _i < len(bos_content) and _d:
+                                if bos_content[_i] == '{': _d += 1
+                                elif bos_content[_i] == '}': _d -= 1
+                                _i += 1
+                            _act_body_pp = bos_content[_act_m.start():_i]
+                        if re.search(r'\bwhile\s*\(\s*(?:TRUE|1\s*==\s*1)\s*\)', _act_body_pp, re.IGNORECASE):
+                            # Get toggle piece names from the generated clips
+                            _toggle_pieces = set()
+                            for _cn, _ct in toggle_clips:
+                                if _cn == 'ActivateOpen':
+                                    for _tr in _ct:
+                                        _toggle_pieces.add(_tr.piece.lower())
+                            # Check if the while loop turns any toggle pieces
+                            # Extract while body
+                            _wm = re.search(r'\bwhile\s*\(\s*(?:TRUE|1\s*==\s*1)\s*\)\s*\{', _act_body_pp, re.IGNORECASE)
+                            if _wm:
+                                _wd, _wi = 1, _wm.end()
+                                while _wi < len(_act_body_pp) and _wd:
+                                    if _act_body_pp[_wi] == '{': _wd += 1
+                                    elif _act_body_pp[_wi] == '}': _wd -= 1
+                                    _wi += 1
+                                _while_body = _act_body_pp[_wm.end():_wi - 1]
+                                _loop_pieces = set()
+                                for _tm in re.finditer(r'\bturn\s+(\w+)\s+to\s+', _while_body, re.IGNORECASE):
+                                    _loop_pieces.add(_tm.group(1).lower())
+                                if _loop_pieces & _toggle_pieces:
+                                    extras["toggle_pingpong"] = True
+                                    print(f"  Toggle ping-pong detected (pieces: {_loop_pieces & _toggle_pieces})")
 
                     # Units whose toggle is purely decorative — they can fire in any state.
                     # The viewer uses this to skip the "must open before fire" requirement.
