@@ -196,6 +196,7 @@
         const orbMesh = new THREE.Mesh(orbGeo, orbMat);
         orbMesh.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
         orbMesh.renderOrder = 999;
+        orbMesh.layers.enable(1); // Layer 1 = VFX, excluded from SSAO depth/normal pass
         orbMesh.raycast = () => {}; // Exclude from raycasting
 
         modelScene.add(orbMesh);
@@ -220,6 +221,7 @@
         glowSprite.scale.set(glowSize, glowSize, 1);
         glowSprite.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
         glowSprite.renderOrder = 998;
+        glowSprite.layers.enable(1); // Excluded from SSAO
         glowSprite.raycast = () => {};
         modelScene.add(glowSprite);
 
