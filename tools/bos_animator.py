@@ -1683,7 +1683,7 @@ def _extract_branch_block(body: str, start_pos: int) -> Tuple[str, int]:
     return body[brace_start + 1:i], i + 1
 
 
-def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int, float, float]]]:
+def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int, float, float]], Optional[List[str]]]:
     """
     For fire functions with alternating barrel branches, detect them and merge
     all branches into a single body so all barrels animate simultaneously.
@@ -1693,9 +1693,11 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
       - if(!gun_1) { ... } else { ... }             (2 branches)
       - if(gun_1) { ... } else { ... }              (2 branches)
 
-    Returns (merged_body, num_branches, rotary_info).
+    Returns (merged_body, num_branches, rotary_info, individual_branches).
     merged_body is pre_branch + all branch bodies concatenated + post_branch.
     rotary_info is (piece, axis, step_degrees, speed) for gatling-style advance, or None.
+    individual_branches is a list of (pre_branch + single_branch + post_branch) for each branch,
+    or None if not a multi-barrel pattern. Used to create per-barrel fire clips.
     """
     move_turn_re = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
 
@@ -1730,7 +1732,8 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
                         branch_bodies.append(branch2_body)
                     if len(branch_bodies) >= 2:
                         merged = pre_branch + '\n'.join(branch_bodies) + post_branch
-                        return merged, len(branch_bodies), None
+                        indiv = [pre_branch + bb + post_branch for bb in branch_bodies]
+                        return merged, len(branch_bodies), None, indiv
 
     # --- Pattern B: if(gun == 0) { ... } if(gun == 1) { ... } ... ---
     gun_pattern = re.compile(
@@ -1738,13 +1741,13 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
     )
     matches = list(gun_pattern.finditer(body))
     if len(matches) < 2:
-        return body, 0, None
+        return body, 0, None, None
 
     counter_var = matches[0].group(1)
     values = [int(m.group(2)) for m in matches]
     start_val = values[0]
     if start_val not in (0, 1) or values != list(range(start_val, start_val + len(values))):
-        return body, 0, None
+        return body, 0, None, None
 
     pre_branch = body[:matches[0].start()]
 
@@ -1755,7 +1758,7 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
         if move_turn_re.search(branch_body):
             branch_bodies.append(branch_body)
     if not branch_bodies:
-        return body, 0, None
+        return body, 0, None, None
     num_branches = len(branch_bodies)
 
     # Find post-branch code (after the last branch block)
@@ -1796,13 +1799,14 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
     # For rotary weapons (gatling spindle), use only the first branch so
     # the clip fires one barrel per shot.  The JS viewer accumulates the
     # spindle rotation, cycling through barrels on each click.
-    # For non-rotary multi-barrel weapons, merge all branches so all
-    # barrels animate simultaneously (staggered by the JS player).
+    # For non-rotary multi-barrel weapons, create per-barrel clips so
+    # the JS viewer can cycle through them on each fire.
+    indiv = [pre_branch + bb + post_branch for bb in branch_bodies]
     if rotary_info:
         merged = pre_branch + branch_bodies[0] + post_branch
     else:
         merged = pre_branch + '\n'.join(branch_bodies) + post_branch
-    return merged, num_branches, rotary_info
+    return merged, num_branches, rotary_info, indiv
 
 
 _BARREL_SPIN_DUR = 4.0  # total barrel spin animation duration (seconds)
@@ -1872,7 +1876,7 @@ def _parse_fire_body_to_tracks(body: str) -> Tuple[List[BosTrack], float]:
     return to 0 (rest) if not already there.
     """
     # Handle if(gun==N) branching — merges all branches into one body
-    branch_result, num_branches, rotary_info = _sequence_if_branches(body)
+    branch_result, num_branches, rotary_info, individual_branches = _sequence_if_branches(body)
     body = branch_result
 
     # Also detect rotary patterns directly (for scripts without if(gun==N) branches)
@@ -2128,6 +2132,24 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
                         rotary = None
                         func_name = f'AimWeapon{n}'
         if tracks:
+            # For non-rotary multi-barrel: create per-barrel clips instead of merged
+            raw_body = _extract_function_body(bos_content, func_name)
+            if raw_body:
+                raw_body = _inline_call_scripts(raw_body, bos_content)
+                _, nb, rot_info, indiv = _sequence_if_branches(raw_body)
+                if indiv and nb >= 2 and not rot_info:
+                    # Create per-barrel clips: Fire_1_0, Fire_1_1, ...
+                    for bi, branch_body in enumerate(indiv):
+                        b_tracks, b_dur, _ = _parse_fire_body_to_tracks(branch_body)
+                        if b_tracks:
+                            b_name = f'Fire_{n}_{bi}'
+                            b_pieces = sorted({t.piece for t in b_tracks})
+                            print(f"  Fire animation '{b_name}' (from {func_name} barrel {bi}): "
+                                  f"{len(b_tracks)} tracks, {b_dur:.2f}s, pieces: {', '.join(b_pieces)}")
+                            clips.append((b_name, b_tracks, None))
+                    seen_weapons.add(n)
+                    continue  # skip the merged clip
+
             clip_name = f'Fire_{n}'
             pieces = sorted({t.piece for t in tracks})
             rotary_str = f", rotary: {rotary[0]} +{rotary[2]}°" if rotary else ""

@@ -1251,6 +1251,7 @@ def convert_with_weapons(
             if not fire_clips:
                 fire_clips = []
             fire_rotary = {}
+            fire_cycle = {}  # non-rotary multi-barrel cycling: Fire_1 → [Fire_1_0, Fire_1_1, ...]
             for clip_name, clip_tracks, rotary in fire_clips:
                 builder.add_animation(clip_name, clip_tracks, node_name_to_idx,
                                       piece_offsets, now_rots=now_rots)
@@ -1261,10 +1262,18 @@ def convert_with_weapons(
                         "piece": piece, "axis": axis_name,
                         "step_deg": step_deg
                     }
-            if fire_rotary and model.root_piece:
+                # Collect per-barrel clips into fire_cycle groups
+                barrel_m = re.match(r'^(Fire_\d+)_(\d+)$', clip_name)
+                if barrel_m:
+                    base_name = barrel_m.group(1)
+                    fire_cycle.setdefault(base_name, []).append(clip_name)
+            if model.root_piece:
                 root_idx = builder.scenes[0]["nodes"][0]
                 root_extras = builder.nodes[root_idx].setdefault("extras", {})
-                root_extras["fire_rotary"] = fire_rotary
+                if fire_rotary:
+                    root_extras["fire_rotary"] = fire_rotary
+                if fire_cycle:
+                    root_extras["fire_cycle"] = fire_cycle
 
             # Inject synthetic fire animations for aim-related piece movement
             # (e.g. AA hatch opening before firing)

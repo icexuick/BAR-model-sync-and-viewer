@@ -154,7 +154,7 @@
     const BLINK_PATTERNS = [
         { match: /^blink/i,       color: [0.1, 0.9, 0.2], type: 'radar' },   // green
         { match: /^radarlight/i,  color: [0.1, 0.9, 0.2], type: 'radar' },   // green
-        { match: /^jam/i,         color: [0.9, 0.1, 0.1], type: 'jammer' },  // red
+        { match: /^jam$/i,        color: [0.9, 0.1, 0.1], type: 'jammer' },  // red (exact "jam" only)
         { match: /^pointlight/i,  color: [0.9, 0.1, 0.1], type: 'jammer' },  // red (legavjam)
         { match: /^cloaklight/i,  color: [0.9, 0.1, 0.1], type: 'jammer' },  // red
     ];
@@ -307,11 +307,10 @@
         const { modelScene, timeUniform, THREE } = ctx;
         if (!modelScene) return;
 
-        // Detect if model is a vehicle (has movement pieces) or building
-        const vehicleRe = /^(wheel|track|leg|foot|thigh|ltrack|rtrack)/i;
-        let isVehicle = false;
-        modelScene.traverse(node => { if (vehicleRe.test(node.name)) isVehicle = true; });
-        const blinkRange = isVehicle ? 17 : 30;
+        // Detect if model is mobile (vehicle/kbot/ship/aircraft) via piece names
+        let isMobile = false;
+        modelScene.traverse(node => { if (/(wheel|track|leg|foot|thigh|wing|pelvis|torso)/i.test(node.name)) isMobile = true; });
+        const blinkRange = isMobile ? 18 : 30;
 
         // Shared radial glow texture for blink sprites
         const bc = document.createElement('canvas'); bc.width = 64; bc.height = 64;
@@ -321,48 +320,53 @@
         const blinkTex = new THREE.CanvasTexture(bc);
 
         const lights = [];
+        function addBlinkLight(node, pat) {
+            const wPos = new THREE.Vector3();
+            node.getWorldPosition(wPos);
+            modelScene.worldToLocal(wPos);
+
+            const isRadar = pat.type === 'radar';
+            const lIntensity = isRadar ? 5000 : 15000;
+            const lRange = isRadar ? 20 : blinkRange;
+            const light = new THREE.PointLight(
+                new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
+                lIntensity, lRange, 2
+            );
+            light.position.copy(wPos);
+            light.layers.enable(1);
+            modelScene.add(light);
+
+            const glowMat = new THREE.SpriteMaterial({
+                map: blinkTex,
+                color: new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
+                transparent: true, opacity: 0.5,
+                blending: THREE.AdditiveBlending, depthWrite: false,
+            });
+            const glow = new THREE.Sprite(glowMat);
+            const glowSize = isRadar ? 5 : 30;
+            glow.scale.set(glowSize, glowSize, 1);
+            glow.position.copy(wPos);
+            glow.renderOrder = 998;
+            glow.layers.enable(1);
+            glow.raycast = () => {};
+            modelScene.add(glow);
+
+            lights.push({ light, glow, glowMat, type: pat.type, baseIntensity: lIntensity });
+        }
+
         modelScene.traverse(node => {
             for (const pat of BLINK_PATTERNS) {
-                if (pat.match.test(node.name)) {
-                    const wPos = new THREE.Vector3();
-                    node.getWorldPosition(wPos);
-                    modelScene.worldToLocal(wPos);
-
-                    const isRadar = pat.type === 'radar';
-                    const lIntensity = isRadar ? 5000 : 15000;
-                    const lRange = isRadar ? 20 : blinkRange;
-                    const light = new THREE.PointLight(
-                        new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
-                        lIntensity,
-                        lRange,
-                        2          // decay
-                    );
-                    light.position.copy(wPos);
-                    light.layers.enable(1);
-                    modelScene.add(light);
-
-                    // Small glow sprite at blink position
-                    const glowMat = new THREE.SpriteMaterial({
-                        map: blinkTex,
-                        color: new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
-                        transparent: true,
-                        opacity: 0.5,
-                        blending: THREE.AdditiveBlending,
-                        depthWrite: false,
-                    });
-                    const glow = new THREE.Sprite(glowMat);
-                    glow.scale.set(5, 5, 1);
-                    glow.position.copy(wPos);
-                    glow.renderOrder = 998;
-                    glow.layers.enable(1);
-                    glow.raycast = () => {};
-                    modelScene.add(glow);
-
-                    lights.push({ light, glow, glowMat, type: pat.type, baseIntensity: lIntensity });
-                    break;
-                }
+                if (pat.match.test(node.name)) { addBlinkLight(node, pat); break; }
             }
         });
+
+        // Fallback: if no radar light found, try 'dish' pieces
+        if (!lights.some(l => l.type === 'radar')) {
+            const radarPat = { color: [0.1, 0.9, 0.2], type: 'radar' };
+            modelScene.traverse(node => {
+                if (/^dish$/i.test(node.name)) addBlinkLight(node, radarPat);
+            });
+        }
 
         if (lights.length === 0) return;
 
@@ -381,12 +385,14 @@
                 if (origRender) origRender.call(this);
                 const t = timeUniform.value;
                 for (const l of lights) {
-                    const pulse = 0.6 + 0.4 * Math.sin(t * 1.5);
-                    const blink = Math.pow(Math.max(0, Math.sin(t * 4.0)), 16) * 0.5;
-                    const anim = pulse + blink;
-                    l.light.intensity = blinkParams.intensity * anim;
+                    // Slow on/off pulse: goes from 0 to 1 and back
+                    const speed = l.type === 'radar' ? 1.6 : 0.8;
+                    const raw = Math.sin(t * speed) * 0.5 + 0.5;
+                    const anim = raw * raw; // ease-in for smoother off phase
+                    l.light.intensity = l.baseIntensity * anim;
                     l.light.distance = blinkParams.range;
-                    l.glowMat.opacity = 0.3 + 0.4 * anim;
+                    const opacityMax = l.type === 'jammer' ? 0.21 : 0.6;
+                    l.glowMat.opacity = opacityMax * anim;
                 }
             };
         }
