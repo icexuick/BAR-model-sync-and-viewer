@@ -436,8 +436,8 @@ window._barWeaponsSetup = function(THREE, opts) {
         // Multiple weapons with same def are staggered with 400ms delay.
         var STAGGER_MS = 400;
 
-        // Helper: play one cycling barrel animation (+ optionally fire projectile)
-        function _playCycleShot(action, actWnum, fireProjectile) {
+        // Helper: play one cycling barrel animation + fire one projectile
+        function _playCycleShot(action, actWnum) {
             var clipName = action.getClip().name;
             var playedAction = action;
             if (actWnum && _cycleActions[actWnum]) {
@@ -450,12 +450,16 @@ window._barWeaponsSetup = function(THREE, opts) {
                 }
             }
             playedAction.stop().reset().play();
-            if (fireProjectile && actWnum && _projectileFireFn) {
+            // For cycling weapons: fireSingle (no burst — we drive burst ourselves)
+            // For non-cycling weapons: fireWeapon (projectile system handles burst)
+            var isCycling = actWnum && _cycleActions[actWnum];
+            var fireFn = (isCycling && _fireSingleFn) ? _fireSingleFn : _projectileFireFn;
+            if (actWnum && fireFn) {
                 var fDelay = fireDelays[String(actWnum)];
                 if (fDelay && fDelay > 0) {
-                    setTimeout(function() { _projectileFireFn(actWnum); }, fDelay * 1000);
+                    setTimeout(function() { fireFn(actWnum); }, fDelay * 1000);
                 } else {
-                    _projectileFireFn(actWnum);
+                    fireFn(actWnum);
                 }
             }
             if (_initMixer) _initMixer.addEventListener('finished', function onDone(e) {
@@ -478,20 +482,28 @@ window._barWeaponsSetup = function(THREE, opts) {
                     var clipName = action.getClip().name;
                     var cfmW = clipName.match(/^Fire_(\d+)/);
                     var actWnum = cfmW ? parseInt(cfmW[1]) : 0;
-                    _playCycleShot(action, actWnum, true);
-                    // Burst: schedule remaining shots with barrel animations only
-                    // (projectile system handles its own burst scheduling)
-                    if (actWnum && _cycleActions[actWnum] && _wpnData) {
+                    // Per-barrel cycling with burst: weapons system drives all shots
+                    // (animation + single projectile each), bypassing projectile burst.
+                    var hasCycle = actWnum && _cycleActions[actWnum];
+                    var burstCount = 1, burstRate = 100;
+                    if (hasCycle && _wpnData) {
                         var wd = _wpnData[String(actWnum)];
                         if (wd && wd.burst > 1) {
-                            var rate = (wd.burstrate || 0.1) * 1000;
-                            for (var bi = 1; bi < wd.burst; bi++) {
-                                (function(a, w, d) {
-                                    var btid = setTimeout(function() { _playCycleShot(a, w, false); }, d);
-                                    _fireTimers[def].push(btid);
-                                })(action, actWnum, bi * rate);
-                            }
+                            burstCount = wd.burst;
+                            burstRate = (wd.burstrate || 0.1) * 1000;
                         }
+                    }
+                    if (hasCycle && burstCount > 1) {
+                        // Drive all burst shots: each gets animation + single projectile
+                        for (var bi = 0; bi < burstCount; bi++) {
+                            (function(a, w, d) {
+                                var btid = setTimeout(function() { _playCycleShot(a, w); }, d);
+                                _fireTimers[def].push(btid);
+                            })(action, actWnum, bi * burstRate);
+                        }
+                    } else {
+                        // Non-cycling or no burst: original behavior
+                        _playCycleShot(action, actWnum);
                     }
                 }, delay);
                 _fireTimers[def].push(tid);
@@ -667,9 +679,12 @@ window._barWeaponsSetup = function(THREE, opts) {
     // Hook: receive weapon data (burst/burstrate) from projectiles system
     var _wpnData = null;
     function setWpnData(data) { _wpnData = data; }
+    // Hook: fire a single projectile (no burst) — for per-barrel burst cycling
+    var _fireSingleFn = null;
+    function setFireSingle(fn) { _fireSingleFn = fn; }
 
     return { spinPieceNames: spinPieceNames, hideTooltip: hideTooltip, setWeaponHighlight: setWeaponHighlight,
              meshWeaponMap: meshWeaponMap, unitRoleMeshMap: unitRoleMeshMap, visualMeshesByWeapon: visualMeshesByWeapon,
-             initFireAnims: initFireAnims, setProjectileFire: setProjectileFire, setWpnData: setWpnData };
+             initFireAnims: initFireAnims, setProjectileFire: setProjectileFire, setWpnData: setWpnData, setFireSingle: setFireSingle };
 };
 </script>

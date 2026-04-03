@@ -289,6 +289,12 @@ window._barProjectilesUpdate = function(ctx) {
         if (triggerOpen) triggerOpen(function() { _doFire(wnum); });
     }
 
-    return {fireWeapon: fireWeapon, update: update, wpnDataByNum: wpnDataByNum, setPaused: setPaused};
+    // fireSingle: fire one projectile (no burst scheduling) — used by weapons
+    // system for per-barrel burst cycling where each shot is driven externally.
+    function fireSingle(wnum) {
+        var data=wpnDataByNum[String(wnum)]; if (!data) return;
+        _fireSingle(wnum, data, 0);
+    }
+    return {fireWeapon: fireWeapon, fireSingle: fireSingle, update: update, wpnDataByNum: wpnDataByNum, setPaused: setPaused};
 };
 </script>
