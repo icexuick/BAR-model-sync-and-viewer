@@ -412,8 +412,11 @@
                     toggleOpenClip  = openClip;
                     toggleCloseClip = closeClip;
                     renderer.domElement.style.cursor = 'pointer';
-                    let autoplayOpen = false;
-                    modelScene.traverse(n => { if (n.userData && n.userData.autoplay_open) autoplayOpen = true; });
+                    let autoplayOpen = false, togglePingPong = false;
+                    modelScene.traverse(n => {
+                        if (n.userData && n.userData.autoplay_open) autoplayOpen = true;
+                        if (n.userData && n.userData.toggle_pingpong) togglePingPong = true;
+                    });
                     if (autoplayOpen && !buildpicFolded) {
                         setTimeout(() => {
                             toggleOpenAction = mixer.clipAction(openClip);
@@ -421,13 +424,30 @@
                             toggleOpenAction.clampWhenFinished = true;
                             toggleAnimating = true;
                             toggleOpenAction.reset().play();
-                            mixer.addEventListener('finished', function onAutoOpen(e) {
-                                if (e.action === toggleOpenAction) {
-                                    toggleState = true;
-                                    toggleAnimating = false;
-                                    mixer.removeEventListener('finished', onAutoOpen);
-                                }
-                            });
+                            if (togglePingPong) {
+                                // Continuous ping-pong: open → close → open → ...
+                                toggleOpenAction.clampWhenFinished = false;
+                                if (!toggleCloseAction) { toggleCloseAction = mixer.clipAction(closeClip); toggleCloseAction.setLoop(THREE.LoopOnce, 1); toggleCloseAction.clampWhenFinished = false; }
+                                mixer.addEventListener('finished', function onPingPong(e) {
+                                    if (e.action === toggleOpenAction) {
+                                        toggleState = true;
+                                        toggleOpenAction.stop();
+                                        toggleCloseAction.stop().reset().play();
+                                    } else if (e.action === toggleCloseAction) {
+                                        toggleState = false;
+                                        toggleCloseAction.stop();
+                                        toggleOpenAction.stop().reset().play();
+                                    }
+                                });
+                            } else {
+                                mixer.addEventListener('finished', function onAutoOpen(e) {
+                                    if (e.action === toggleOpenAction) {
+                                        toggleState = true;
+                                        toggleAnimating = false;
+                                        mixer.removeEventListener('finished', onAutoOpen);
+                                    }
+                                });
+                            }
                         }, 1000);
                     }
                 } else {

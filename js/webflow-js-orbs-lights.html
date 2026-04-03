@@ -151,12 +151,14 @@
     `;
 
     // Radar/jammer blink light config: piece name patterns → color
+    // req: if set, pattern only matches when unit has the corresponding GLB flag
     const BLINK_PATTERNS = [
-        { match: /^blink/i,       color: [0.1, 0.9, 0.2], type: 'radar' },   // green
-        { match: /^radarlight/i,  color: [0.1, 0.9, 0.2], type: 'radar' },   // green
-        { match: /^jam$/i,        color: [0.9, 0.1, 0.1], type: 'jammer' },  // red (exact "jam" only)
-        { match: /^pointlight/i,  color: [0.9, 0.1, 0.1], type: 'jammer' },  // red (legavjam)
-        { match: /^cloaklight/i,  color: [0.9, 0.1, 0.1], type: 'jammer' },  // red
+        { match: /^blink/i,       color: [0.1, 0.9, 0.2], type: 'radar', req: 'has_radar' },   // green (radar/sonar units only)
+        { match: /^radarlight/i,  color: [0.1, 0.9, 0.2], type: 'radar', req: 'has_radar' },   // green
+        { match: /dish$/i,        color: [0.1, 0.9, 0.2], type: 'radar', req: 'has_radar' },   // green (rdish, ldish, dish)
+        { match: /^jam$/i,        color: [0.9, 0.1, 0.1], type: 'jammer', req: 'has_jammer' }, // red (jammer units only)
+        { match: /^pointlight/i,  color: [0.9, 0.1, 0.1], type: 'jammer', req: 'has_jammer' }, // red
+        { match: /^cloaklight/i,  color: [0.9, 0.1, 0.1], type: 'jammer', req: 'has_jammer' }, // red
     ];
 
     function waitForCtx() {
@@ -307,6 +309,13 @@
         const { modelScene, timeUniform, THREE } = ctx;
         if (!modelScene) return;
 
+        // Read radar/jammer flags from model metadata
+        let hasRadar = false, hasJammer = false;
+        modelScene.traverse(node => {
+            if (node.userData && node.userData.has_radar) hasRadar = true;
+            if (node.userData && node.userData.has_jammer) hasJammer = true;
+        });
+
         // Detect if model is mobile (vehicle/kbot/ship/aircraft) via piece names
         let isMobile = false;
         modelScene.traverse(node => { if (/(wheel|track|leg|foot|thigh|wing|pelvis|torso)/i.test(node.name)) isMobile = true; });
@@ -351,19 +360,13 @@
             lights.push({ light, glow, glowMat, type: pat.type, baseIntensity: lIntensity });
         }
 
+        const _flags = { has_radar: hasRadar, has_jammer: hasJammer };
         modelScene.traverse(node => {
             for (const pat of BLINK_PATTERNS) {
+                if (pat.req && !_flags[pat.req]) continue;
                 if (pat.match.test(node.name)) { addBlinkLight(node, pat); break; }
             }
         });
-
-        // Fallback: if no lights found at all, try 'dish' pieces as radar
-        if (lights.length === 0) {
-            const radarPat = { color: [0.1, 0.9, 0.2], type: 'radar' };
-            modelScene.traverse(node => {
-                if (/^dish$/i.test(node.name)) addBlinkLight(node, radarPat);
-            });
-        }
 
         if (lights.length === 0) return;
 
@@ -375,7 +378,8 @@
         window._blinkParams = blinkParams;
 
         // Animate: gentle pulse with occasional blink
-        const firstMesh = modelScene.children.find(c => c.isMesh);
+        let firstMesh = null;
+        modelScene.traverse(c => { if (!firstMesh && c.isMesh && c.visible) firstMesh = c; });
         if (firstMesh) {
             const origRender = firstMesh.onBeforeRender;
             firstMesh.onBeforeRender = function() {
