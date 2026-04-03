@@ -2144,6 +2144,12 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
                     barrel_rotary = rot_info  # None for non-rotary, tuple for rotary
                     for bi, branch_body in enumerate(indiv):
                         b_tracks, b_dur, _ = _parse_fire_body_to_tracks(branch_body)
+                        # Strip rotary piece tracks — viewer handles spindle via accumulator
+                        if b_tracks and barrel_rotary:
+                            rot_piece = barrel_rotary[0]
+                            rot_axis = barrel_rotary[1]
+                            b_tracks = [t for t in b_tracks
+                                        if not (t.piece == rot_piece and t.axis == rot_axis)]
                         if b_tracks:
                             b_name = f'Fire_{n}_{bi}'
                             b_pieces = sorted({t.piece for t in b_tracks})
@@ -2178,6 +2184,12 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
                 barrel_rotary = rot_info
                 for bi, branch_body in enumerate(indiv):
                     b_tracks, b_dur, _ = _parse_fire_body_to_tracks(branch_body)
+                    # Strip rotary piece tracks — viewer handles spindle via accumulator
+                    if b_tracks and barrel_rotary:
+                        rot_piece = barrel_rotary[0]
+                        rot_axis = barrel_rotary[1]
+                        b_tracks = [t for t in b_tracks
+                                    if not (t.piece == rot_piece and t.axis == rot_axis)]
                     if b_tracks:
                         b_name = f'Fire_{wnum}_{bi}'
                         b_pieces = sorted({t.piece for t in b_tracks})

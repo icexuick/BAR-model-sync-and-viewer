@@ -605,20 +605,28 @@ window._barWeaponsSetup = function(THREE, opts) {
         }
 
         // Resolve rotary piece nodes for accumulative rotation
-        if (Object.keys(fireActions).length > 0 && fireRotary) {
+        // Share one accumulator per piece+axis so all per-barrel clips advance the same spindle
+        if ((Object.keys(fireActions).length > 0 || Object.keys(_cycleActions).length > 0) && fireRotary) {
+            var _rotaryShared = {};
             for (var clipName in fireRotary) {
                 var info = fireRotary[clipName];
-                var targetNode = null;
-                modelScene.traverse(function(n) {
-                    if (n.name && n.name.toLowerCase() === info.piece.toLowerCase()) targetNode = n;
-                });
-                if (targetNode) {
-                    _rotaryNodes[clipName] = {
-                        node: targetNode,
-                        axis: info.axis,
-                        stepRad: info.step_deg * Math.PI / 180,
-                        accumRad: 0
-                    };
+                var rKey = info.piece.toLowerCase() + '_' + info.axis;
+                if (!_rotaryShared[rKey]) {
+                    var targetNode = null;
+                    modelScene.traverse(function(n) {
+                        if (n.name && n.name.toLowerCase() === info.piece.toLowerCase()) targetNode = n;
+                    });
+                    if (targetNode) {
+                        _rotaryShared[rKey] = {
+                            node: targetNode,
+                            axis: info.axis,
+                            stepRad: info.step_deg * Math.PI / 180,
+                            accumRad: 0
+                        };
+                    }
+                }
+                if (_rotaryShared[rKey]) {
+                    _rotaryNodes[clipName] = _rotaryShared[rKey];
                 }
             }
         }
