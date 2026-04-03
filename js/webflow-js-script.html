@@ -393,8 +393,19 @@
 
 
                 const spinPieceNamesForAnim = spinPieceNames || new Set();
+                // Collect weapon aim piece names — spin clips on these conflict with fire/aiming
+                const weaponAimPieces = new Set();
+                for (const wk in weaponSummary) {
+                    const ws = weaponSummary[wk];
+                    if (ws.aim_pieces) ws.aim_pieces.forEach(p => weaponAimPieces.add(p.toLowerCase()));
+                }
                 const spinClips = gltf.animations.filter(clip => {
-                    if (clip.name.startsWith('Spin_')) return true;
+                    if (clip.name.startsWith('Spin_')) {
+                        // Skip spins on weapon aim pieces — they conflict with fire animations
+                        const pieceName = clip.name.substring(5).toLowerCase();
+                        if (weaponAimPieces.has(pieceName)) return false;
+                        return true;
+                    }
                     const afterUnderscore = clip.name.includes('_') ? clip.name.split('_').slice(1).join('_').toLowerCase() : '';
                     return spinPieceNamesForAnim.has(clip.name.toLowerCase()) ||
                            spinPieceNamesForAnim.has(afterUnderscore);
