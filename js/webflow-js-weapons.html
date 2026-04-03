@@ -447,18 +447,12 @@ window._barWeaponsSetup = function(THREE, opts) {
             var cycleAction = cycleArr[idx % cycleArr.length];
             cycleAction.stop().reset().play();
             _cycleIndex[cycleWnum] = (idx + 1) % cycleArr.length;
-            // Rotary accumulation on cycle clip finish (gatling spindle advance)
+            // Rotary accumulation: advance spindle immediately on fire
             var cycleClipName = cycleAction.getClip().name;
             var cycleRot = _rotaryNodes[cycleClipName];
-            if (cycleRot && _initMixer) {
-                _initMixer.addEventListener('finished', function onCycleDone(e) {
-                    if (e.action === cycleAction) {
-                        cycleAction.stop();
-                        cycleRot.accumRad += cycleRot.stepRad;
-                        cycleRot.node.rotation[cycleRot.axis] = cycleRot.accumRad;
-                        _initMixer.removeEventListener('finished', onCycleDone);
-                    }
-                });
+            if (cycleRot) {
+                cycleRot.accumRad += cycleRot.stepRad;
+                cycleRot.node.rotation[cycleRot.axis] = cycleRot.accumRad;
             }
             if (_projectileFireFn) {
                 var cDelay = fireDelays[String(cycleWnum)] || 0;
