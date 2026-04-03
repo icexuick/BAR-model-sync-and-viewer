@@ -1701,9 +1701,11 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
     """
     move_turn_re = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
 
-    # --- Pattern A: if(!var) { ... } else { ... }  or  if(var) { ... } else { ... } ---
+    # --- Pattern A: if/else with 2 branches ---
+    # Matches: if(!var){...}else{...}, if(var){...}else{...},
+    #          if(var==0){...}else{...}, if(var!=0){...}else{...}
     bool_pattern = re.compile(
-        r'\bif\s*\(\s*!?\s*(\w+)\s*\)\s*\{', re.IGNORECASE
+        r'\bif\s*\(\s*!?\s*(\w+)\s*(?:==\s*\d+|!=\s*\d+)?\s*\)\s*\{', re.IGNORECASE
     )
     bool_m = bool_pattern.search(body)
     if bool_m:
