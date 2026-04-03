@@ -166,6 +166,7 @@ window._barProjectilesSetup = function(THREE, opts) {
 
     var _wp = new THREE.Vector3(), _wd = new THREE.Vector3(), _pp = new THREE.Vector3();
     var _aimFixUnits = {'armcom':1,'corcom':1,'corkorg':1};
+    var _fireYAxisUnits = {'armrock':1};
     function nodeFireDir(node) {
         node.getWorldPosition(_wp);
         // Parent→child barrel direction only for specific commander units
@@ -174,6 +175,11 @@ window._barProjectilesSetup = function(THREE, opts) {
             node.parent.getWorldPosition(_pp);
             _wd.copy(_wp).sub(_pp);
             if (_wd.lengthSq() > 0.01) return _wd.normalize();
+        }
+        // Units where deploy rotation maps local -Y to forward (e.g. -90° X aim pivot)
+        if (_fireYAxisUnits[unitName]) {
+            _wd.set(0,-1,0).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
+            if (_wd.lengthSq()>0.01) return _wd.normalize();
         }
         // Default: node's local Z axis
         _wd.set(0,0,1).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
@@ -200,13 +206,15 @@ window._barProjectilesSetup = function(THREE, opts) {
     }
 
     function getCat(d) {
+        var n = (d.name||'').toLowerCase().replace(/[\s-]+/g,'');
+        if (n.indexOf('shotgun')!==-1||n.indexOf('gatling')!==-1) return 'laserround';
         var t = (d.type||'').toLowerCase().replace(/[\s-]+/g,'');
         if (t==='beamlaser'||t==='heatray'||t==='tachyonlaserbeam'||t==='thermalordnancegenerator') return 'beam';
         if (t==='lasercannon') return 'laserround';
         if (t==='shotguncannon'||t==='gatlinggun') return 'laserround';
         if (t==='railgun'||t==='sniper'||t==='flakcannon') return 'bolt';
-        if (t==='plasmacannon'||t==='plasmarepeater'||t==='plasmablast'||t==='plasmashotgun'||t==='clusterplasmacannon'||t==='cannon') return 'plasma';
-        if (t==='flamethrower'||t==='flame'||t==='napalmlauncher') return 'flame';
+        if (t==='plasmacannon'||t==='plasmarepeater'||t==='plasmablast'||t==='plasmashotgun'||t==='clusterplasmacannon'||t==='cannon'||t==='napalmlauncher') return 'plasma';
+        if (t==='flamethrower'||t==='flame') return 'flame';
         if (t==='lightningcannon'||t==='lightning'||t==='emp'||t==='triggerexp'||t==='triggeremp'||t==='junosurge') return 'lightning';
         if (t==='dgun'||t==='disintegratorcannon') return 'dgun';
         if (t==='aircraftbomb') return 'bomb';
@@ -309,7 +317,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         muzzleFlash(o.pos,col,sc*10*rs,0.18,o.dir);
         var trail=null, trailMat=null;
         if (d._isFlak) {
-            var tl=sc*66, tr=sc*1.8;
+            var tl=sc*66, tr=0.85;
             var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
             trailMat=new THREE.MeshBasicMaterial({color:0xdd55cc,transparent:true,opacity:0.55,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
             trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
@@ -318,11 +326,23 @@ window._barProjectilesSetup = function(THREE, opts) {
             extras:{bolt,boltMat:bolt.material,flare:fl,flareMat:fl.material,trail:trail,trailMat:trailMat,dir:dir.clone().normalize()}});
     }
 
+    function spawnRailBeam(o, d) {
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), len=d.range||400;
+        var thick=sc*0.35;
+        var g=new THREE.CylinderGeometry(thick,thick*0.3,len,6,1,true); g.rotateX(Math.PI/2); g.translate(0,0,len/2);
+        var m=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.7,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var beam=new THREE.Mesh(g,m); beam.position.copy(o.pos); beam.lookAt(o.pos.clone().add(o.dir)); addS(beam,998);
+        var cg=new THREE.CylinderGeometry(thick*0.3,thick*0.08,len,6,1,true); cg.rotateX(Math.PI/2); cg.translate(0,0,len/2);
+        var cm=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+        var core=new THREE.Mesh(cg,cm); core.position.copy(o.pos); core.lookAt(o.pos.clone().add(o.dir)); addS(core,999);
+        active.push({type:'railbeam',age:0,maxAge:0.25,extras:{beam:beam,beamMat:m,core:core,coreMat:cm}});
+    }
+
     function spawnLaserRound(o, d) {
         var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range);
         var spd=Math.max(d.velocity*1.35,270), dir=spread(o.dir,d.accuracy);
-        var isSG=!!d._isShotgun, thickMul=isSG?0.34:1;
-        var len=Math.max(8,sc*12)*thickMul, thick=Math.max(0.5,sc*0.9)*thickMul;
+        var isSG=!!d._isShotgun, isGat=isSG&&(d.name||'').toLowerCase().indexOf('gatling')!==-1, thickMul=isSG?0.68:1, lenMul=isSG?2:1;
+        var len=Math.max(8,sc*12)*thickMul*lenMul, thick=Math.max(0.5,sc*0.9)*thickMul;
         function cyl(r1,r2,col2,op,order) {
             var g=new THREE.CylinderGeometry(r1,r2,len,6,1,true); g.rotateX(Math.PI/2);
             var m=new THREE.MeshBasicMaterial({color:col2,transparent:true,opacity:op,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
@@ -332,37 +352,75 @@ window._barProjectilesSetup = function(THREE, opts) {
         var frontPos=o.pos.clone().addScaledVector(dir,len/2);
         var fl=isSG?null:addS(mkSprite(col,sc*14,1),999); if(fl) fl.position.copy(o.pos);
         var lf=isSG?null:addS(mkSprite(col,sc*28,0.85,LT),999); if(lf) lf.position.copy(frontPos);
+        // Subtle elongated glow for shotgun/gatling rounds: two crossed planes along shot direction
+        var glow=null, glow2=null, glowMat=null, glowMat2=null;
+        if (isSG) {
+            var gw=thick*24, gl=len*2.5, glowOp=isGat?0.07:0.03;
+            var _gu=new THREE.Vector3(0,1,0); if(Math.abs(dir.y)>0.9) _gu.set(1,0,0);
+            var _gs=new THREE.Vector3().crossVectors(dir,_gu).normalize();
+            var _gu2=new THREE.Vector3().crossVectors(_gs,dir).normalize();
+            // Plane 1: normal = _gs (visible from sides)
+            var _gm1=new THREE.Matrix4().makeBasis(dir,_gu2,_gs);
+            var _gq1=new THREE.Quaternion().setFromRotationMatrix(_gm1);
+            glowMat=new THREE.MeshBasicMaterial({map:FT,color:col,transparent:true,opacity:glowOp,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            glow=new THREE.Mesh(new THREE.PlaneGeometry(gl,gw),glowMat); glow.position.copy(o.pos); glow.quaternion.copy(_gq1); addS(glow,997);
+            // Plane 2: normal = _gu2 (visible from top/bottom)
+            var _gm2=new THREE.Matrix4().makeBasis(dir,_gs.clone().negate(),_gu2);
+            var _gq2=new THREE.Quaternion().setFromRotationMatrix(_gm2);
+            glowMat2=new THREE.MeshBasicMaterial({map:FT,color:col,transparent:true,opacity:glowOp,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            glow2=new THREE.Mesh(new THREE.PlaneGeometry(gl,gw),glowMat2); glow2.position.copy(o.pos); glow2.quaternion.copy(_gq2); addS(glow2,997);
+        }
         muzzleLight(o.pos,col,(isSG?4:8)*sc*rs,0.1,o.dir);
-        muzzleFlash(o.pos,col,sc*(isSG?6:12)*rs,0.18,o.dir);
+        // Shotgun/gatling: muzzleside+muzzlefront planes (like plasma), 50% larger
+        var sgFlash=null,sgFlash2=null,sgFlash3=null,sgFlashMat=null,sgFlashMat2=null,sgFlashMat3=null;
+        if (isSG) {
+            var mfSz=sc*18*rs;
+            var mcol=col.clone().lerp(new THREE.Color(0xffdd44),0.5);
+            var _up=new THREE.Vector3(0,1,0); if(Math.abs(o.dir.y)>0.9) _up.set(1,0,0);
+            var _side=new THREE.Vector3().crossVectors(o.dir,_up).normalize();
+            var _up2=new THREE.Vector3().crossVectors(_side,o.dir).normalize();
+            var _m1=new THREE.Matrix4().makeBasis(o.dir,_up2,_side);
+            var _q1=new THREE.Quaternion().setFromRotationMatrix(_m1);
+            var _m2=new THREE.Matrix4().makeBasis(o.dir,_side.clone().negate(),_up2);
+            var _q2=new THREE.Quaternion().setFromRotationMatrix(_m2);
+            var _off=o.dir.clone().multiplyScalar(mfSz*0.4);
+            sgFlashMat=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:1,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            sgFlash=new THREE.Mesh(new THREE.PlaneGeometry(mfSz,mfSz),sgFlashMat); sgFlash.position.copy(o.pos).add(_off); sgFlash.quaternion.copy(_q1); sgFlash.scale.set(1,0.575,1); addS(sgFlash,999);
+            sgFlashMat2=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:0.7,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            sgFlash2=new THREE.Mesh(new THREE.PlaneGeometry(mfSz,mfSz),sgFlashMat2); sgFlash2.position.copy(o.pos).add(_off); sgFlash2.quaternion.copy(_q2); sgFlash2.scale.set(1,0.575,1); addS(sgFlash2,999);
+            sgFlashMat3=new THREE.MeshBasicMaterial({map:MF,color:mcol,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            sgFlash3=new THREE.Mesh(new THREE.PlaneGeometry(mfSz*1.2,mfSz*1.2),sgFlashMat3); sgFlash3.position.copy(o.pos); sgFlash3.lookAt(o.pos.clone().add(o.dir)); addS(sgFlash3,999);
+        } else {
+            muzzleFlash(o.pos,col,sc*12*rs,0.18,o.dir);
+        }
         var trail=null, trailMat=null;
         if (d._isFlak || d._isAA) {
-            var tl=sc*99, tr=thick*3;
+            var tl=30+sc*80, tr=0.85;
             var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
             trailMat=new THREE.MeshBasicMaterial({color:d._isFlak?0xdd55cc:col,transparent:true,opacity:0.55,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
             trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
         }
         active.push({type:'laserround',age:0,maxAge:(d.range||400)/spd,velocity:dir.clone().multiplyScalar(spd),
-            extras:{round:rm.mesh,roundMat:rm.m,core:rc.mesh,coreMat:rc.m,flare:fl,flareMat:fl?fl.material:null,laserFlare:lf,laserFlareMat:lf?lf.material:null,dir,lrHalfLen:len/2,trail:trail,trailMat:trailMat}});
+            extras:{round:rm.mesh,roundMat:rm.m,core:rc.mesh,coreMat:rc.m,flare:fl,flareMat:fl?fl.material:null,laserFlare:lf,laserFlareMat:lf?lf.material:null,dir,lrHalfLen:len/2,trail:trail,trailMat:trailMat,glow:glow,glow2:glow2,glowMat:glowMat,glowMat2:glowMat2,glowBaseOp:isSG?(isGat?0.07:0.03):0,
+            sgFlash:sgFlash,sgFlashMat:sgFlashMat,sgFlash2:sgFlash2,sgFlashMat2:sgFlashMat2,sgFlash3:sgFlash3,sgFlashMat3:sgFlashMat3}});
     }
 
     function spawnPlasma(o, d) {
-        var col=new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range), bs=Math.max(0.4,sc*0.6);
+        var isCl=!!d._isCluster;
+        var col=isCl?new THREE.Color(0x4488ff):new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range), bs=Math.max(0.4,sc*0.6);
         var spd=Math.max(d.velocity*1.08,180), dir=spread(o.dir,d.accuracy);
-        var wcol=col.clone().lerp(new THREE.Color(0xffee88),0.4);
-        var ball=addS(mkSprite(wcol,bs*5.625,0.95),998); ball.position.copy(o.pos);
-        var core=addS(mkSprite(0xffffcc,bs*1.875,0.7),999); core.position.copy(o.pos);
-        // Muzzle side planes: contain the shot direction, crossed at 90° around it.
-        // PlaneGeometry default: X = width, Y = height, Z = normal (facing camera).
-        // We want: local X = shot dir (texture stretches along barrel), local Z = side normal.
+        var wcol=isCl?new THREE.Color(0x88ccff):col.clone().lerp(new THREE.Color(0xffee88),0.4);
+        var ball=addS(mkSprite(wcol,bs*5.625,1),998); ball.position.copy(o.pos);
+        var coreCol=isCl?0xccddff:0xffffcc;
+        var core=addS(mkSprite(coreCol,bs*2.5,0.8),999); core.position.copy(o.pos);
+        var pGlow=addS(mkSprite(col,bs*14,0.07),997); pGlow.position.copy(o.pos);
         var mfSz=bs*28.8*rs;
-        var mcol=col.clone().lerp(new THREE.Color(0xffdd44),0.5);
+        var mcol=isCl?new THREE.Color(0x5599ff):col.clone().lerp(new THREE.Color(0xffdd44),0.5);
         var _up=new THREE.Vector3(0,1,0); if (Math.abs(o.dir.y)>0.9) _up.set(1,0,0);
         var _side=new THREE.Vector3().crossVectors(o.dir,_up).normalize();
         var _up2=new THREE.Vector3().crossVectors(_side,o.dir).normalize();
-        // Plane 1: normal = _side (visible from left/right)
         var _m1=new THREE.Matrix4().makeBasis(o.dir,_up2,_side);
         var _q1=new THREE.Quaternion().setFromRotationMatrix(_m1);
-        // Plane 2: normal = _up2 (visible from top/bottom), 90° rotated around shot dir
         var _m2=new THREE.Matrix4().makeBasis(o.dir,_side.clone().negate(),_up2);
         var _q2=new THREE.Quaternion().setFromRotationMatrix(_m2);
         var mfG=new THREE.PlaneGeometry(mfSz,mfSz);
@@ -372,20 +430,20 @@ window._barProjectilesSetup = function(THREE, opts) {
         var mfG2=new THREE.PlaneGeometry(mfSz,mfSz);
         var mfM2=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:0.7,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
         var mf2=new THREE.Mesh(mfG2,mfM2); mf2.position.copy(o.pos).add(_offset); mf2.quaternion.copy(_q2); mf2.scale.set(1,0.575,1); addS(mf2,999);
-        // Muzzle front plane: perpendicular to shot direction (ring/shockwave effect)
         var mfFG=new THREE.PlaneGeometry(mfSz*1.2,mfSz*1.2);
         var mfFM=new THREE.MeshBasicMaterial({map:MF,color:mcol,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
         var mff=new THREE.Mesh(mfFG,mfFM); mff.position.copy(o.pos); mff.lookAt(o.pos.clone().add(o.dir)); mff.scale.set(1,1,1); addS(mff,999);
         muzzleLight(o.pos,mcol,12*sc*rs,0.1,o.dir);
         var trail=null, trailMat=null;
-        if (d._isFlak) {
-            var tl=sc*66, tr=bs*3;
+        if (d._isFlak || isCl) {
+            var tl=sc*(isCl?33:66), tr=0.85;
             var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
-            trailMat=new THREE.MeshBasicMaterial({color:0xdd55cc,transparent:true,opacity:0.55,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            var tCol=isCl?0x4488ff:0xdd55cc;
+            trailMat=new THREE.MeshBasicMaterial({color:tCol,transparent:true,opacity:0.55,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
             trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
         }
         active.push({type:'plasma',age:0,maxAge:(d.range||400)/spd,velocity:dir.multiplyScalar(spd),gravity:-90,
-            extras:{ball,ballMat:ball.material,core,coreMat:core.material,flash:mf,flashMat:mfM,flash2:mf2,flashMat2:mfM2,flash3:mff,flashMat3:mff.material,trail:trail,trailMat:trailMat,dir:dir.clone().normalize()}});
+            extras:{ball,ballMat:ball.material,core,coreMat:core.material,pGlow:pGlow,pGlowMat:pGlow.material,flash:mf,flashMat:mfM,flash2:mf2,flashMat2:mfM2,flash3:mff,flashMat3:mff.material,trail:trail,trailMat:trailMat,dir:dir.clone().normalize(),isCluster:isCl,isNapalm:!!d._isNapalm}});
     }
 
     function spawnRocket(o, d) {
@@ -405,7 +463,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         var dirUnit=dir.clone().normalize();
         var trail=null, trailMat=null;
         if (d._isAA) {
-            var tl=sc*44, tr=rl*0.35;
+            var tl=sc*44, tr=0.85;
             var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
             trailMat=new THREE.MeshBasicMaterial({color:0xff54b2,transparent:true,opacity:0.5,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
             trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
@@ -523,11 +581,14 @@ window._barProjectilesSetup = function(THREE, opts) {
         var sm=new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
         var sphere=new THREE.Mesh(sg,sm); sphere.position.copy(o.pos); addS(sphere,998);
         var glow=addS(mkSprite(col,8,0.8),999); glow.position.copy(o.pos);
-        var flare=addS(mkSprite(new THREE.Color(0xffffff).lerp(col,0.3),88,0.9,LT),1000); flare.position.copy(o.pos);
+        var warmCol=col.clone().lerp(new THREE.Color(0xff4400),0.45);
+        var warmGlow=addS(mkSprite(warmCol,20,0.14),997); warmGlow.position.copy(o.pos);
+        var flareMat=new THREE.SpriteMaterial({map:LT,color:new THREE.Color(0xffffff).lerp(col,0.3),transparent:true,opacity:0.9,blending:ADD,depthWrite:false,rotation:Math.random()*Math.PI*2});
+        var flare=new THREE.Sprite(flareMat); flare.scale.set(114,114,1); flare.position.copy(o.pos); addS(flare,1000);
         muzzleLight(o.pos,col,24*rs,0.3,o.dir);
         muzzleFlash(o.pos,col,8*rs,0.25,o.dir);
         active.push({type:'dgun',age:0,maxAge:1.8,velocity:o.dir.clone().multiplyScalar(spd),
-            extras:{sphere,sphereMat:sm,glow,glowMat:glow.material,flare,flareMat:flare.material}});
+            extras:{sphere,sphereMat:sm,glow,glowMat:glow.material,warmGlow,warmGlowMat:warmGlow.material,flare,flareMat:flare.material}});
     }
 
     function spawnSmoke(pos) {
@@ -559,7 +620,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         var ng=new THREE.ConeGeometry(rl*0.18,rl*0.5,6); ng.rotateX(Math.PI/2); ng.translate(0,0,rl*0.75);
         var nm=new THREE.MeshBasicMaterial({color:noseCol,depthWrite:false}); g.add(new THREE.Mesh(ng,nm));
         var exhCol=new THREE.Color(0xddeeff);
-        var exh=new THREE.Sprite(spr(exhCol,0.6)); exh.scale.set(rl*1.5,rl*1.5,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
+        var exh=new THREE.Sprite(spr(exhCol,0.15)); exh.scale.set(rl*1.5,rl*1.5,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
         g.position.copy(o.pos);
         var dirUnit=dir.clone().normalize();
         // Air-dropped torpedo: starts falling, then activates forward thrust after 2s
@@ -624,7 +685,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         spawnSmoke: spawnSmoke, spawnBubble: spawnBubble,
         FT: FT, LT: LT, ST: ST, ADD: ADD, NORM: NORM, DT: DT, BT: BT,
         updateBoltTube: updateBoltTube,
-        spawnBeam: spawnBeam, spawnBolt: spawnBolt, spawnLaserRound: spawnLaserRound,
+        spawnBeam: spawnBeam, spawnBolt: spawnBolt, spawnRailBeam: spawnRailBeam, spawnLaserRound: spawnLaserRound,
         spawnPlasma: spawnPlasma, spawnRocket: spawnRocket, spawnFlame: spawnFlame,
         spawnLightning: spawnLightning, spawnDgun: spawnDgun, spawnTorpedo: spawnTorpedo,
         spawnBomb: spawnBomb, spawnStarburst: spawnStarburst,
