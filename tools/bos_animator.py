@@ -1507,6 +1507,50 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
             closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
                            for t in close_tracks_raw}
             open_tracks, open_dur = _parse_turn_move_to_tracks(aim_body, start_pose=closed_pose)
+            # If restore resets pieces that aren't in the open tracks (because
+            # AimWeapon uses a variable like pitch), infer the deploy angle.
+            # Pattern: "turn PIECE to AXIS <0> - pitch" → deploy to -90°
+            # (vertical launcher for starburst/missile ships like cormship).
+            # Also check restore body for matching "turn PIECE to AXIS <0>" to
+            # confirm the piece returns to rest (even if closed_pose is empty
+            # because all restore targets are 0).
+            open_keys = {(t.piece, t.axis, t.is_rotation) for t in open_tracks}
+            _pitch_deploy_re = re.compile(
+                r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<0(?:\.0)?>\s*-\s*pitch\b',
+                re.IGNORECASE)
+            _restore_turn_re = re.compile(
+                r'\bturn\s+(\w+)\s+to\s+([xyz])-axis\s+<0(?:\.0)?>\s+speed',
+                re.IGNORECASE)
+            _restore_pieces = {(m.group(1).lower(), m.group(2).lower())
+                               for m in _restore_turn_re.finditer(restore_clean)}
+            for _pd_m in _pitch_deploy_re.finditer(aim_clean):
+                _pd_piece = _pd_m.group(1).lower()
+                _pd_axis_str = _pd_m.group(2).lower()
+                _pd_axis = AXIS_INDEX[_pd_axis_str]
+                _pd_key = (_pd_piece, _pd_axis, True)
+                # Skip turret-aiming pieces (sleeve, turret, gun, barrel) — only
+                # deploy pieces like launcher/door should get the -90° inference.
+                if re.match(r'^(turret|sleeve|gun|barrel|aimx|aimy)', _pd_piece, re.IGNORECASE):
+                    continue
+                if _pd_key not in open_keys and (
+                        _pd_key in closed_pose or (_pd_piece, _pd_axis_str) in _restore_pieces):
+                    # Piece returns to 0 in restore → deploy to -90° (vertical)
+                    _pd_start = closed_pose.get(_pd_key, 0.0)
+                    _pd_spd = 90.0  # default speed for inferred deploy
+                    _spd_m = re.search(
+                        r'\bturn\s+' + re.escape(_pd_m.group(1)) + r'\s+to\s+' +
+                        _pd_m.group(2) + r'-axis[^;]*speed\s+<([\d.]+)>',
+                        aim_clean, re.IGNORECASE)
+                    if _spd_m:
+                        _pd_spd = float(_spd_m.group(1))
+                    _pd_dur = abs(-90.0 - _pd_start) / _pd_spd if _pd_spd > 0 else 0.5
+                    open_tracks.append(BosTrack(
+                        piece=_pd_piece, axis=_pd_axis, is_rotation=True,
+                        keyframes=[BosKeyframe(0.0, _pd_start), BosKeyframe(_pd_dur, -90.0)]
+                    ))
+                    open_keys.add(_pd_key)
+                    if _pd_dur > open_dur:
+                        open_dur = _pd_dur
             open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
                          for t in open_tracks}
             close_tracks, close_dur = _parse_turn_move_to_tracks(restore_body, start_pose=open_pose)
