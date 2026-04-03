@@ -1488,7 +1488,7 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
             for _lr_m in re.finditer(r'\bturn\s+(\w+)\s+to\s+[xyz]-axis\s+<([-\d.]+)>', aim_clean, re.IGNORECASE):
                 if abs(float(_lr_m.group(2))) >= 45:
                     _large_rot_pieces.add(_lr_m.group(1).lower())
-        _non_aim_pieces = {p for p in _aim_piece_names if not re.match(r'^(?:l|r|left|right)?(?:aim|turret|sleeve|gun|barrel|aimx|aimy|flare)', p, re.IGNORECASE) or p.lower() in _large_rot_pieces}
+        _non_aim_pieces = {p for p in _aim_piece_names if not re.match(r'^\w*(?:aim|turret|sleeve|gun|barrel|aimx|aimy|flare|pivot)', p, re.IGNORECASE) or p.lower() in _large_rot_pieces}
         has_many_deploy_pieces = len(_non_aim_pieces) >= 3
         has_open_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', aim_clean, re.IGNORECASE))
         has_close_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', restore_clean, re.IGNORECASE))
@@ -1530,7 +1530,7 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
                 _pd_key = (_pd_piece, _pd_axis, True)
                 # Skip turret-aiming pieces (sleeve, turret, gun, barrel) — only
                 # deploy pieces like launcher/door should get the -90° inference.
-                if re.match(r'^(?:l|r|left|right)?(?:turret|sleeve|gun|barrel|aimx|aimy)', _pd_piece, re.IGNORECASE):
+                if re.match(r'^\w*(?:turret|sleeve|gun|barrel|aimx|aimy|pivot)', _pd_piece, re.IGNORECASE):
                     continue
                 if _pd_key not in open_keys and (
                         _pd_key in closed_pose or (_pd_piece, _pd_axis_str) in _restore_pieces):
