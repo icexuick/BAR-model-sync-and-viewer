@@ -428,52 +428,37 @@ window._barWeaponsSetup = function(THREE, opts) {
                 }
             }
         }
-        // Per-barrel cycling: play only the current barrel's clip, then advance index
-        var hasCycle = false;
-        for (var ci = 0; ci < normalActs.length; ci++) {
-            var cClipName = normalActs[ci].getClip().name;
-            var cFm = cClipName.match(/^Fire_(\d+)/);
-            if (cFm && _cycleActions[parseInt(cFm[1])]) { hasCycle = true; break; }
-        }
-        if (hasCycle) {
-            var cycleWnum = parseInt(cFm[1]);
-            var cycleArr = _cycleActions[cycleWnum];
-            var idx = _cycleIndex[cycleWnum] || 0;
-            var cycleAction = cycleArr[idx % cycleArr.length];
-            cycleAction.stop().reset().play();
-            _cycleIndex[cycleWnum] = (idx + 1) % cycleArr.length;
-            if (_projectileFireFn) {
-                var cDelay = fireDelays[String(cycleWnum)] || 0;
-                if (cDelay > 0) {
-                    (function(w, d) { var tid = setTimeout(function() { _projectileFireFn(w); }, d * 1000); _fireTimers[def].push(tid); })(cycleWnum, cDelay);
-                } else { _projectileFireFn(cycleWnum); }
-            }
-        } else {
-        // Normal fire actions: reset and play each time
-        for (var nj = 0; nj < normalActs.length; nj++) {
-            normalActs[nj].stop().reset();
-        }
+        // Fire each weapon: cycling weapons play one barrel, others play normally.
+        // Multiple weapons with same def are staggered with 400ms delay.
         var STAGGER_MS = 400;
         for (var i = 0; i < normalActs.length; i++) {
             (function(action, delay) {
                 var tid = setTimeout(function() {
-                    action.reset().play();
                     var clipName = action.getClip().name;
-                    var cfm = clipName.match(/^Fire_(\d+)$/);
-                    if (cfm && _projectileFireFn) {
-                        var fwn = parseInt(cfm[1]);
-                        var fDelay = fireDelays[String(fwn)];
+                    var cfmW = clipName.match(/^Fire_(\d+)/);
+                    var actWnum = cfmW ? parseInt(cfmW[1]) : 0;
+                    // Per-barrel cycling: play only the current barrel's clip
+                    var playedAction = action;
+                    if (actWnum && _cycleActions[actWnum]) {
+                        var cycleArr = _cycleActions[actWnum];
+                        var idx = _cycleIndex[actWnum] || 0;
+                        playedAction = cycleArr[idx % cycleArr.length];
+                        _cycleIndex[actWnum] = (idx + 1) % cycleArr.length;
+                    }
+                    playedAction.stop().reset().play();
+                    if (actWnum && _projectileFireFn) {
+                        var fDelay = fireDelays[String(actWnum)];
                         if (fDelay && fDelay > 0) {
-                            setTimeout(function() { _projectileFireFn(fwn); }, fDelay * 1000);
+                            setTimeout(function() { _projectileFireFn(actWnum); }, fDelay * 1000);
                         } else {
-                            _projectileFireFn(fwn);
+                            _projectileFireFn(actWnum);
                         }
                     }
                     if (_initMixer) _initMixer.addEventListener('finished', function onDone(e) {
-                        if (e.action === action) {
-                            action.stop();
-                            var clipName = action.getClip().name;
-                            var rot = _rotaryNodes[clipName];
+                        if (e.action === playedAction) {
+                            playedAction.stop();
+                            var cn = playedAction.getClip().name;
+                            var rot = _rotaryNodes[cn];
                             if (rot) {
                                 rot.accumRad += rot.stepRad;
                                 rot.node.rotation[rot.axis] = rot.accumRad;
@@ -485,7 +470,6 @@ window._barWeaponsSetup = function(THREE, opts) {
                 _fireTimers[def].push(tid);
             })(normalActs[i], i * STAGGER_MS);
         }
-        } // end else (non-cycle)
     }
 
     // Click on 3D weapon mesh → fire
