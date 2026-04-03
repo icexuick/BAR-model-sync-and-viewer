@@ -225,6 +225,16 @@
         glowSprite.raycast = () => {};
         modelScene.add(glowSprite);
 
+        // Sync glow sprite breathing with orb shader (orbRadius + sin(time) - 1.0)
+        const baseGlowScale = glowSize;
+        const baseOrbR = cfg.size;
+        orbMesh.onBeforeRender = function() {
+            const t = timeUniform.value;
+            const breath = (baseOrbR + Math.sin(t) - 1.0) / baseOrbR;
+            const s = baseGlowScale * breath;
+            glowSprite.scale.set(s, s, 1);
+        };
+
         // If team-colored, update color when team color changes
         if (cfg.type === 'team') {
             window._orbUpdateTeamColor = (hexColor) => {
