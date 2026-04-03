@@ -243,6 +243,18 @@
         flashSprite.raycast = () => {};
         modelScene.add(flashSprite);
 
+        // PointLight in orb center — colored by orb type
+        const orbLight = new THREE.PointLight(
+            new THREE.Color(c2[0], c2[1], c2[2]),
+            cfg.size * 0.06,  // intensity scales with orb size
+            cfg.size * 6,     // distance/range
+            2                 // decay
+        );
+        orbLight.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
+        orbLight.layers.enable(1);
+        modelScene.add(orbLight);
+        const baseLightIntensity = orbLight.intensity;
+
         // Sync glow sprite breathing with orb shader (orbRadius + sin(time) - 1.0)
         const baseGlowScale = glowSize;
         const baseOrbR = cfg.size;
@@ -257,6 +269,8 @@
             // White flash: slow sine raised to high power → mostly near 0, brief peaks
             const raw = Math.sin(t * 0.54) * 0.5 + 0.5; // 0..1, slow
             flashMat.opacity = Math.pow(raw, 8) * 0.35;
+            // PointLight breathes with orb
+            orbLight.intensity = baseLightIntensity * breath;
         };
 
         // If team-colored, update color when team color changes
@@ -266,6 +280,7 @@
                 orbMat.uniforms.color1.value.set(tc.r * 0.87 + 0.13, tc.g * 0.87 + 0.13, tc.b * 0.87 + 0.13);
                 orbMat.uniforms.color2.value.set(tc.r * 0.87, tc.g * 0.87, tc.b * 0.87);
                 glowMat.color.set(tc.r * 0.87 * 0.70 + 0.30, tc.g * 0.87 * 0.70 + 0.30, tc.b * 0.87 * 0.70 + 0.30);
+                orbLight.color.set(tc.r * 0.87, tc.g * 0.87, tc.b * 0.87);
             };
         }
     }
