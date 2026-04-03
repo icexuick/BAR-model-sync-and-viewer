@@ -208,12 +208,12 @@
         gx.fillStyle = gg; gx.fillRect(0,0,64,64);
         const glowTex = new THREE.CanvasTexture(gc);
         const glowColor = new THREE.Color(c2[0], c2[1], c2[2]);
-        const glowSize = cfg.size * 2.42; // ~20% larger diameter than orb
+        const glowSize = cfg.size * 2.517; // ~26% larger diameter than orb
         const glowMat = new THREE.SpriteMaterial({
             map: glowTex,
             color: glowColor,
             transparent: true,
-            opacity: 0.22,
+            opacity: 0.25,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
         });
