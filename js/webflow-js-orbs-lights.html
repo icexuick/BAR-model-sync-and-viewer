@@ -361,12 +361,44 @@
         }
 
         const _flags = { has_radar: hasRadar, has_jammer: hasJammer };
+        let hasJammerLight = false;
         modelScene.traverse(node => {
             for (const pat of BLINK_PATTERNS) {
                 if (pat.req && !_flags[pat.req]) continue;
-                if (pat.match.test(node.name)) { addBlinkLight(node, pat); break; }
+                if (pat.match.test(node.name)) {
+                    addBlinkLight(node, pat);
+                    if (pat.type === 'jammer') hasJammerLight = true;
+                    break;
+                }
             }
         });
+
+        // Fallback: jammer unit with no matching blink piece — add red light
+        // to the highest spinning piece (most jammers have a rotating dish/strut)
+        if (hasJammer && !hasJammerLight) {
+            let spinNames = new Set();
+            modelScene.traverse(node => {
+                if (node.userData && node.userData.spin_pieces) {
+                    node.userData.spin_pieces.forEach(n => {
+                        if (!n.startsWith('Spin_')) spinNames.add(n.toLowerCase());
+                    });
+                }
+            });
+            if (spinNames.size > 0) {
+                let bestNode = null, bestY = -Infinity;
+                modelScene.traverse(node => {
+                    if (spinNames.has(node.name.toLowerCase())) {
+                        node.updateWorldMatrix(true, false);
+                        const wp = new THREE.Vector3();
+                        node.getWorldPosition(wp);
+                        if (wp.y > bestY) { bestY = wp.y; bestNode = node; }
+                    }
+                });
+                if (bestNode) {
+                    addBlinkLight(bestNode, { color: [0.9, 0.1, 0.1], type: 'jammer' });
+                }
+            }
+        }
 
         if (lights.length === 0) return;
 
