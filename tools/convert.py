@@ -1326,11 +1326,24 @@ def convert_with_weapons(
                     base_name = barrel_m.group(1)
                     fire_cycle.setdefault(base_name, []).append(clip_name)
             # Barrel spin clips: Fire_N that coexists with Fire_N_0/Fire_N_1
-            # (the spin is an overlay, not a deploy gate)
+            # (the spin is an overlay, not a deploy gate), OR standalone barrel
+            # spin clips (minigun-only) that don't return to rest.
             barrel_spins = []
-            for clip_name, _, _ in fire_clips:
+            for clip_name, clip_tracks, _ in fire_clips:
                 fm = re.match(r'^(Fire_\d+)$', clip_name)
-                if fm and fm.group(1) in fire_cycle:
+                if not fm:
+                    continue
+                # Overlay spin: coexists with per-barrel cycling clips
+                if fm.group(1) in fire_cycle:
+                    barrel_spins.append(clip_name)
+                    continue
+                # Standalone barrel spin: all tracks are large rotations (>360°)
+                # that don't return to rest (minigun/gatling spin-up patterns)
+                if clip_tracks and all(
+                    t.is_rotation and len(t.keyframes) >= 2 and
+                    abs(t.keyframes[-1].value - t.keyframes[0].value) > 360
+                    for t in clip_tracks
+                ):
                     barrel_spins.append(clip_name)
             if model.root_piece:
                 root_idx = builder.scenes[0]["nodes"][0]
