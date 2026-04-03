@@ -316,7 +316,7 @@ def convert_with_weapons(
         # exists in the unitdef). Drop any BOS wnum not present in weapon_defs.
         # Weapon def names that indicate a fake/internal weapon — no geometry to highlight.
         # These are used by the engine for targeting or special logic, not actual guns.
-        _DUMMY_DEF_KEYWORDS = {'targeting', 'dummy', 'aim_weapon', 'aimweapon', 'scanner', 'aimhull', 'bogus'}
+        _DUMMY_DEF_KEYWORDS = {'targeting', 'dummy', 'aim_weapon', 'aimweapon', 'scanner', 'aimhull', 'bogus', 'drone'}
 
         def _is_dummy_def(def_name: str) -> bool:
             if not def_name:
