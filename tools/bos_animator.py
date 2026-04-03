@@ -1747,8 +1747,9 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
 
     counter_var = matches[0].group(1)
     values = [int(m.group(2)) for m in matches]
-    start_val = values[0]
-    if start_val not in (0, 1) or values != list(range(start_val, start_val + len(values))):
+    sorted_vals = sorted(values)
+    start_val = sorted_vals[0]
+    if start_val not in (0, 1) or sorted_vals != list(range(start_val, start_val + len(values))):
         return body, 0, None, None
 
     pre_branch = body[:matches[0].start()]
