@@ -245,6 +245,7 @@ _SKIP_ACTIVATE_FLYPOSE: set = {'legsolar'}
 # These tracks are appended to the extracted toggle clips to add missing visual movements.
 _EXTRA_TOGGLE_TRACKS: Dict[str, list] = {
     'legbar': [('aimx1', 0, True, -15.0, 0.0, 50.0)],  # tilt turret upward when deployed
+    'armrock': [('aimx1', 0, True, -90.0, 0.0, 180.0)],  # missile pod flips forward to fire
 }
 
 # Extra fire animation tracks for weapons that need aim-related piece movement.
@@ -252,7 +253,6 @@ _EXTRA_TOGGLE_TRACKS: Dict[str, list] = {
 # The animation opens (0 → open_value) over speed, holds briefly, then closes (open_value → close_value).
 _EXTRA_FIRE_TRACKS: Dict[str, Dict[int, list]] = {
     'corkarg': {2: [('aacover', 0, True, -150.0, 0.0, 300.0)]},  # AA hatch opens before firing
-    'armrock': {1: [('aimx1', 0, True, -90.0, 0.0, 180.0)]},     # missile pod deploys forward before firing
 }
 
 def convert_with_weapons(
@@ -1131,6 +1131,20 @@ def convert_with_weapons(
 
             # Toggle animations (Open/Close or MMStatus) — always check, independent of spin
             toggle_clips = [] if (_is_lua or unit_name.lower() in _TOGGLE_SKIP) else extract_toggle_animations(bos_content)
+            # Generate synthetic toggle clips if only _EXTRA_TOGGLE_TRACKS exist
+            extra_toggle = _EXTRA_TOGGLE_TRACKS.get(unit_name.lower(), [])
+            if not toggle_clips and extra_toggle:
+                from bos_animator import BosTrack, BosKeyframe
+                synth_open, synth_close = [], []
+                for piece, axis, is_rot, open_val, close_val, spd in extra_toggle:
+                    travel = abs(open_val - close_val)
+                    dur = (travel / spd) if spd > 0 else 0.5
+                    synth_open.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot,
+                                               keyframes=[BosKeyframe(0.0, close_val), BosKeyframe(dur, open_val)]))
+                    synth_close.append(BosTrack(piece=piece, axis=axis, is_rotation=is_rot,
+                                                keyframes=[BosKeyframe(0.0, open_val), BosKeyframe(dur, close_val)]))
+                toggle_clips = [('ActivateOpen', synth_open), ('ActivateClose', synth_close)]
+                print(f"  Synthetic toggle from _EXTRA_TOGGLE_TRACKS: {len(extra_toggle)} tracks")
             if toggle_clips:
                 # Find Open clip; generate Close as time-reversed Open if no valid Close exists
                 open_tracks = next((t for n, t in toggle_clips if n == 'ActivateOpen'), None)
@@ -1189,7 +1203,7 @@ def convert_with_weapons(
                     # Units that are known to start open despite no explicit BOS open call
                     _FORCE_AUTOPLAY_OPEN = {'armpb', 'corasy', 'leganavymissileship', 'corhrk'}
                     # Units that are known to start closed despite no explicit BOS closed call
-                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'legeconv'}
+                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'legeconv', 'armrock'}
                     _CLOSED_IN_CREATE = [
                         r'start-script\s+OpenCloseAnim\s*\(\s*0\s*\)',
                         r'start-script\s+Stop\b',
