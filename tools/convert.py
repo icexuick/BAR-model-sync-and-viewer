@@ -363,8 +363,9 @@ def convert_with_weapons(
 
         for wnum, wmap in weapon_info.weapons.items():
             # Skip visual tagging for disabled weapons (e.g. drone controllers
-            # where AimWeapon returns 0 — no actual aiming/firing geometry)
-            if wmap.aim_disabled:
+            # where AimWeapon returns 0 — no actual aiming/firing geometry),
+            # but keep weapons that have a fire point (e.g. legphoenix skybeam).
+            if wmap.aim_disabled and not wmap.query_piece:
                 continue
 
             # Tag ALL fire point pieces (multi-barrel weapons have flare1, flare2, etc.)
@@ -930,7 +931,10 @@ def convert_with_weapons(
                     "aim_pieces": wmap.aim_pieces,
                 }
                 for wnum, wmap in weapon_info.weapons.items()
-                if not wmap.aim_disabled
+                # Keep weapons that have a fire point even if aim is disabled
+                # (e.g. legphoenix skybeam: AimSecondary returns 0 but has a
+                # QuerySecondary fire_point and FirePrimary drives the beam).
+                if not wmap.aim_disabled or wmap.query_piece
             }
             # Add shadow entries for merged weapons so that Fire_N clips
             # can find their def via weaponSummary (e.g. Fire_3 → weapon 2 def).
@@ -1525,6 +1529,13 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
     # Add any piece whose name contains a globally-hidden fragment.
     for piece in model.all_pieces():
         if any(frag in piece.name.lower() for frag in _GLOBAL_HIDE_FRAGMENTS):
+            hide_pieces.add(piece.name.lower())
+    # Auto-hide hat slot pieces (h1-h9 etc.) — cosmetic attachment points added by the
+    # game's widget system, not declared in BOS scripts.  They sit at extreme negative Y
+    # offsets (typically -200) and should never be rendered in the viewer.
+    _HAT_SLOT_RE = re.compile(r'^h\d{1,2}$')
+    for piece in model.all_pieces():
+        if _HAT_SLOT_RE.match(piece.name.lower()) and piece.offset[1] < -50:
             hide_pieces.add(piece.name.lower())
 
     print(f"\n{'='*60}")
