@@ -255,6 +255,14 @@ _EXTRA_FIRE_TRACKS: Dict[str, Dict[int, list]] = {
     'corkarg': {2: [('aacover', 0, True, -150.0, 0.0, 300.0)]},  # AA hatch opens before firing
 }
 
+# Rotary-only fire animations: piece advances by step_deg on each fire.
+# Format: { 'unitname': { weapon_num: ('piece', axis, step_deg) } }
+# axis: 0=x, 1=y, 2=z
+_EXTRA_FIRE_ROTARY: Dict[str, Dict[int, tuple]] = {
+    'armrl':  {1: ('sleeve', 2, 120.0)},   # 3-tube missile launcher, cycles 120° on Z
+    'armfrt': {1: ('sleeve', 2, 120.0)},   # same 3-tube launcher pattern
+}
+
 def convert_with_weapons(
     model: S3OModel,
     weapon_info: Optional[BOSParseResult] = None,
@@ -1246,6 +1254,15 @@ def convert_with_weapons(
                         extras["autoplay_open"] = True
                         builder.apply_animation_t0_as_default_pose('ActivateOpen')
 
+                    # Units whose toggle is purely decorative — they can fire in any state.
+                    # The viewer uses this to skip the "must open before fire" requirement.
+                    _TOGGLE_FIRE_BYPASS = {
+                        'armrl',
+                        'armfrt',
+                    }
+                    if unit_name.lower() in _TOGGLE_FIRE_BYPASS:
+                        extras["toggle_fire_bypass"] = True
+
             # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
             fire_clips = extract_lua_fire_animations(bos_content) if _is_lua else extract_fire_animations(bos_content)
             if not fire_clips:
@@ -1321,6 +1338,37 @@ def convert_with_weapons(
                         fire_delays = root_extras.get("fire_delays", {})
                         fire_delays[str(wnum_extra)] = open_dur
                         root_extras["fire_delays"] = fire_delays
+
+            # Inject rotary-only fire animations (e.g. sleeve cycling on missile launchers).
+            # Creates a short clip that rotates the piece by step_deg, plus rotary metadata
+            # so the viewer accumulates rotation on each shot.
+            extra_rotary = _EXTRA_FIRE_ROTARY.get(unit_name.lower(), {})
+            for wnum_rot, (rot_piece, rot_axis, rot_step) in extra_rotary.items():
+                clip_name = f'Fire_{wnum_rot}'
+                if clip_name in existing_fire_clips:
+                    continue  # don't override existing fire clip
+                from bos_animator import BosTrack, BosKeyframe
+                # Short clip: rotate piece by step_deg over 0.15s
+                synth_tracks = [BosTrack(
+                    piece=rot_piece, axis=rot_axis, is_rotation=True,
+                    keyframes=[
+                        BosKeyframe(0.0, 0.0),
+                        BosKeyframe(0.15, rot_step),
+                    ]
+                )]
+                builder.add_animation(clip_name, synth_tracks, node_name_to_idx,
+                                      piece_offsets, now_rots=now_rots)
+                # Register rotary metadata
+                if model.root_piece:
+                    root_idx = builder.scenes[0]["nodes"][0]
+                    root_extras = builder.nodes[root_idx].setdefault("extras", {})
+                    fr = root_extras.get("fire_rotary", {})
+                    axis_name = ['x', 'y', 'z'][rot_axis]
+                    fr[clip_name] = {"piece": rot_piece, "axis": axis_name, "step_deg": rot_step}
+                    root_extras["fire_rotary"] = fr
+                print(f"  Fire animation '{clip_name}' (rotary inject): "
+                      f"{rot_piece} {['x','y','z'][rot_axis]}-axis +{rot_step}°/shot")
+
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
