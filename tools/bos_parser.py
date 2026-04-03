@@ -198,7 +198,7 @@ def parse_bos(filepath: str) -> BOSParseResult:
         # Popup-defense pattern: QueryWeapon checks is_open and returns a dummy
         # piece (e.g. aimFlare) when closed, real fire piece when open.
         # The viewer always shows the open state, so discard the closed-branch pieces.
-        if len(all_refs) > 1 and re.search(r'\b(?:is_open|isOpen)\b', body, re.IGNORECASE):
+        if len(all_refs) > 1 and re.search(r'\b(?:is_open|isOpen|GunOpen|gun_open)\b', body, re.IGNORECASE):
             open_refs = _extract_open_state_pieces(body, result.pieces)
             if open_refs:
                 all_refs = open_refs
@@ -446,23 +446,33 @@ def _extract_open_state_pieces(body: str, known_pieces: List[str]) -> List[str]:
       if (is_open == 0) { pieceIndex = DUMMY; } else { pieceIndex = REAL; }
       if (is_open == 1) { pieceIndex = REAL; } else { pieceIndex = DUMMY; }
     """
-    # Find if-else block testing is_open
-    # Pattern: if (is_open == 0) { ... } else { ... }
+    _OPEN_VARS = r'(?:is_open|isOpen|GunOpen|gun_open)'
+    # Find if-else block testing is_open / GunOpen
+    # Pattern: if (var == 0) { ... } else { ... }
     m = re.search(
-        r'if\s*\(\s*(?:is_open|isOpen)\s*==\s*(\d)\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
+        r'if\s*\(\s*' + _OPEN_VARS + r'\s*==\s*(\d)\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
         body, re.IGNORECASE
     )
     if not m:
-        # Try: if (!IsOpen) { ... } else { ... }  (IsOpen is a macro for is_open/isOpen)
+        # Try: if (!var) { ... } else { ... }
         m = re.search(
-            r'if\s*\(\s*!\s*(?:IsOpen|isOpen|is_open)\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
+            r'if\s*\(\s*!\s*' + _OPEN_VARS + r'\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
             body, re.IGNORECASE
         )
-        if m:
-            # !IsOpen = closed state is group 1, open state is group 2
-            open_body = m.group(2)
+        if not m:
+            # Try: if (var) { ... } else { ... }  (truthy = open)
+            m = re.search(
+                r'if\s*\(\s*' + _OPEN_VARS + r'\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
+                body, re.IGNORECASE
+            )
+            if m:
+                # var truthy = open state is group 1, closed is group 2
+                open_body = m.group(1)
+            else:
+                return []
         else:
-            return []
+            # !var = closed state is group 1, open state is group 2
+            open_body = m.group(2)
     else:
         val = int(m.group(1))
         # is_open == 0 → group 2 is closed, group 3 is open
