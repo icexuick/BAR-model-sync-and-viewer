@@ -407,15 +407,15 @@ window._barProjectilesSetup = function(THREE, opts) {
 
     function spawnPlasma(o, d) {
         var isCl=!!d._isCluster;
-        var col=isCl?new THREE.Color(0x4488ff):new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range), bs=Math.max(0.4,sc*0.6);
+        var col=isCl?new THREE.Color(0x6699cc):new THREE.Color(d.color), sc=dScale(d.damage), rs=rScale(d.range), bs=Math.max(0.4,sc*0.6);
         var spd=Math.max(d.velocity*1.08,180), dir=spread(o.dir,d.accuracy);
-        var wcol=isCl?new THREE.Color(0x88ccff):col.clone().lerp(new THREE.Color(0xffee88),0.4);
+        var wcol=isCl?new THREE.Color(0x99bbdd):col.clone().lerp(new THREE.Color(0xffee88),0.4);
         var ball=addS(mkSprite(wcol,bs*5.625,1),998); ball.position.copy(o.pos);
-        var coreCol=isCl?0xccddff:0xffffcc;
+        var coreCol=isCl?0xdde4f0:0xffffcc;
         var core=addS(mkSprite(coreCol,bs*2.5,0.8),999); core.position.copy(o.pos);
         var pGlow=addS(mkSprite(col,bs*14,0.07),997); pGlow.position.copy(o.pos);
         var mfSz=bs*28.8*rs;
-        var mcol=isCl?new THREE.Color(0x5599ff):col.clone().lerp(new THREE.Color(0xffdd44),0.5);
+        var mcol=isCl?new THREE.Color(0x7799bb):col.clone().lerp(new THREE.Color(0xffdd44),0.5);
         var _up=new THREE.Vector3(0,1,0); if (Math.abs(o.dir.y)>0.9) _up.set(1,0,0);
         var _side=new THREE.Vector3().crossVectors(o.dir,_up).normalize();
         var _up2=new THREE.Vector3().crossVectors(_side,o.dir).normalize();
@@ -438,7 +438,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         if (d._isFlak || isCl) {
             var tl=sc*(isCl?33:66), tr=0.85;
             var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
-            var tCol=isCl?0x4488ff:0xdd55cc;
+            var tCol=isCl?0x6699cc:0xdd55cc;
             trailMat=new THREE.MeshBasicMaterial({color:tCol,transparent:true,opacity:0.55,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
             trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
         }

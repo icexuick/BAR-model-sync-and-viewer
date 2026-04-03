@@ -5,12 +5,13 @@ window._barProjectilesUpdate = function(ctx) {
     var getCat = ctx.getCat, dScale = ctx.dScale, rScale = ctx.rScale;
     var refreshNode = ctx.refreshNode, getFireOrigin = ctx.getFireOrigin, playSound = ctx.playSound;
     var spawnSmoke = ctx.spawnSmoke, spawnBubble = ctx.spawnBubble;
-    var spawnBeam = ctx.spawnBeam, spawnBolt = ctx.spawnBolt, spawnLaserRound = ctx.spawnLaserRound;
+    var spawnBeam = ctx.spawnBeam, spawnBolt = ctx.spawnBolt, spawnRailBeam = ctx.spawnRailBeam, spawnLaserRound = ctx.spawnLaserRound;
     var spawnPlasma = ctx.spawnPlasma, spawnRocket = ctx.spawnRocket, spawnFlame = ctx.spawnFlame;
     var spawnLightning = ctx.spawnLightning, spawnDgun = ctx.spawnDgun, spawnTorpedo = ctx.spawnTorpedo;
     var spawnBomb = ctx.spawnBomb, spawnStarburst = ctx.spawnStarburst;
     var updateBoltTube = ctx.updateBoltTube;
     var releaseLight = ctx.releaseLight;
+    var FT = ctx.FT;
     var isToggleOpen = ctx.isToggleOpen || function() { return true; };
     var triggerOpen = ctx.triggerOpen || null;
 
@@ -22,6 +23,15 @@ window._barProjectilesUpdate = function(ctx) {
         _flashHold = Math.max(_flashHold, hold || 0);
         _flashAge = 0; _flashLevel = _flashStr;
     }
+
+    function setPaused(v) { window._barPaused = !!v; }
+    document.addEventListener('keydown', function(e) {
+        if (e.key === '0' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            var tag = (e.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            window._barPaused = !window._barPaused;
+        }
+    });
 
     function update(dt) {
         // Decay and apply model flash highlight
@@ -57,7 +67,9 @@ window._barProjectilesUpdate = function(ctx) {
                 case 'bolt':
                     if (p.velocity) ex.bolt.position.addScaledVector(p.velocity,dt);
                     ex.boltMat.opacity=0.9*(1-t); ex.flareMat.opacity=Math.max(0,1-t*5); ex.flare.scale.multiplyScalar(0.92);
-                    if (ex.trail) { ex.trail.position.copy(ex.bolt.position); ex.trail.lookAt(ex.bolt.position.clone().add(ex.dir)); var tg=Math.min(1,p.age*10); ex.trail.scale.set(1,1,tg*(1+t*4)); ex.trailMat.opacity=0.35*(1-t); } break;
+                    if (ex.trail) { ex.trail.position.copy(ex.bolt.position); ex.trail.lookAt(ex.bolt.position.clone().add(ex.dir)); var tg=Math.min(1,p.age*6); var tw=1+t*2; ex.trail.scale.set(tw,tw,0.25+tg*(0.3+t*3)); ex.trailMat.opacity=0.35*(1-t); } break;
+                case 'railbeam':
+                    ex.beamMat.opacity=0.7*(1-t); ex.coreMat.opacity=0.9*(1-t); break;
                 case 'laserround':
                     if (p.velocity) {
                         ex.round.position.addScaledVector(p.velocity,dt); ex.round.lookAt(ex.round.position.clone().add(ex.dir));
@@ -67,15 +79,30 @@ window._barProjectilesUpdate = function(ctx) {
                     ex.roundMat.opacity=0.85*(1-t*0.5); ex.coreMat.opacity=0.95*(1-t*0.5);
                     if(ex.flare){ex.flareMat.opacity=Math.max(0,1-t*6); ex.flare.scale.multiplyScalar(0.9);}
                     if(ex.laserFlareMat) ex.laserFlareMat.opacity=0.85*(1-t*0.4);
-                    if (ex.trail) { ex.trail.position.copy(ex.round.position); ex.trail.lookAt(ex.round.position.clone().add(ex.dir)); var tg=Math.min(1,p.age*10); ex.trail.scale.set(1,1,tg*(1+t*4)); ex.trailMat.opacity=0.35*(1-t); } break;
+                    if(ex.glow){var go=(ex.glowBaseOp||0.07)*(1-t*0.5); ex.glow.position.copy(ex.round.position); ex.glowMat.opacity=go; if(ex.glow2){ex.glow2.position.copy(ex.round.position); ex.glowMat2.opacity=go;}}
+                    if(ex.sgFlash){var mfo2=Math.max(0,1-p.age/0.18); ex.sgFlashMat.opacity=mfo2; ex.sgFlashMat2.opacity=mfo2*0.7; ex.sgFlashMat3.opacity=mfo2*0.9; var mfa2=Math.min(p.age/0.18,1),sg2=1+mfa2*0.4; ex.sgFlash.scale.set(sg2,0.575*sg2,sg2); ex.sgFlash2.scale.set(sg2,0.575*sg2,sg2); var fg2=1-mfa2*0.5; ex.sgFlash3.scale.set(fg2,fg2,fg2);}
+                    if (ex.trail) { var tp=ex.round.position.clone().addScaledVector(ex.dir,ex.lrHalfLen); ex.trail.position.copy(tp); ex.trail.lookAt(tp.clone().add(ex.dir)); var tg=Math.min(1,p.age*6); ex.trail.scale.set(1,1,0.25+tg*(0.3+t*3)); ex.trailMat.opacity=0.35*(1-t); } break;
                 case 'plasma':
-                    if (p.velocity) { ex.ball.position.addScaledVector(p.velocity,dt); ex.core.position.copy(ex.ball.position); if (p.gravity) p.velocity.y+=p.gravity*dt; }
-                    ex.ballMat.opacity=0.95*(1-t*0.7); ex.coreMat.opacity=0.7*(1-t);
+                    if (p.velocity) { ex.ball.position.addScaledVector(p.velocity,dt); ex.core.position.copy(ex.ball.position); if (ex.pGlow) ex.pGlow.position.copy(ex.ball.position); if (p.gravity) p.velocity.y+=p.gravity*dt; }
+                    ex.ballMat.opacity=1*(1-t*0.5); ex.coreMat.opacity=0.8*(1-t*0.5);
+                    if(ex.pGlowMat) ex.pGlowMat.opacity=0.07*(1-t*0.5);
                     var mfo=Math.max(0,1-p.age/0.18);
                     ex.flashMat.opacity=mfo; ex.flashMat2.opacity=mfo*0.7; ex.flashMat3.opacity=mfo*0.9;
                     var mfa=Math.min(p.age/0.18,1), sg=1+mfa*0.4; ex.flash.scale.set(sg,0.575*sg,sg); ex.flash2.scale.set(sg,0.575*sg,sg);
                     var fg=1-mfa*0.5; ex.flash3.scale.set(fg,fg,fg);
-                    if (ex.trail) { ex.trail.position.copy(ex.ball.position); ex.trail.lookAt(ex.ball.position.clone().add(ex.dir)); var tg=Math.min(1,p.age*10); ex.trail.scale.set(1,1,tg*(1+t*4)); ex.trailMat.opacity=0.35*(1-t); } break;
+                    if (ex.trail) { var _td=p.velocity?p.velocity.clone().normalize():ex.dir; ex.trail.position.copy(ex.ball.position); ex.trail.lookAt(ex.ball.position.clone().add(_td)); var tg=Math.min(1,p.age*6); var tw=1+t*2; ex.trail.scale.set(tw,tw,0.25+tg*(0.3+t*3)); ex.trailMat.opacity=0.35*(1-t); }
+                    if ((ex.isCluster||ex.isNapalm) && Math.random()<dt*56) {
+                        var _sp=ex.ball.position.clone();
+                        var _hue=ex.isNapalm?(0.06+Math.random()*0.08):(0.56+Math.random()*0.08), _lit=0.5+Math.random()*0.3;
+                        var _sc=new THREE.Color().setHSL(_hue,ex.isNapalm?0.9:0.45,_lit);
+                        var _sm=new THREE.SpriteMaterial({map:FT,color:_sc,transparent:true,opacity:0.7+Math.random()*0.2,blending:THREE.AdditiveBlending,depthWrite:false});
+                        var _ssz0=ex.isNapalm?(1.0+Math.random()*4.0):(2.6+Math.random()*2.16);
+                        var _ss=new THREE.Sprite(_sm); _ss.scale.set(_ssz0,_ssz0,1); _ss.position.copy(_sp); _ss.renderOrder=997; _ss.layers.enable(1); scene.add(_ss);
+                        var _sa=Math.random()*Math.PI*2, _se=Math.acos(2*Math.random()-1), _ssp=ex.isNapalm?(24+Math.random()*32):(12+Math.random()*16);
+                        var _sv=new THREE.Vector3(Math.sin(_se)*Math.cos(_sa)*_ssp, Math.sin(_se)*Math.sin(_sa)*_ssp, Math.cos(_se)*_ssp);
+                        active.push({type:'flame',age:0,maxAge:ex.isNapalm?(0.091+Math.random()*0.082):(0.14+Math.random()*0.126),velocity:_sv,extras:{sprite:_ss,mat:_sm,baseOp:_sm.opacity,shrink:true,noFloat:true}});
+                    }
+                    break;
                 case 'rocket':
                     if (p.velocity) {
                         if (ex.isAA) { p.velocity.y+=150*dt; ex.dir.copy(p.velocity).normalize(); }
@@ -89,13 +116,14 @@ window._barProjectilesUpdate = function(ctx) {
                         if (p.dist>=p.range) { p.age=p.maxAge; }
                     }
                     if (!ex.isAA && Math.random()<dt*32) spawnSmoke(ex.group.position.clone());
-                    if (ex.trail) { ex.trail.position.copy(ex.group.position); ex.trail.lookAt(ex.group.position.clone().add(ex.dir)); var tg=Math.min(1,p.age*4); ex.trail.scale.set(1,1,tg*(1+t*2)); ex.trailMat.opacity=0.55*(1-t); }
+                    if (ex.trail) { ex.trail.position.copy(ex.group.position); ex.trail.lookAt(ex.group.position.clone().add(ex.dir)); var tg=Math.min(1,p.age*4); ex.trail.scale.set(1,1,0.25+tg*(1+t*2)); ex.trailMat.opacity=0.55*(1-t); }
                     ex.exhMat.opacity=0.5+Math.random()*0.4; break;
                 case 'flame':
-                    if (p.velocity) { p.velocity.multiplyScalar(1-dt*1.2); ex.sprite.position.addScaledVector(p.velocity,dt); p.velocity.y+=8*dt; }
-                    var fgEnd=ex.noBoost?3.6:ex.isTex?4.1:5.5, fg=t<0.8?3.6:fgEnd, bop=ex.baseOp||0.9, fo=t<0.8?bop*(1-t*t):bop*(1-t*t)*(1-(t-0.8)/0.2);
-                    ex.mat.opacity=fo; ex.sprite.scale.multiplyScalar(1+dt*fg);
-                    if (ex.rotSpd) ex.mat.rotation+=ex.rotSpd*dt; break;
+                    if (p.velocity) { p.velocity.multiplyScalar(1-dt*(ex.shrink?3.0:1.2)); ex.sprite.position.addScaledVector(p.velocity,dt); if(!ex.noFloat) p.velocity.y+=8*dt; }
+                    if (ex.shrink) { var bop=ex.baseOp||0.9; ex.mat.opacity=bop*(1-t); ex.sprite.scale.multiplyScalar(1-dt*3.5); }
+                    else { var fgEnd=ex.noBoost?3.6:ex.isTex?4.1:5.5, fg=t<0.8?3.6:fgEnd, bop=ex.baseOp||0.9, fo=t<0.8?bop*(1-t*t):bop*(1-t*t)*(1-(t-0.8)/0.2); ex.mat.opacity=fo; ex.sprite.scale.multiplyScalar(1+dt*fg); }
+                    if (ex.rotSpd) ex.mat.rotation+=ex.rotSpd*dt;
+                    break;
                 case 'lightning':
                     var lo=ex.origin; if (ex.node) { lo=refreshNode(ex.node); ex.flare.position.copy(lo.pos); }
                     if (Math.random()<dt*20) {
@@ -114,10 +142,11 @@ window._barProjectilesUpdate = function(ctx) {
                     ex.flareMat.opacity=1-t;
                     if (ex.endFlare) { ex.endFlare.position.copy(ex.bolts[0].pts[ex.seg]); ex.endFlareMat.opacity=0.8*(1-t); } break;
                 case 'dgun':
-                    if (p.velocity) { ex.sphere.position.addScaledVector(p.velocity,dt); ex.glow.position.copy(ex.sphere.position); ex.flare.position.copy(ex.sphere.position); }
-                    var ds=2+p.age*6; ex.sphere.scale.set(ds,ds,ds); ex.sphereMat.opacity=0.9*(1-t);
+                    if (p.velocity) { ex.sphere.position.addScaledVector(p.velocity,dt); ex.glow.position.copy(ex.sphere.position); ex.warmGlow.position.copy(ex.sphere.position); ex.flare.position.copy(ex.sphere.position); }
+                    var ds=8; ex.sphere.scale.set(ds,ds,ds); ex.sphereMat.opacity=0.9*(1-t);
                     ex.glow.scale.set(ds*2.5,ds*2.5,1); ex.glowMat.opacity=0.8*(1-t);
-                    var fs=ds*10.5*(1+0.15*Math.sin(p.age*18)); ex.flare.scale.set(fs,fs,1); ex.flareMat.opacity=0.9*(1-t*t); break;
+                    var wgs=ds*5; ex.warmGlow.scale.set(wgs,wgs,1); ex.warmGlowMat.opacity=0.14*(1-t);
+                    var fs=114*(1+0.15*Math.sin(p.age*18)); ex.flare.scale.set(fs,fs,1); ex.flareMat.opacity=0.9*(1-t*t); ex.flareMat.rotation+=0.4*dt; break;
                 case 'smoke':
                     if (p.velocity) ex.sprite.position.addScaledVector(p.velocity,dt);
                     ex.mat.opacity=ex.sop*(1-t); ex.sprite.scale.multiplyScalar(1+dt*0.95);
@@ -145,7 +174,7 @@ window._barProjectilesUpdate = function(ctx) {
                             ex.group.lookAt(ex.group.position.clone().add(p.velocity));
                             p.dist+=p.velocity.length()*dt;
                             if (p.dist>=p.range) { p.age=p.maxAge; }
-                            ex.exhMat.opacity=0.4+Math.random()*0.3;
+                            ex.exhMat.opacity=0.1+Math.random()*0.08;
                         }
                     }
                     if (!ex.airDrop && Math.random()<dt*15) spawnBubble(ex.group.position.clone());
@@ -178,12 +207,13 @@ window._barProjectilesUpdate = function(ctx) {
         switch(p.type) {
             case 'beam': rm(ex.beam,ex.beamCore,ex.laserFlare,ex.endFlare,ex.endLaserFlare); if(ex.light) releaseLight(ex.light); dis(ex.beam.geometry,ex.beamMat,ex.beamCore.geometry,ex.coreMat,ex.laserFlareMat,ex.endFlareMat,ex.endLaserFlareMat); break;
             case 'bolt': rm(ex.bolt,ex.flare); if(ex.trail){rm(ex.trail);dis(ex.trail.geometry,ex.trailMat);} dis(ex.boltMat,ex.flareMat); break;
-            case 'laserround': rm(ex.round,ex.core,ex.flare,ex.laserFlare); if(ex.trail){rm(ex.trail);dis(ex.trail.geometry,ex.trailMat);} dis(ex.round.geometry,ex.roundMat,ex.core.geometry,ex.coreMat,ex.flareMat,ex.laserFlareMat); break;
-            case 'plasma': rm(ex.ball,ex.core,ex.flash,ex.flash2,ex.flash3); if(ex.trail){rm(ex.trail);dis(ex.trail.geometry,ex.trailMat);} dis(ex.ballMat,ex.coreMat,ex.flashMat,ex.flashMat2,ex.flashMat3,ex.flash.geometry,ex.flash2.geometry,ex.flash3.geometry); break;
+            case 'railbeam': rm(ex.beam,ex.core); dis(ex.beam.geometry,ex.beamMat,ex.core.geometry,ex.coreMat); break;
+            case 'laserround': rm(ex.round,ex.core,ex.flare,ex.laserFlare,ex.glow,ex.glow2,ex.sgFlash,ex.sgFlash2,ex.sgFlash3); if(ex.trail){rm(ex.trail);dis(ex.trail.geometry,ex.trailMat);} dis(ex.round.geometry,ex.roundMat,ex.core.geometry,ex.coreMat,ex.flareMat,ex.laserFlareMat,ex.glowMat,ex.glowMat2,ex.sgFlashMat,ex.sgFlashMat2,ex.sgFlashMat3); if(ex.glow)dis(ex.glow.geometry); if(ex.glow2)dis(ex.glow2.geometry); if(ex.sgFlash)dis(ex.sgFlash.geometry); if(ex.sgFlash2)dis(ex.sgFlash2.geometry); if(ex.sgFlash3)dis(ex.sgFlash3.geometry); break;
+            case 'plasma': rm(ex.ball,ex.core,ex.pGlow,ex.flash,ex.flash2,ex.flash3); if(ex.trail){rm(ex.trail);dis(ex.trail.geometry,ex.trailMat);} dis(ex.ballMat,ex.coreMat,ex.pGlowMat,ex.flashMat,ex.flashMat2,ex.flashMat3,ex.flash.geometry,ex.flash2.geometry,ex.flash3.geometry); break;
             case 'rocket': rm(ex.group); if(ex.trail){rm(ex.trail);dis(ex.trail.geometry,ex.trailMat);} dis(ex.bodyMat,ex.noseMat,ex.exhMat); ex.group.traverse(function(c){if(c.geometry)c.geometry.dispose();}); break;
             case 'flame': rm(ex.sprite); dis(ex.mat); break;
             case 'lightning': for(var bi=0;bi<ex.bolts.length;bi++){var b=ex.bolts[bi];rm(b.tube,b.core);dis(b.tubeG,b.tubeMat,b.coreG,b.coreMat);} rm(ex.flare); if(ex.endFlare){rm(ex.endFlare);dis(ex.endFlareMat);} dis(ex.flareMat); break;
-            case 'dgun': rm(ex.sphere,ex.glow,ex.flare); dis(ex.sphere.geometry,ex.sphereMat,ex.glowMat,ex.flareMat); break;
+            case 'dgun': rm(ex.sphere,ex.glow,ex.warmGlow,ex.flare); dis(ex.sphere.geometry,ex.sphereMat,ex.glowMat,ex.warmGlowMat,ex.flareMat); break;
             case 'smoke': rm(ex.sprite); dis(ex.mat); break;
             case 'torpedo': rm(ex.group); dis(ex.bodyMat,ex.noseMat,ex.exhMat); ex.group.traverse(function(c){if(c.geometry)c.geometry.dispose();}); break;
             case 'bomb': rm(ex.group); dis(ex.bodyMat,ex.noseMat,ex.finMat); ex.group.traverse(function(c){if(c.geometry)c.geometry.dispose();}); break;
@@ -196,11 +226,25 @@ window._barProjectilesUpdate = function(ctx) {
 
     var _spawnFns = {beam:spawnBeam,laserround:spawnLaserRound,bolt:spawnBolt,plasma:spawnPlasma,rocket:spawnRocket,torpedo:spawnTorpedo,starburst:spawnStarburst,flame:spawnFlame,lightning:spawnLightning,dgun:spawnDgun,bomb:spawnBomb};
 
+    var unitName = ctx.unitName;
     function _fireSingle(wnum, data, burstIdx) {
         var o=getFireOrigin(wnum); if (!o) return;
+        // legphoenix: weapon 1 (legphtarg) is the targeting weapon that triggers
+        // the skybeam heatray.  Override to use weapon 2 data as heatray.
+        if (unitName==='legphoenix' && (String(wnum)==='1'||String(wnum)==='2')) {
+            var w2=wpnDataByNum['2']||wpnDataByNum['1'];
+            var d2={}; for(var k in data) d2[k]=data[k];
+            if(w2&&w2!==data){for(var k in w2) d2[k]=w2[k];}
+            d2.type='HeatRay'; d2.largeBeam=false;
+            if(!d2.range||d2.range<200) d2.range=450;
+            data=d2;
+        }
         var cat = getCat(data);
+        // These heatray units have incorrect (too short) beamtime in DOM data — force 3s
+        var _hrFix={'legphoenix':1,'legbastion':1,'legaheattank':1,'legehovertank':1};
+        if (_hrFix[unitName] && cat==='beam') data.beamtime=3;
         if (data.sound) { var _pitch = cat==='beam' ? (data.largeBeam ? 0.96+Math.random()*0.08 : 1) : 0.93+Math.random()*0.14; playSound(data.sound,o.pos,true,_pitch); }
-        var _fn=((data.name||'')+'|'+(data.type||'')).toLowerCase(); data._isFlak=_fn.indexOf('flak')!==-1; data._isAA=!!data.isAA; var _t2=(data.type||'').toLowerCase().replace(/[\s-]+/g,''); data._isShotgun=_t2==='shotguncannon'||_t2==='gatlinggun';
+        var _fn=((data.name||'')+'|'+(data.type||'')).toLowerCase(); data._isFlak=_fn.indexOf('flak')!==-1; data._isAA=!!data.isAA; var _t2=(data.type||'').toLowerCase().replace(/[\s-]+/g,''); var _n2=(data.name||'').toLowerCase().replace(/[\s-]+/g,''); data._isShotgun=_t2.indexOf('shotgun')!==-1||_t2.indexOf('gatling')!==-1||_n2.indexOf('shotgun')!==-1||_n2.indexOf('gatling')!==-1; data._isCluster=_n2.indexOf('clusterplasma')!==-1||_t2.indexOf('clusterplasma')!==-1; data._isNapalm=_t2==='napalmlauncher'||_n2.indexOf('napalm')!==-1;
         var hold = cat === 'beam' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : cat === 'flame' ? 0.2 : cat === 'lightning' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : 0.05;
         flashModel(Math.min(dScale(data.damage) * rScale(data.range) * 0.15, 0.25), hold);
         var spawnFn = _spawnFns[cat]||spawnPlasma;
@@ -214,6 +258,10 @@ window._barProjectilesUpdate = function(ctx) {
                 spawnFn(o, shotData);
             }
         }
+        // Railgun: spawn a short flash beam along the full range
+        var _rt=(data.type||'').toLowerCase().replace(/[\s-]+/g,'');
+        var _rn=(data.name||'').toLowerCase().replace(/[\s-]+/g,'');
+        if (_rt==='railgun'||_rn.indexOf('railgun')!==-1) spawnRailBeam(o, data);
     }
 
     var _burstTimers = {};
@@ -241,6 +289,6 @@ window._barProjectilesUpdate = function(ctx) {
         if (triggerOpen) triggerOpen(function() { _doFire(wnum); });
     }
 
-    return {fireWeapon: fireWeapon, update: update, wpnDataByNum: wpnDataByNum};
+    return {fireWeapon: fireWeapon, update: update, wpnDataByNum: wpnDataByNum, setPaused: setPaused};
 };
 </script>

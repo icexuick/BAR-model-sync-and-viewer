@@ -176,6 +176,7 @@ window._barWeaponsSetup = function(THREE, opts) {
         tooltip.style.display = 'block';
         tooltip.style.left = Math.round(x + 14) + 'px';
         tooltip.style.top  = Math.round(y - 8) + 'px';
+        window._barTooltipHovered = true;
     }
     function showRoleTooltip(x, y, rl) {
         tooltipName.textContent = rl;
@@ -183,8 +184,9 @@ window._barWeaponsSetup = function(THREE, opts) {
         tooltip.style.display = 'block';
         tooltip.style.left = Math.round(x + 14) + 'px';
         tooltip.style.top  = Math.round(y - 8) + 'px';
+        window._barTooltipHovered = true;
     }
-    function hideTooltip() { tooltip.style.display = 'none'; }
+    function hideTooltip() { tooltip.style.display = 'none'; window._barTooltipHovered = false; }
 
     var hoveredWeaponNum = null;
     var activeDomEl = null;
@@ -393,11 +395,43 @@ window._barWeaponsSetup = function(THREE, opts) {
             _fireTimers[def].forEach(function(t) { clearTimeout(t); });
         }
         _fireTimers[def] = [];
+        // Separate deploy actions (play once, stay clamped) from normal fire actions
+        var deployActs = [], normalActs = [];
         for (var j = 0; j < actions.length; j++) {
-            actions[j].stop().reset();
+            var clipName = actions[j].getClip().name;
+            var cfm2 = clipName.match(/^Fire_(\d+)$/);
+            if (cfm2 && _deployActions[parseInt(cfm2[1])]) deployActs.push(actions[j]);
+            else normalActs.push(actions[j]);
+        }
+        // Deploy actions: play only on first fire, stay in deployed pose
+        for (var di = 0; di < deployActs.length; di++) {
+            var da = deployActs[di];
+            var deployed = da.paused && da.time >= da.getClip().duration - 0.01;
+            if (!deployed && !da.isRunning()) {
+                da.reset().play();
+            }
+            // Fire projectile after deploy finishes (or immediately if already deployed)
+            var daClip = da.getClip().name;
+            var daCfm = daClip.match(/^Fire_(\d+)$/);
+            if (daCfm && _projectileFireFn) {
+                var dwn = parseInt(daCfm[1]);
+                if (deployed) {
+                    var fd = fireDelays[String(dwn)] || 0;
+                    if (fd > 0) {
+                        (function(w, d) { var tid = setTimeout(function() { _projectileFireFn(w); }, d * 1000); _fireTimers[def].push(tid); })(dwn, fd);
+                    } else { _projectileFireFn(dwn); }
+                } else {
+                    var dDelay = da.getClip().duration + (fireDelays[String(dwn)] || 0);
+                    (function(w, d) { var tid = setTimeout(function() { _projectileFireFn(w); }, d * 1000); _fireTimers[def].push(tid); })(dwn, dDelay);
+                }
+            }
+        }
+        // Normal fire actions: reset and play each time
+        for (var nj = 0; nj < normalActs.length; nj++) {
+            normalActs[nj].stop().reset();
         }
         var STAGGER_MS = 400;
-        for (var i = 0; i < actions.length; i++) {
+        for (var i = 0; i < normalActs.length; i++) {
             (function(action, delay) {
                 var tid = setTimeout(function() {
                     action.reset().play();
@@ -426,7 +460,7 @@ window._barWeaponsSetup = function(THREE, opts) {
                     });
                 }, delay);
                 _fireTimers[def].push(tid);
-            })(actions[i], i * STAGGER_MS);
+            })(normalActs[i], i * STAGGER_MS);
         }
     }
 
@@ -494,17 +528,53 @@ window._barWeaponsSetup = function(THREE, opts) {
         renderer.domElement.style.cursor = 'pointer';
     }
 
+    var _deployActions = {};
     function initFireAnims(THREE, mixer, animations) {
         if (!mixer || !animations) return;
         _initMixer = mixer;
+        // Collect toggle track names (piece.property) to detect redundant Fire_N clips
+        var toggleTrackNames = new Set();
+        var toggleClip = animations.find(function(c) { return c.name === 'ActivateOpen'; });
+        if (toggleClip) {
+            for (var tt = 0; tt < toggleClip.tracks.length; tt++) {
+                toggleTrackNames.add(toggleClip.tracks[tt].name.toLowerCase());
+            }
+        }
         for (var i = 0; i < animations.length; i++) {
             var clip = animations[i];
             var fm = clip.name.match(/^Fire_(\d+)$/);
             if (!fm) continue;
             var wnum = parseInt(fm[1]);
+            // Skip Fire_N clips whose tracks (piece.property) all match the toggle animation
+            // (these are redundant door-open anims that conflict with ActivateOpen)
+            if (toggleTrackNames.size > 0) {
+                var allInToggle = true;
+                for (var ct = 0; ct < clip.tracks.length; ct++) {
+                    if (!toggleTrackNames.has(clip.tracks[ct].name.toLowerCase())) { allInToggle = false; break; }
+                }
+                if (allInToggle) continue;
+            }
             var action = mixer.clipAction(clip);
             action.setLoop(THREE.LoopOnce, 1);
-            action.clampWhenFinished = false;
+            // Detect deploy animations: tracks where end pose differs from start pose
+            // (e.g. missile launchers tilting to firing position and staying there).
+            // Recoil animations return to rest, so first == last keyframe values.
+            var isDeploy = false;
+            for (var t = 0; t < clip.tracks.length; t++) {
+                var tr = clip.tracks[t], vals = tr.values, stride = vals.length / tr.times.length;
+                if (tr.times.length >= 2) {
+                    for (var si = 0; si < stride; si++) {
+                        if (Math.abs(vals[si] - vals[vals.length - stride + si]) > 0.01) { isDeploy = true; break; }
+                    }
+                    if (isDeploy) break;
+                }
+            }
+            if (isDeploy) {
+                action.clampWhenFinished = true;
+                _deployActions[wnum] = true;
+            } else {
+                action.clampWhenFinished = false;
+            }
             fireActions[wnum] = action;
         }
 

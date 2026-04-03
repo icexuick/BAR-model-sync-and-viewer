@@ -470,7 +470,22 @@
             if (window._barProjectilesSetup) {
                 const projCtx = window._barProjectilesSetup(THREE, {
                     scene: scene, mainScene: scene, camera, modelScene, unitName, weaponSummary, renderer,
-                    isToggleOpen: function() { return !toggleOpenClip || toggleState; },
+                    isToggleOpen: function() {
+                        if (!toggleOpenClip || toggleState) return true;
+                        // Units whose toggle is a morph (not weapon deploy) can always fire.
+                        // Detect by checking if toggle animates any weapon aim pieces.
+                        if (toggleOpenClip && !toggleOpenClip._barIsWeaponDeploy) {
+                            var isWpnDeploy = false;
+                            var aimPcs = new Set();
+                            for (var wk in weaponSummary) { var ap = weaponSummary[wk].aim_pieces; if (ap) ap.forEach(function(p) { aimPcs.add(p.toLowerCase()); }); }
+                            for (var ti = 0; ti < toggleOpenClip.tracks.length; ti++) {
+                                var tn = toggleOpenClip.tracks[ti].name.split('.')[0].toLowerCase();
+                                if (aimPcs.has(tn)) { isWpnDeploy = true; break; }
+                            }
+                            toggleOpenClip._barIsWeaponDeploy = isWpnDeploy ? 'yes' : 'no';
+                        }
+                        return toggleOpenClip._barIsWeaponDeploy === 'no';
+                    },
                     triggerOpen: function(onDone) {
                         if (!toggleOpenClip || toggleState) { if (onDone) onDone(); return; }
                         if (toggleAnimating) return; // already animating, skip
@@ -679,7 +694,8 @@
                         envRotMat3.setFromMatrix4(envRotMat4);
                         material.userData.shader.uniforms.envMapRotation.value.copy(envRotMat3);
                     }
-                    if (turntableActive && !didDrag && !isAltDown) modelScene.rotation.y += VIEWER_CONFIG.autoRotationSpeed * clockDelta;
+                    if (window._barPaused) { controls.update(); composer.render(); return; }
+                    if (turntableActive && !didDrag && !isAltDown && !window._barTooltipHovered) modelScene.rotation.y += VIEWER_CONFIG.autoRotationSpeed * clockDelta;
                     if (mixer) mixer.update(clockDelta);
                     if (projectilesUpdate) projectilesUpdate(clockDelta);
 

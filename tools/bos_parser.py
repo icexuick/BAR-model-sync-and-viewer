@@ -198,7 +198,7 @@ def parse_bos(filepath: str) -> BOSParseResult:
         # Popup-defense pattern: QueryWeapon checks is_open and returns a dummy
         # piece (e.g. aimFlare) when closed, real fire piece when open.
         # The viewer always shows the open state, so discard the closed-branch pieces.
-        if len(all_refs) > 1 and re.search(r'\bis_open\b', body, re.IGNORECASE):
+        if len(all_refs) > 1 and re.search(r'\b(?:is_open|isOpen)\b', body, re.IGNORECASE):
             open_refs = _extract_open_state_pieces(body, result.pieces)
             if open_refs:
                 all_refs = open_refs
@@ -442,13 +442,13 @@ def _extract_open_state_pieces(body: str, known_pieces: List[str]) -> List[str]:
     # Find if-else block testing is_open
     # Pattern: if (is_open == 0) { ... } else { ... }
     m = re.search(
-        r'if\s*\(\s*is_open\s*==\s*(\d)\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
+        r'if\s*\(\s*(?:is_open|isOpen)\s*==\s*(\d)\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
         body, re.IGNORECASE
     )
     if not m:
-        # Try: if (!IsOpen) { ... } else { ... }  (IsOpen is a macro for is_open)
+        # Try: if (!IsOpen) { ... } else { ... }  (IsOpen is a macro for is_open/isOpen)
         m = re.search(
-            r'if\s*\(\s*!\s*IsOpen\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
+            r'if\s*\(\s*!\s*(?:IsOpen|isOpen|is_open)\s*\)\s*\{([^}]*)\}\s*else\s*\{([^}]*)\}',
             body, re.IGNORECASE
         )
         if m:

@@ -200,12 +200,36 @@
 
         modelScene.add(orbMesh);
 
+        // Subtle radial glow sprite behind the orb in the orb's color
+        const gc = document.createElement('canvas'); gc.width = 64; gc.height = 64;
+        const gx = gc.getContext('2d'), gg = gx.createRadialGradient(32,32,0,32,32,32);
+        gg.addColorStop(0,'rgba(255,255,255,1)'); gg.addColorStop(0.3,'rgba(255,255,255,0.6)'); gg.addColorStop(1,'rgba(255,255,255,0)');
+        gx.fillStyle = gg; gx.fillRect(0,0,64,64);
+        const glowTex = new THREE.CanvasTexture(gc);
+        const glowColor = new THREE.Color(c2[0], c2[1], c2[2]);
+        const glowSize = cfg.size * 2.2; // 10% larger diameter than orb
+        const glowMat = new THREE.SpriteMaterial({
+            map: glowTex,
+            color: glowColor,
+            transparent: true,
+            opacity: 0.08,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+        });
+        const glowSprite = new THREE.Sprite(glowMat);
+        glowSprite.scale.set(glowSize, glowSize, 1);
+        glowSprite.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
+        glowSprite.renderOrder = 998;
+        glowSprite.raycast = () => {};
+        modelScene.add(glowSprite);
+
         // If team-colored, update color when team color changes
         if (cfg.type === 'team') {
             window._orbUpdateTeamColor = (hexColor) => {
                 const tc = new THREE.Color(hexColor);
                 orbMat.uniforms.color1.value.set(tc.r * 0.87 + 0.13, tc.g * 0.87 + 0.13, tc.b * 0.87 + 0.13);
                 orbMat.uniforms.color2.value.set(tc.r * 0.87, tc.g * 0.87, tc.b * 0.87);
+                glowMat.color.set(tc.r * 0.87, tc.g * 0.87, tc.b * 0.87);
             };
         }
     }
