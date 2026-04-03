@@ -391,6 +391,107 @@ class GLBBuilder:
             })
             print(f"  GLB animation '{anim_name}': {len(channels)} channels")
 
+    def add_tracks_to_animation(self, anim_name: str, tracks: list,
+                                   node_name_to_idx: Dict[str, int],
+                                   piece_offsets: Dict[str, tuple] = None,
+                                   now_rots: dict = None):
+        """Merge extra BosTrack entries into an existing animation clip."""
+        anim = next((a for a in getattr(self, 'animations', [])
+                      if a['name'] == anim_name), None)
+        if anim is None:
+            # Fall back to creating a new animation
+            self.add_animation(anim_name, tracks, node_name_to_idx,
+                               piece_offsets, now_rots)
+            return
+        # Re-use the same internal helpers as add_animation
+        import math
+        from collections import defaultdict
+
+        piece_offsets = piece_offsets or {}
+        rot_by_piece: Dict[str, Dict[int, object]] = defaultdict(dict)
+        trans_by_piece: Dict[str, Dict[int, object]] = defaultdict(dict)
+        for track in tracks:
+            name_lower = track.piece.lower()
+            if name_lower not in node_name_to_idx:
+                continue
+            if track.is_rotation:
+                rot_by_piece[name_lower][track.axis] = track
+            else:
+                trans_by_piece[name_lower][track.axis] = track
+
+        samplers = anim['samplers']
+        channels = anim['channels']
+
+        def _add_sampler(times, values, accessor_type):
+            t_arr = np.array(times, dtype=np.float32)
+            t_bv = self.add_buffer_view(t_arr.tobytes())
+            t_acc = self.add_accessor(t_bv, 5126, len(times), "SCALAR",
+                                      min_vals=[float(t_arr.min())],
+                                      max_vals=[float(t_arr.max())])
+            v_arr = np.array(values, dtype=np.float32)
+            v_bv = self.add_buffer_view(v_arr.tobytes())
+            v_acc = self.add_accessor(v_bv, 5126, len(times), accessor_type)
+            idx = len(samplers)
+            samplers.append({"input": t_acc, "interpolation": "LINEAR", "output": v_acc})
+            return idx
+
+        def _interp(axis_tracks, axis, t):
+            if axis not in axis_tracks:
+                return 0.0
+            kfs = axis_tracks[axis].keyframes
+            if not kfs: return 0.0
+            if t <= kfs[0].time: return kfs[0].value
+            if t >= kfs[-1].time: return kfs[-1].value
+            for i in range(len(kfs) - 1):
+                if kfs[i].time <= t <= kfs[i + 1].time:
+                    f = (t - kfs[i].time) / (kfs[i + 1].time - kfs[i].time)
+                    return kfs[i].value + f * (kfs[i + 1].value - kfs[i].value)
+            return kfs[-1].value
+
+        def _euler_to_quat(rx_deg, ry_deg, rz_deg):
+            rx = math.radians(rx_deg)
+            ry = math.radians(ry_deg)
+            rz = -math.radians(rz_deg)
+            cx, sx = math.cos(rx / 2), math.sin(rx / 2)
+            cy, sy = math.cos(ry / 2), math.sin(ry / 2)
+            cz, sz = math.cos(rz / 2), math.sin(rz / 2)
+            return [cz*cy*sx + cx*sz*sy, cx*cz*sy - cy*sx*sz,
+                    cx*cy*sz - cz*sx*sy, cx*cz*cy + sx*sz*sy]
+
+        added = 0
+        for piece, axis_tracks in rot_by_piece.items():
+            node_idx = node_name_to_idx[piece]
+            all_times = sorted({kf.time for tr in axis_tracks.values() for kf in tr.keyframes})
+            base_rx = now_rots.get((piece, 0, True), 0.0) if now_rots else 0.0
+            base_ry = now_rots.get((piece, 1, True), 0.0) if now_rots else 0.0
+            base_rz = now_rots.get((piece, 2, True), 0.0) if now_rots else 0.0
+            quats = []
+            for t in all_times:
+                rx = _interp(axis_tracks, 0, t) if 0 in axis_tracks else base_rx
+                ry = _interp(axis_tracks, 1, t) if 1 in axis_tracks else base_ry
+                rz = _interp(axis_tracks, 2, t) if 2 in axis_tracks else base_rz
+                quats.extend(_euler_to_quat(rx, ry, rz))
+            s = _add_sampler(all_times, quats, "VEC4")
+            channels.append({"sampler": s, "target": {"node": node_idx, "path": "rotation"}})
+            added += 1
+
+        for piece, axis_tracks in trans_by_piece.items():
+            node_idx = node_name_to_idx[piece]
+            rest = piece_offsets.get(piece, (0.0, 0.0, 0.0))
+            all_times = sorted({kf.time for tr in axis_tracks.values() for kf in tr.keyframes})
+            vecs = []
+            for t in all_times:
+                x = (rest[0] - _interp(axis_tracks, 0, t)) if 0 in axis_tracks else rest[0]
+                y = (rest[1] + _interp(axis_tracks, 1, t)) if 1 in axis_tracks else rest[1]
+                z = (rest[2] + _interp(axis_tracks, 2, t)) if 2 in axis_tracks else rest[2]
+                vecs.extend([x, y, z])
+            s = _add_sampler(all_times, vecs, "VEC3")
+            channels.append({"sampler": s, "target": {"node": node_idx, "path": "translation"}})
+            added += 1
+
+        if added:
+            print(f"  GLB animation '{anim_name}': merged {added} extra channels (now {len(channels)} total)")
+
     def apply_animation_t0_as_default_pose(self, anim_name: str):
         """
         For autoplay_open units: overwrite node default translations/rotations

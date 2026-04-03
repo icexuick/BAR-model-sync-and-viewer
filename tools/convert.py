@@ -252,6 +252,7 @@ _EXTRA_TOGGLE_TRACKS: Dict[str, list] = {
 # The animation opens (0 → open_value) over speed, holds briefly, then closes (open_value → close_value).
 _EXTRA_FIRE_TRACKS: Dict[str, Dict[int, list]] = {
     'corkarg': {2: [('aacover', 0, True, -150.0, 0.0, 300.0)]},  # AA hatch opens before firing
+    'armrock': {1: [('aimx1', 0, True, -90.0, 0.0, 180.0)]},     # missile pod deploys forward before firing
 }
 
 def convert_with_weapons(
@@ -1257,8 +1258,6 @@ def convert_with_weapons(
             existing_fire_clips = {cn for cn, _, _ in fire_clips}
             for wnum_extra, tracks_def in extra_fire.items():
                 clip_name = f'Fire_{wnum_extra}'
-                if clip_name in existing_fire_clips:
-                    continue  # don't overwrite existing fire animation
                 from bos_animator import BosTrack, BosKeyframe
                 synth_tracks = []
                 for piece, axis, is_rot, open_val, close_val, spd in tracks_def:
@@ -1278,8 +1277,20 @@ def convert_with_weapons(
                         ]
                     ))
                 if synth_tracks:
-                    builder.add_animation(clip_name, synth_tracks, node_name_to_idx,
-                                          piece_offsets, now_rots=now_rots)
+                    if clip_name in existing_fire_clips:
+                        # Merge extra tracks into the existing fire clip
+                        builder.add_tracks_to_animation(clip_name, synth_tracks,
+                                                        node_name_to_idx, piece_offsets,
+                                                        now_rots=now_rots)
+                        pieces = sorted({t.piece for t in synth_tracks})
+                        print(f"  Fire animation '{clip_name}' (merged aim-piece tracks): "
+                              f"{len(synth_tracks)} tracks, pieces: {', '.join(pieces)}")
+                    else:
+                        builder.add_animation(clip_name, synth_tracks, node_name_to_idx,
+                                              piece_offsets, now_rots=now_rots)
+                        pieces = sorted({t.piece for t in synth_tracks})
+                        print(f"  Fire animation '{clip_name}' (aim-piece inject): "
+                              f"{len(synth_tracks)} tracks, pieces: {', '.join(pieces)}")
                     # Embed fire_delay so projectile spawns after hatch opens
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
@@ -1287,9 +1298,6 @@ def convert_with_weapons(
                         fire_delays = root_extras.get("fire_delays", {})
                         fire_delays[str(wnum_extra)] = open_dur
                         root_extras["fire_delays"] = fire_delays
-                    pieces = sorted({t.piece for t in synth_tracks})
-                    print(f"  Fire animation '{clip_name}' (aim-piece inject): "
-                          f"{len(synth_tracks)} tracks, pieces: {', '.join(pieces)}")
         except Exception as e:
             print(f"  Warning: animation extraction failed: {e}")
 
