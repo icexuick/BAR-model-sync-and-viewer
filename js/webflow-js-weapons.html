@@ -435,45 +435,64 @@ window._barWeaponsSetup = function(THREE, opts) {
         // Fire each weapon: cycling weapons play one barrel, others play normally.
         // Multiple weapons with same def are staggered with 400ms delay.
         var STAGGER_MS = 400;
+
+        // Helper: play one cycling barrel animation (+ optionally fire projectile)
+        function _playCycleShot(action, actWnum, fireProjectile) {
+            var clipName = action.getClip().name;
+            var playedAction = action;
+            if (actWnum && _cycleActions[actWnum]) {
+                var cycleArr = _cycleActions[actWnum];
+                var idx = _cycleIndex[actWnum] || 0;
+                playedAction = cycleArr[idx % cycleArr.length];
+                _cycleIndex[actWnum] = (idx + 1) % cycleArr.length;
+                if (barrelSpins[clipName]) {
+                    action.stop().reset().play();
+                }
+            }
+            playedAction.stop().reset().play();
+            if (fireProjectile && actWnum && _projectileFireFn) {
+                var fDelay = fireDelays[String(actWnum)];
+                if (fDelay && fDelay > 0) {
+                    setTimeout(function() { _projectileFireFn(actWnum); }, fDelay * 1000);
+                } else {
+                    _projectileFireFn(actWnum);
+                }
+            }
+            if (_initMixer) _initMixer.addEventListener('finished', function onDone(e) {
+                if (e.action === playedAction) {
+                    playedAction.stop();
+                    var cn = playedAction.getClip().name;
+                    var rot = _rotaryNodes[cn];
+                    if (rot) {
+                        rot.accumRad += rot.stepRad;
+                        rot.node.rotation[rot.axis] = rot.accumRad;
+                    }
+                    _initMixer.removeEventListener('finished', onDone);
+                }
+            });
+        }
+
         for (var i = 0; i < normalActs.length; i++) {
             (function(action, delay) {
                 var tid = setTimeout(function() {
                     var clipName = action.getClip().name;
                     var cfmW = clipName.match(/^Fire_(\d+)/);
                     var actWnum = cfmW ? parseInt(cfmW[1]) : 0;
-                    // Per-barrel cycling: play only the current barrel's clip
-                    var playedAction = action;
-                    if (actWnum && _cycleActions[actWnum]) {
-                        var cycleArr = _cycleActions[actWnum];
-                        var idx = _cycleIndex[actWnum] || 0;
-                        playedAction = cycleArr[idx % cycleArr.length];
-                        _cycleIndex[actWnum] = (idx + 1) % cycleArr.length;
-                        // Barrel spin overlay: also play the base Fire_N action
-                        if (barrelSpins[clipName]) {
-                            action.stop().reset().play();
-                        }
-                    }
-                    playedAction.stop().reset().play();
-                    if (actWnum && _projectileFireFn) {
-                        var fDelay = fireDelays[String(actWnum)];
-                        if (fDelay && fDelay > 0) {
-                            setTimeout(function() { _projectileFireFn(actWnum); }, fDelay * 1000);
-                        } else {
-                            _projectileFireFn(actWnum);
-                        }
-                    }
-                    if (_initMixer) _initMixer.addEventListener('finished', function onDone(e) {
-                        if (e.action === playedAction) {
-                            playedAction.stop();
-                            var cn = playedAction.getClip().name;
-                            var rot = _rotaryNodes[cn];
-                            if (rot) {
-                                rot.accumRad += rot.stepRad;
-                                rot.node.rotation[rot.axis] = rot.accumRad;
+                    _playCycleShot(action, actWnum, true);
+                    // Burst: schedule remaining shots with barrel animations only
+                    // (projectile system handles its own burst scheduling)
+                    if (actWnum && _cycleActions[actWnum] && _wpnData) {
+                        var wd = _wpnData[String(actWnum)];
+                        if (wd && wd.burst > 1) {
+                            var rate = (wd.burstrate || 0.1) * 1000;
+                            for (var bi = 1; bi < wd.burst; bi++) {
+                                (function(a, w, d) {
+                                    var btid = setTimeout(function() { _playCycleShot(a, w, false); }, d);
+                                    _fireTimers[def].push(btid);
+                                })(action, actWnum, bi * rate);
                             }
-                            _initMixer.removeEventListener('finished', onDone);
                         }
-                    });
+                    }
                 }, delay);
                 _fireTimers[def].push(tid);
             })(normalActs[i], i * STAGGER_MS);
@@ -645,8 +664,12 @@ window._barWeaponsSetup = function(THREE, opts) {
     var _projectileFireFn = null;
     function setProjectileFire(fn) { _projectileFireFn = fn; }
 
+    // Hook: receive weapon data (burst/burstrate) from projectiles system
+    var _wpnData = null;
+    function setWpnData(data) { _wpnData = data; }
+
     return { spinPieceNames: spinPieceNames, hideTooltip: hideTooltip, setWeaponHighlight: setWeaponHighlight,
              meshWeaponMap: meshWeaponMap, unitRoleMeshMap: unitRoleMeshMap, visualMeshesByWeapon: visualMeshesByWeapon,
-             initFireAnims: initFireAnims, setProjectileFire: setProjectileFire };
+             initFireAnims: initFireAnims, setProjectileFire: setProjectileFire, setWpnData: setWpnData };
 };
 </script>

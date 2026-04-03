@@ -533,6 +533,7 @@
                 if (projResult) {
                     projectilesUpdate = projResult.update;
                     if (wpnResult.setProjectileFire) wpnResult.setProjectileFire(projResult.fireWeapon);
+                    if (wpnResult.setWpnData && projResult.wpnDataByNum) wpnResult.setWpnData(projResult.wpnDataByNum);
                 }
             }
 
