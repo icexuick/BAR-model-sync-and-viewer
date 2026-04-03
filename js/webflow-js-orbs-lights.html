@@ -313,6 +313,13 @@
         modelScene.traverse(node => { if (vehicleRe.test(node.name)) isVehicle = true; });
         const blinkRange = isVehicle ? 17 : 30;
 
+        // Shared radial glow texture for blink sprites
+        const bc = document.createElement('canvas'); bc.width = 64; bc.height = 64;
+        const bx = bc.getContext('2d'), bg = bx.createRadialGradient(32,32,0,32,32,32);
+        bg.addColorStop(0,'rgba(255,255,255,1)'); bg.addColorStop(0.3,'rgba(255,255,255,0.6)'); bg.addColorStop(1,'rgba(255,255,255,0)');
+        bx.fillStyle = bg; bx.fillRect(0,0,64,64);
+        const blinkTex = new THREE.CanvasTexture(bc);
+
         const lights = [];
         modelScene.traverse(node => {
             for (const pat of BLINK_PATTERNS) {
@@ -333,7 +340,25 @@
                     light.position.copy(wPos);
                     light.layers.enable(1);
                     modelScene.add(light);
-                    lights.push({ light, type: pat.type, baseIntensity: lIntensity });
+
+                    // Small glow sprite at blink position
+                    const glowMat = new THREE.SpriteMaterial({
+                        map: blinkTex,
+                        color: new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
+                        transparent: true,
+                        opacity: 0.5,
+                        blending: THREE.AdditiveBlending,
+                        depthWrite: false,
+                    });
+                    const glow = new THREE.Sprite(glowMat);
+                    glow.scale.set(5, 5, 1);
+                    glow.position.copy(wPos);
+                    glow.renderOrder = 998;
+                    glow.layers.enable(1);
+                    glow.raycast = () => {};
+                    modelScene.add(glow);
+
+                    lights.push({ light, glow, glowMat, type: pat.type, baseIntensity: lIntensity });
                     break;
                 }
             }
@@ -358,8 +383,10 @@
                 for (const l of lights) {
                     const pulse = 0.6 + 0.4 * Math.sin(t * 1.5);
                     const blink = Math.pow(Math.max(0, Math.sin(t * 4.0)), 16) * 0.5;
-                    l.light.intensity = blinkParams.intensity * (pulse + blink);
+                    const anim = pulse + blink;
+                    l.light.intensity = blinkParams.intensity * anim;
                     l.light.distance = blinkParams.range;
+                    l.glowMat.opacity = 0.3 + 0.4 * anim;
                 }
             };
         }
