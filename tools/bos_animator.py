@@ -1701,9 +1701,9 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
     """
     move_turn_re = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
 
-    # --- Pattern A: if/else with 2 branches ---
+    # --- Pattern A: if/else chains with 2+ branches ---
     # Matches: if(!var){...}else{...}, if(var){...}else{...},
-    #          if(var==0){...}else{...}, if(var!=0){...}else{...}
+    #          if(var==0){...}else if(var==1){...}else if(var==2){...}
     bool_pattern = re.compile(
         r'\bif\s*\(\s*!?\s*(\w+)\s*(?:==\s*\d+|!=\s*\d+)?\s*\)\s*\{', re.IGNORECASE
     )
@@ -1717,25 +1717,35 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
             branch1_body = None
             branch1_end = 0
         if branch1_body:
+            branch_bodies_a = [branch1_body]
             rest = body[branch1_end:]
-            else_m = re.match(r'\s*else\s*\{', rest, re.IGNORECASE)
-            if else_m:
+            # Collect all else / else-if branches
+            while True:
+                else_m = re.match(r'\s*else\s+if\s*\([^)]*\)\s*\{', rest, re.IGNORECASE)
+                if not else_m:
+                    else_m = re.match(r'\s*else\s*\{', rest, re.IGNORECASE)
+                if not else_m:
+                    break
                 try:
-                    branch2_body, branch2_end = _extract_branch_block(rest, else_m.start())
+                    bb, be = _extract_branch_block(rest, else_m.start())
                 except (ValueError, IndexError):
-                    branch2_body = None
-                    branch2_end = 0
-                if branch2_body:
-                    post_branch = rest[branch2_end:]
-                    branch_bodies = []
-                    if move_turn_re.search(branch1_body):
-                        branch_bodies.append(branch1_body)
-                    if move_turn_re.search(branch2_body):
-                        branch_bodies.append(branch2_body)
-                    if len(branch_bodies) >= 2:
-                        merged = pre_branch + '\n'.join(branch_bodies) + post_branch
-                        indiv = [pre_branch + bb + post_branch for bb in branch_bodies]
-                        return merged, len(branch_bodies), None, indiv
+                    break
+                branch_bodies_a.append(bb)
+                rest = rest[be:]
+            post_branch = rest
+            branch_bodies = [bb for bb in branch_bodies_a if move_turn_re.search(bb)]
+            if len(branch_bodies) >= 2:
+                # Recursively flatten nested if-branches within each branch
+                flat_branches = []
+                for bb in branch_bodies:
+                    sub_merged, sub_nb, _, sub_indiv = _sequence_if_branches(bb)
+                    if sub_indiv and sub_nb >= 2:
+                        flat_branches.extend(sub_indiv)
+                    else:
+                        flat_branches.append(bb)
+                merged = pre_branch + '\n'.join(flat_branches) + post_branch
+                indiv = [pre_branch + fb + post_branch for fb in flat_branches]
+                return merged, len(flat_branches), None, indiv
 
     # --- Pattern B: if(gun == 0) { ... } if(gun == 1) { ... } ... ---
     gun_pattern = re.compile(
