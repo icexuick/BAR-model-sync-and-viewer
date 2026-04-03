@@ -233,6 +233,7 @@
             const breath = (baseOrbR + Math.sin(t) - 1.0) / baseOrbR;
             const s = baseGlowScale * breath;
             glowSprite.scale.set(s, s, 1);
+            glowMat.opacity = 0.23 + 0.05 * Math.sin(t * 1.3);
         };
 
         // If team-colored, update color when team color changes
