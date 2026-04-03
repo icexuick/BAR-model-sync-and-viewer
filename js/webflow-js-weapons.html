@@ -358,9 +358,13 @@ window._barWeaponsSetup = function(THREE, opts) {
 
     // Read fire_rotary metadata from model extras (gatling spindle advance)
     var fireRotary = null;
+    var barrelSpins = {};
     modelScene.traverse(function(node) {
         if (node.userData && node.userData.fire_rotary) {
             fireRotary = node.userData.fire_rotary;
+        }
+        if (node.userData && node.userData.barrel_spins) {
+            node.userData.barrel_spins.forEach(function(n) { barrelSpins[n] = true; });
         }
     });
 
@@ -444,6 +448,10 @@ window._barWeaponsSetup = function(THREE, opts) {
                         var idx = _cycleIndex[actWnum] || 0;
                         playedAction = cycleArr[idx % cycleArr.length];
                         _cycleIndex[actWnum] = (idx + 1) % cycleArr.length;
+                        // Barrel spin overlay: also play the base Fire_N action
+                        if (barrelSpins[clipName]) {
+                            action.stop().reset().play();
+                        }
                     }
                     playedAction.stop().reset().play();
                     if (actWnum && _projectileFireFn) {
@@ -591,8 +599,9 @@ window._barWeaponsSetup = function(THREE, opts) {
                 }
             }
             // Rotary clips (gatling/revolving) intentionally don't return to rest —
-            // they must replay every shot, not be treated as one-time deploy anims
-            if (isDeploy && fireRotary && fireRotary[clip.name]) {
+            // they must replay every shot, not be treated as one-time deploy anims.
+            // Barrel spin clips (minigun spin-up overlay) also don't return to rest.
+            if (isDeploy && ((fireRotary && fireRotary[clip.name]) || barrelSpins[clip.name])) {
                 isDeploy = false;
             }
             if (isDeploy) {

@@ -1284,6 +1284,13 @@ def convert_with_weapons(
                 if barrel_m:
                     base_name = barrel_m.group(1)
                     fire_cycle.setdefault(base_name, []).append(clip_name)
+            # Barrel spin clips: Fire_N that coexists with Fire_N_0/Fire_N_1
+            # (the spin is an overlay, not a deploy gate)
+            barrel_spins = []
+            for clip_name, _, _ in fire_clips:
+                fm = re.match(r'^(Fire_\d+)$', clip_name)
+                if fm and fm.group(1) in fire_cycle:
+                    barrel_spins.append(clip_name)
             if model.root_piece:
                 root_idx = builder.scenes[0]["nodes"][0]
                 root_extras = builder.nodes[root_idx].setdefault("extras", {})
@@ -1291,6 +1298,8 @@ def convert_with_weapons(
                     root_extras["fire_rotary"] = fire_rotary
                 if fire_cycle:
                     root_extras["fire_cycle"] = fire_cycle
+                if barrel_spins:
+                    root_extras["barrel_spins"] = barrel_spins
 
             # Inject synthetic fire animations for aim-related piece movement
             # (e.g. AA hatch opening before firing)
