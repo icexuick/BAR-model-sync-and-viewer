@@ -150,8 +150,17 @@
         }
     `;
 
+    // Radar/jammer blink light config: piece name patterns → color
+    const BLINK_PATTERNS = [
+        { match: /^blink/i,       color: [0.1, 0.9, 0.2], type: 'radar' },   // green
+        { match: /^radarlight/i,  color: [0.1, 0.9, 0.2], type: 'radar' },   // green
+        { match: /^jam/i,         color: [0.9, 0.1, 0.1], type: 'jammer' },  // red
+        { match: /^pointlight/i,  color: [0.9, 0.1, 0.1], type: 'jammer' },  // red (legavjam)
+        { match: /^cloaklight/i,  color: [0.9, 0.1, 0.1], type: 'jammer' },  // red
+    ];
+
     function waitForCtx() {
-        if (window._editorCtx) initOrbs(window._editorCtx);
+        if (window._editorCtx) { initOrbs(window._editorCtx); initBlinkLights(window._editorCtx); }
         else setTimeout(waitForCtx, 200);
     }
     waitForCtx();
@@ -290,6 +299,53 @@
                 orbMat.uniforms.color2.value.set(tc.r * 0.87, tc.g * 0.87, tc.b * 0.87);
                 glowMat.color.set(tc.r * 0.87 * 0.70 + 0.30, tc.g * 0.87 * 0.70 + 0.30, tc.b * 0.87 * 0.70 + 0.30);
                 orbLight.color.set(tc.r * 0.87, tc.g * 0.87, tc.b * 0.87);
+            };
+        }
+    }
+
+    function initBlinkLights(ctx) {
+        const { modelScene, timeUniform, THREE } = ctx;
+        if (!modelScene) return;
+
+        const lights = [];
+        modelScene.traverse(node => {
+            for (const pat of BLINK_PATTERNS) {
+                if (pat.match.test(node.name)) {
+                    const wPos = new THREE.Vector3();
+                    node.getWorldPosition(wPos);
+                    // Convert to modelScene local space
+                    modelScene.worldToLocal(wPos);
+
+                    const light = new THREE.PointLight(
+                        new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
+                        800,    // intensity
+                        40,     // range
+                        2       // decay
+                    );
+                    light.position.copy(wPos);
+                    light.layers.enable(1);
+                    modelScene.add(light);
+                    lights.push({ light, type: pat.type, baseIntensity: 800 });
+                    break;
+                }
+            }
+        });
+
+        if (lights.length === 0) return;
+
+        // Animate: gentle pulse with occasional blink
+        const firstMesh = modelScene.children.find(c => c.isMesh);
+        if (firstMesh) {
+            const origRender = firstMesh.onBeforeRender;
+            firstMesh.onBeforeRender = function() {
+                if (origRender) origRender.call(this);
+                const t = timeUniform.value;
+                for (const l of lights) {
+                    // Slow pulse + fast blink spike
+                    const pulse = 0.6 + 0.4 * Math.sin(t * 1.5);
+                    const blink = Math.pow(Math.max(0, Math.sin(t * 4.0)), 16) * 0.5;
+                    l.light.intensity = l.baseIntensity * (pulse + blink);
+                }
             };
         }
     }
