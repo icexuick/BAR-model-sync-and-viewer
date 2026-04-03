@@ -318,14 +318,14 @@
 
                     const light = new THREE.PointLight(
                         new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
-                        4000,   // intensity
-                        60,     // range
+                        15000,  // intensity
+                        35,     // range
                         2       // decay
                     );
                     light.position.copy(wPos);
                     light.layers.enable(1);
                     modelScene.add(light);
-                    lights.push({ light, type: pat.type, baseIntensity: 4000 });
+                    lights.push({ light, type: pat.type, baseIntensity: 15000 });
                     break;
                 }
             }
@@ -335,8 +335,8 @@
 
         // Tweakable params — exposed for lil-gui via window._blinkParams
         const blinkParams = {
-            intensity: 4000,
-            range: 60,
+            intensity: 15000,
+            range: 35,
         };
         window._blinkParams = blinkParams;
 
