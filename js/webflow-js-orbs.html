@@ -246,8 +246,8 @@
         // PointLight in orb center — colored by orb type
         const orbLight = new THREE.PointLight(
             new THREE.Color(c2[0], c2[1], c2[2]),
-            cfg.size * 80,    // intensity scales with orb size (physically correct units)
-            cfg.size * 22,    // distance/range
+            cfg.size * 140,   // intensity scales with orb size (physically correct units)
+            cfg.size * 18,    // distance/range
             2                 // decay
         );
         orbLight.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
@@ -283,6 +283,60 @@
                 orbLight.color.set(tc.r * 0.87, tc.g * 0.87, tc.b * 0.87);
             };
         }
+
+        // Expose tweakable refs for DevTools — type orbTweak() in console
+        window.orbTweak = function() {
+            const p = document.createElement('div');
+            p.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;background:#1a1a2e;padding:12px 16px;border-radius:8px;font:12px monospace;color:#eee;min-width:220px;box-shadow:0 4px 20px rgba(0,0,0,0.5)';
+            p.innerHTML = '<div style="font-weight:bold;margin-bottom:8px;color:#88f">Orb Tweaker</div>';
+            const sliders = [
+                ['Light intensity', 0, 20000, baseLightIntensity, v => { orbLight._baseI = v; }],
+                ['Light range', 0, 1000, orbLight.distance, v => { orbLight.distance = v; }],
+                ['Glow opacity', 0, 1, glowMat.opacity, v => { glowMat._baseOp = v; }],
+                ['Glow size mult', 1, 6, glowSize / cfg.size, v => { glowSprite._sizeMult = v; }],
+                ['Flash peak', 0, 1, 0.35, v => { flashMat._peak = v; }],
+            ];
+            sliders.forEach(([label, min, max, val, fn]) => {
+                const row = document.createElement('div');
+                row.style.cssText = 'margin:4px 0;display:flex;align-items:center;gap:6px';
+                const lbl = document.createElement('span');
+                lbl.style.cssText = 'width:110px;flex-shrink:0';
+                lbl.textContent = label;
+                const inp = document.createElement('input');
+                inp.type = 'range'; inp.min = min; inp.max = max; inp.step = (max - min) / 200;
+                inp.value = val; inp.style.cssText = 'flex:1';
+                const num = document.createElement('span');
+                num.style.cssText = 'width:55px;text-align:right';
+                num.textContent = (+val).toFixed(max <= 1 ? 3 : 0);
+                inp.oninput = () => { fn(+inp.value); num.textContent = (+inp.value).toFixed(max <= 1 ? 3 : 0); };
+                row.append(lbl, inp, num);
+                p.appendChild(row);
+            });
+            const close = document.createElement('div');
+            close.textContent = '[close]';
+            close.style.cssText = 'text-align:center;margin-top:8px;cursor:pointer;color:#888';
+            close.onclick = () => p.remove();
+            p.appendChild(close);
+            document.body.appendChild(p);
+
+            // Patch onBeforeRender to use tweaked values
+            orbMesh.onBeforeRender = function() {
+                const t = timeUniform.value;
+                const breath = (baseOrbR + Math.sin(t) - 1.0) / baseOrbR;
+                const baseI = orbLight._baseI || baseLightIntensity;
+                orbLight.intensity = baseI * breath;
+                const sm = glowSprite._sizeMult || (glowSize / cfg.size);
+                const s = cfg.size * sm * breath;
+                glowSprite.scale.set(s, s, 1);
+                const fs = s * 0.95;
+                flashSprite.scale.set(fs, fs, 1);
+                const baseOp = glowMat._baseOp != null ? glowMat._baseOp : 0.23;
+                glowMat.opacity = baseOp + 0.05 * Math.sin(t * 1.3);
+                const raw = Math.sin(t * 0.54) * 0.5 + 0.5;
+                flashMat.opacity = Math.pow(raw, 8) * (flashMat._peak || 0.35);
+            };
+            console.log('Orb tweaker open — adjust sliders, then note values to save.');
+        };
     }
 })();
 </script>
