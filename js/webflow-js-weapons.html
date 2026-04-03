@@ -447,12 +447,20 @@ window._barWeaponsSetup = function(THREE, opts) {
             var cycleAction = cycleArr[idx % cycleArr.length];
             cycleAction.stop().reset().play();
             _cycleIndex[cycleWnum] = (idx + 1) % cycleArr.length;
-            // Rotary accumulation: advance spindle immediately on fire
+            // Rotary accumulation: advance spindle AFTER recoil animation finishes
             var cycleClipName = cycleAction.getClip().name;
             var cycleRot = _rotaryNodes[cycleClipName];
-            if (cycleRot) {
-                cycleRot.accumRad += cycleRot.stepRad;
-                cycleRot.node.rotation[cycleRot.axis] = cycleRot.accumRad;
+            if (cycleRot && _initMixer) {
+                (function(act, rot) {
+                    _initMixer.addEventListener('finished', function onCycleDone(e) {
+                        if (e.action === act) {
+                            act.stop();
+                            rot.accumRad += rot.stepRad;
+                            rot.node.rotation[rot.axis] = rot.accumRad;
+                            _initMixer.removeEventListener('finished', onCycleDone);
+                        }
+                    });
+                })(cycleAction, cycleRot);
             }
             if (_projectileFireFn) {
                 var cDelay = fireDelays[String(cycleWnum)] || 0;

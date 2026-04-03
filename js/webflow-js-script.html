@@ -472,17 +472,12 @@
                     scene: scene, mainScene: scene, camera, modelScene, unitName, weaponSummary, renderer,
                     isToggleOpen: function() {
                         if (!toggleOpenClip || toggleState) return true;
-                        // Units whose toggle is a morph (not weapon deploy) can always fire.
-                        // Detect by checking if toggle animates any weapon aim pieces.
+                        // Any toggleable unit with weapons must open before firing.
+                        // toggle_fire_bypass flag allows specific units to fire while closed.
                         if (toggleOpenClip && !toggleOpenClip._barIsWeaponDeploy) {
-                            var isWpnDeploy = false;
-                            var aimPcs = new Set();
-                            for (var wk in weaponSummary) { var ap = weaponSummary[wk].aim_pieces; if (ap) ap.forEach(function(p) { aimPcs.add(p.toLowerCase()); }); }
-                            for (var ti = 0; ti < toggleOpenClip.tracks.length; ti++) {
-                                var tn = toggleOpenClip.tracks[ti].name.split('.')[0].toLowerCase();
-                                if (aimPcs.has(tn)) { isWpnDeploy = true; break; }
-                            }
-                            toggleOpenClip._barIsWeaponDeploy = isWpnDeploy ? 'yes' : 'no';
+                            var hasBypass = false;
+                            modelScene.traverse(function(n) { if (n.userData && n.userData.toggle_fire_bypass) hasBypass = true; });
+                            toggleOpenClip._barIsWeaponDeploy = hasBypass ? 'no' : 'yes';
                         }
                         return toggleOpenClip._barIsWeaponDeploy === 'no';
                     },

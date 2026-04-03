@@ -321,10 +321,6 @@
 
         const lights = [];
         function addBlinkLight(node, pat) {
-            const wPos = new THREE.Vector3();
-            node.getWorldPosition(wPos);
-            modelScene.worldToLocal(wPos);
-
             const isRadar = pat.type === 'radar';
             const lIntensity = isRadar ? 5000 : 15000;
             const lRange = isRadar ? 20 : blinkRange;
@@ -332,9 +328,10 @@
                 new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
                 lIntensity, lRange, 2
             );
-            light.position.copy(wPos);
+            // Parent to piece node so light moves with animations
+            light.position.set(0, 0, 0);
             light.layers.enable(1);
-            modelScene.add(light);
+            node.add(light);
 
             const glowMat = new THREE.SpriteMaterial({
                 map: blinkTex,
@@ -345,11 +342,11 @@
             const glow = new THREE.Sprite(glowMat);
             const glowSize = isRadar ? 5 : 30;
             glow.scale.set(glowSize, glowSize, 1);
-            glow.position.copy(wPos);
+            glow.position.set(0, 0, 0);
             glow.renderOrder = 998;
             glow.layers.enable(1);
             glow.raycast = () => {};
-            modelScene.add(glow);
+            node.add(glow);
 
             lights.push({ light, glow, glowMat, type: pat.type, baseIntensity: lIntensity });
         }
