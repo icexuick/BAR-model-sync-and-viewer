@@ -296,13 +296,16 @@ def parse_bos(filepath: str) -> BOSParseResult:
                 var_name = var_assign.group(1).lower()
                 if var_name not in result.pieces and var_name not in ('piecenum', 'pieceindex'):
                     # Find all assignments: var = <piece_or_number>
+                    # Use ordered list to preserve BOS assignment order
+                    assigned_pieces_ordered = []
                     assigned_pieces = set()
                     for asgn in re.finditer(
                         rf'\b{re.escape(var_name)}\s*=\s*(\w+)\s*;', clean, re.IGNORECASE
                     ):
                         val = asgn.group(1).lower()
-                        if val in result.pieces:
+                        if val in result.pieces and val not in assigned_pieces:
                             assigned_pieces.add(val)
+                            assigned_pieces_ordered.append(val)
                     if assigned_pieces:
                         # Variable is assigned piece names (e.g. gun_1 = flare1)
                         # Check if there's a ++var pattern → cycling through consecutive pieces
@@ -316,10 +319,11 @@ def parse_bos(filepath: str) -> BOSParseResult:
                             # Cycling from initial piece upward — find the limit
                             start_piece = list(assigned_pieces)[0]
                             start_idx = result.pieces.index(start_piece)
-                            limit_m = re.search(
+                            # Find the maximum comparison value (the reset threshold)
+                            limit_vals = [int(m.group(1)) for m in re.finditer(
                                 rf'{re.escape(var_name)}\s*==\s*(\d+)', clean, re.IGNORECASE
-                            )
-                            count = int(limit_m.group(1)) if limit_m else 2
+                            )]
+                            count = max(limit_vals) if limit_vals else 2
                             all_refs = [result.pieces[i] for i in range(start_idx, min(start_idx + count, len(result.pieces)))
                                         if result.pieces[i].startswith('flare') or result.pieces[i].startswith('fire')]
                             if not all_refs:
@@ -332,7 +336,7 @@ def parse_bos(filepath: str) -> BOSParseResult:
                             start_idx = result.pieces.index(start_piece)
                             all_refs = [result.pieces[i] for i in range(start_idx, min(start_idx + 2, len(result.pieces)))]
                         else:
-                            all_refs = sorted(assigned_pieces, key=lambda p: result.pieces.index(p))
+                            all_refs = assigned_pieces_ordered
                     else:
                         # Variable assigned numeric values (BOS 1-based piece indices).
                         # e.g. guncount = 7; guncount = 10; guncount = 13;
@@ -366,6 +370,9 @@ def parse_bos(filepath: str) -> BOSParseResult:
                                 all_refs = refs_1based
                             elif refs_0based:
                                 all_refs = refs_0based
+        # Final fallback: use emit-sfx fire pieces from FireWeapon/Shot functions
+        if not all_refs and wnum in _shot_emit_pieces:
+            all_refs = _shot_emit_pieces[wnum]
         if all_refs:
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
@@ -469,12 +476,26 @@ def _extract_all_pieces_from_function(body: str, known_pieces: List[str]) -> Lis
 
     Some units have QueryWeapon functions with if/else chains that assign different
     fire point pieces per shot (e.g. 6-tube missile launcher cycling through flare1..6).
-    This returns all distinct pieces mentioned in the body, in declaration order.
+    This returns all distinct pieces in BOS assignment order (the order they appear
+    in the function body), which matches the barrel cycling order used by animations.
     """
+    known_lower = {p.lower() for p in known_pieces}
+    found_set = set()
     found = []
-    for piece in known_pieces:
-        if re.search(rf'\b{re.escape(piece)}\b', body, re.IGNORECASE):
-            found.append(piece.lower())
+    # Find all "pieceIndex = <piece>;" or "piecenum = <piece>;" assignments in order
+    for m in re.finditer(r'(?:pieceIndex|piecenum)\s*=\s*(\w+)\s*;', body, re.IGNORECASE):
+        p = m.group(1).lower()
+        if p in known_lower and p not in found_set:
+            found_set.add(p)
+            found.append(p)
+    if found:
+        return found
+    # Fallback: scan for any piece names in body order
+    for m in re.finditer(r'\b(\w+)\b', body):
+        p = m.group(1).lower()
+        if p in known_lower and p not in found_set:
+            found_set.add(p)
+            found.append(p)
     return found
 
 
