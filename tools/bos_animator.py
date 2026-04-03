@@ -2139,26 +2139,18 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
             if raw_body:
                 raw_body = _inline_call_scripts(raw_body, bos_content)
                 _, nb, rot_info, indiv = _sequence_if_branches(raw_body)
-                if indiv and nb >= 2:
+                if indiv and nb >= 2 and not rot_info:
                     # Create per-barrel clips: Fire_1_0, Fire_1_1, ...
-                    # For rotary weapons, each clip gets rotary info so the viewer
-                    # accumulates spindle rotation after each barrel fires.
-                    barrel_rotary = rot_info  # None for non-rotary, tuple for rotary
+                    # Only for non-rotary weapons — rotary weapons use a single
+                    # merged clip with spindle rotation baked in.
                     for bi, branch_body in enumerate(indiv):
                         b_tracks, b_dur, _ = _parse_fire_body_to_tracks(branch_body)
-                        # Strip rotary piece tracks — viewer handles spindle via accumulator
-                        if b_tracks and barrel_rotary:
-                            rot_piece = barrel_rotary[0]
-                            rot_axis = barrel_rotary[1]
-                            b_tracks = [t for t in b_tracks
-                                        if not (t.piece == rot_piece and t.axis == rot_axis)]
                         if b_tracks:
                             b_name = f'Fire_{n}_{bi}'
                             b_pieces = sorted({t.piece for t in b_tracks})
-                            rot_str = f", rotary: {barrel_rotary[0]} +{barrel_rotary[2]}°" if barrel_rotary else ""
                             print(f"  Fire animation '{b_name}' (from {func_name} barrel {bi}): "
-                                  f"{len(b_tracks)} tracks, {b_dur:.2f}s, pieces: {', '.join(b_pieces)}{rot_str}")
-                            clips.append((b_name, b_tracks, barrel_rotary))
+                                  f"{len(b_tracks)} tracks, {b_dur:.2f}s, pieces: {', '.join(b_pieces)}")
+                            clips.append((b_name, b_tracks, None))
                     seen_weapons.add(n)
                     continue  # skip the merged clip
 
@@ -2181,24 +2173,17 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
         tracks, dur, rotary = _parse_fire_body_to_tracks(body)
         if tracks:
             # Multi-barrel: create per-barrel clips (same logic as main path)
+            # Only for non-rotary weapons — rotary weapons use merged clip.
             _, nb, rot_info, indiv = _sequence_if_branches(body)
-            if indiv and nb >= 2:
-                barrel_rotary = rot_info
+            if indiv and nb >= 2 and not rot_info:
                 for bi, branch_body in enumerate(indiv):
                     b_tracks, b_dur, _ = _parse_fire_body_to_tracks(branch_body)
-                    # Strip rotary piece tracks — viewer handles spindle via accumulator
-                    if b_tracks and barrel_rotary:
-                        rot_piece = barrel_rotary[0]
-                        rot_axis = barrel_rotary[1]
-                        b_tracks = [t for t in b_tracks
-                                    if not (t.piece == rot_piece and t.axis == rot_axis)]
                     if b_tracks:
                         b_name = f'Fire_{wnum}_{bi}'
                         b_pieces = sorted({t.piece for t in b_tracks})
-                        rot_str = f", rotary: {barrel_rotary[0]} +{barrel_rotary[2]}°" if barrel_rotary else ""
                         print(f"  Fire animation '{b_name}' (from {legacy_name} barrel {bi}): "
-                              f"{len(b_tracks)} tracks, {b_dur:.2f}s, pieces: {', '.join(b_pieces)}{rot_str}")
-                        clips.append((b_name, b_tracks, barrel_rotary))
+                              f"{len(b_tracks)} tracks, {b_dur:.2f}s, pieces: {', '.join(b_pieces)}")
+                        clips.append((b_name, b_tracks, None))
                 seen_weapons.add(wnum)
                 continue
             clip_name = f'Fire_{wnum}'
