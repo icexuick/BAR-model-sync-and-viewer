@@ -166,20 +166,19 @@ window._barProjectilesSetup = function(THREE, opts) {
 
     var _wp = new THREE.Vector3(), _wd = new THREE.Vector3(), _pp = new THREE.Vector3();
     var _aimFixUnits = {'armcom':1,'corcom':1,'corkorg':1};
-    var _fireYAxisUnits = {'armrock':1};
     function nodeFireDir(node) {
         node.getWorldPosition(_wp);
-        // Parent→child barrel direction only for specific commander units
-        if (_aimFixUnits[unitName] && node.parent) {
+        // BOS Create() rotations on flare/emit pieces set emit-direction for the
+        // engine but make local +Z point backward in the viewer. When the fire_point
+        // has a non-identity rotation, use parent→child offset as barrel direction.
+        // Also used for commander arm pieces (aimFixUnits).
+        var q = node.quaternion;
+        var hasRot = Math.abs(q.x) > 0.001 || Math.abs(q.y) > 0.001 || Math.abs(q.z) > 0.001 || Math.abs(q.w - 1) > 0.001;
+        if ((hasRot || _aimFixUnits[unitName]) && node.parent) {
             node.parent.updateWorldMatrix(true,false);
             node.parent.getWorldPosition(_pp);
             _wd.copy(_wp).sub(_pp);
             if (_wd.lengthSq() > 0.01) return _wd.normalize();
-        }
-        // Units where deploy rotation maps local -Y to forward (e.g. -90° X aim pivot)
-        if (_fireYAxisUnits[unitName]) {
-            _wd.set(0,-1,0).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
-            if (_wd.lengthSq()>0.01) return _wd.normalize();
         }
         // Default: node's local Z axis
         _wd.set(0,0,1).applyQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
