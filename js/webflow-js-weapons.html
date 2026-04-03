@@ -367,6 +367,8 @@ window._barWeaponsSetup = function(THREE, opts) {
     // --- Fire system: playFire + click handlers (always active, even without animations) ---
     var _fireTimers = {};  // def → [timeoutIds] for pending stagger timers
     var _initMixer = null, _rotaryNodes = {};
+    var _cycleActions = {};  // wnum → [action0, action1, ...] for per-barrel cycling
+    var _cycleIndex = {};    // wnum → current barrel index
 
     function getFireActions(wnum) {
         if (Object.keys(fireActions).length === 0) return [];
@@ -426,6 +428,27 @@ window._barWeaponsSetup = function(THREE, opts) {
                 }
             }
         }
+        // Per-barrel cycling: play only the current barrel's clip, then advance index
+        var hasCycle = false;
+        for (var ci = 0; ci < normalActs.length; ci++) {
+            var cClipName = normalActs[ci].getClip().name;
+            var cFm = cClipName.match(/^Fire_(\d+)/);
+            if (cFm && _cycleActions[parseInt(cFm[1])]) { hasCycle = true; break; }
+        }
+        if (hasCycle) {
+            var cycleWnum = parseInt(cFm[1]);
+            var cycleArr = _cycleActions[cycleWnum];
+            var idx = _cycleIndex[cycleWnum] || 0;
+            var cycleAction = cycleArr[idx % cycleArr.length];
+            cycleAction.stop().reset().play();
+            _cycleIndex[cycleWnum] = (idx + 1) % cycleArr.length;
+            if (_projectileFireFn) {
+                var cDelay = fireDelays[String(cycleWnum)] || 0;
+                if (cDelay > 0) {
+                    (function(w, d) { var tid = setTimeout(function() { _projectileFireFn(w); }, d * 1000); _fireTimers[def].push(tid); })(cycleWnum, cDelay);
+                } else { _projectileFireFn(cycleWnum); }
+            }
+        } else {
         // Normal fire actions: reset and play each time
         for (var nj = 0; nj < normalActs.length; nj++) {
             normalActs[nj].stop().reset();
@@ -462,6 +485,7 @@ window._barWeaponsSetup = function(THREE, opts) {
                 _fireTimers[def].push(tid);
             })(normalActs[i], i * STAGGER_MS);
         }
+        } // end else (non-cycle)
     }
 
     // Click on 3D weapon mesh → fire
@@ -542,12 +566,25 @@ window._barWeaponsSetup = function(THREE, opts) {
         }
         for (var i = 0; i < animations.length; i++) {
             var clip = animations[i];
+            // Per-barrel cycling clips (Fire_1_0, Fire_1_1, ...): register for cycling
+            var fcm = clip.name.match(/^Fire_(\d+)_(\d+)$/);
+            if (fcm) {
+                var cwnum = parseInt(fcm[1]);
+                var action = mixer.clipAction(clip);
+                action.setLoop(THREE.LoopOnce, 1);
+                action.clampWhenFinished = false;
+                if (!_cycleActions[cwnum]) { _cycleActions[cwnum] = []; _cycleIndex[cwnum] = 0; }
+                _cycleActions[cwnum].push(action);
+                if (!fireActions[cwnum]) fireActions[cwnum] = action;
+                continue;
+            }
             var fm = clip.name.match(/^Fire_(\d+)$/);
             if (!fm) continue;
             var wnum = parseInt(fm[1]);
             // Skip Fire_N clips whose tracks (piece.property) all match the toggle animation
             // (these are redundant door-open anims that conflict with ActivateOpen)
-            if (toggleTrackNames.size > 0) {
+            // Exception: rotary clips should never be skipped — they accumulate rotation.
+            if (toggleTrackNames.size > 0 && !(fireRotary && fireRotary[clip.name])) {
                 var allInToggle = true;
                 for (var ct = 0; ct < clip.tracks.length; ct++) {
                     if (!toggleTrackNames.has(clip.tracks[ct].name.toLowerCase())) { allInToggle = false; break; }
@@ -568,6 +605,11 @@ window._barWeaponsSetup = function(THREE, opts) {
                     }
                     if (isDeploy) break;
                 }
+            }
+            // Rotary clips (gatling/revolving) intentionally don't return to rest —
+            // they must replay every shot, not be treated as one-time deploy anims
+            if (isDeploy && fireRotary && fireRotary[clip.name]) {
+                isDeploy = false;
             }
             if (isDeploy) {
                 action.clampWhenFinished = true;

@@ -2172,6 +2172,21 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
         body = _inline_call_scripts(body, bos_content)
         tracks, dur, rotary = _parse_fire_body_to_tracks(body)
         if tracks:
+            # Multi-barrel: create per-barrel clips (same logic as main path)
+            _, nb, rot_info, indiv = _sequence_if_branches(body)
+            if indiv and nb >= 2:
+                barrel_rotary = rot_info
+                for bi, branch_body in enumerate(indiv):
+                    b_tracks, b_dur, _ = _parse_fire_body_to_tracks(branch_body)
+                    if b_tracks:
+                        b_name = f'Fire_{wnum}_{bi}'
+                        b_pieces = sorted({t.piece for t in b_tracks})
+                        rot_str = f", rotary: {barrel_rotary[0]} +{barrel_rotary[2]}°" if barrel_rotary else ""
+                        print(f"  Fire animation '{b_name}' (from {legacy_name} barrel {bi}): "
+                              f"{len(b_tracks)} tracks, {b_dur:.2f}s, pieces: {', '.join(b_pieces)}{rot_str}")
+                        clips.append((b_name, b_tracks, barrel_rotary))
+                seen_weapons.add(wnum)
+                continue
             clip_name = f'Fire_{wnum}'
             pieces = sorted({t.piece for t in tracks})
             rotary_str = f", rotary: {rotary[0]} +{rotary[2]}°" if rotary else ""
