@@ -360,8 +360,8 @@
             }
         });
 
-        // Fallback: if no radar light found, try 'dish' pieces
-        if (!lights.some(l => l.type === 'radar')) {
+        // Fallback: if no lights found at all, try 'dish' pieces as radar
+        if (lights.length === 0) {
             const radarPat = { color: [0.1, 0.9, 0.2], type: 'radar' };
             modelScene.traverse(node => {
                 if (/^dish$/i.test(node.name)) addBlinkLight(node, radarPat);

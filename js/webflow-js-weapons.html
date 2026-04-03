@@ -447,6 +447,19 @@ window._barWeaponsSetup = function(THREE, opts) {
             var cycleAction = cycleArr[idx % cycleArr.length];
             cycleAction.stop().reset().play();
             _cycleIndex[cycleWnum] = (idx + 1) % cycleArr.length;
+            // Rotary accumulation on cycle clip finish (gatling spindle advance)
+            var cycleClipName = cycleAction.getClip().name;
+            var cycleRot = _rotaryNodes[cycleClipName];
+            if (cycleRot && _initMixer) {
+                _initMixer.addEventListener('finished', function onCycleDone(e) {
+                    if (e.action === cycleAction) {
+                        cycleAction.stop();
+                        cycleRot.accumRad += cycleRot.stepRad;
+                        cycleRot.node.rotation[cycleRot.axis] = cycleRot.accumRad;
+                        _initMixer.removeEventListener('finished', onCycleDone);
+                    }
+                });
+            }
             if (_projectileFireFn) {
                 var cDelay = fireDelays[String(cycleWnum)] || 0;
                 if (cDelay > 0) {
@@ -628,20 +641,28 @@ window._barWeaponsSetup = function(THREE, opts) {
         }
 
         // Resolve rotary piece nodes for accumulative rotation
-        if (Object.keys(fireActions).length > 0 && fireRotary) {
+        // Multiple clips may target the same piece (per-barrel rotary) — share one accumulator
+        if ((Object.keys(fireActions).length > 0 || Object.keys(_cycleActions).length > 0) && fireRotary) {
+            var _rotaryShared = {};  // piece+axis key → shared state object
             for (var clipName in fireRotary) {
                 var info = fireRotary[clipName];
-                var targetNode = null;
-                modelScene.traverse(function(n) {
-                    if (n.name && n.name.toLowerCase() === info.piece.toLowerCase()) targetNode = n;
-                });
-                if (targetNode) {
-                    _rotaryNodes[clipName] = {
-                        node: targetNode,
-                        axis: info.axis,
-                        stepRad: info.step_deg * Math.PI / 180,
-                        accumRad: 0
-                    };
+                var rKey = info.piece.toLowerCase() + '_' + info.axis;
+                if (!_rotaryShared[rKey]) {
+                    var targetNode = null;
+                    modelScene.traverse(function(n) {
+                        if (n.name && n.name.toLowerCase() === info.piece.toLowerCase()) targetNode = n;
+                    });
+                    if (targetNode) {
+                        _rotaryShared[rKey] = {
+                            node: targetNode,
+                            axis: info.axis,
+                            stepRad: info.step_deg * Math.PI / 180,
+                            accumRad: 0
+                        };
+                    }
+                }
+                if (_rotaryShared[rKey]) {
+                    _rotaryNodes[clipName] = _rotaryShared[rKey];
                 }
             }
         }
