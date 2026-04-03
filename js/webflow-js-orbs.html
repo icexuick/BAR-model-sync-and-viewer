@@ -256,7 +256,7 @@
         const orbLight = new THREE.PointLight(
             new THREE.Color(c2[0], c2[1], c2[2]),
             5000,             // intensity (physically correct units)
-            cfg.size * 2.39,  // distance/range (calibrated: corfus size=23 → 55)
+            cfg.size * 3.11,  // distance/range (+30%, calibrated from corfus)
             2                 // decay
         );
         orbLight.position.set(cfg.pos[0], cfg.pos[1], cfg.pos[2]);
@@ -266,7 +266,7 @@
         // Tweakable params — exposed for lil-gui via window._orbParams
         const orbParams = {
             lightIntensity: 5000,
-            lightRange: cfg.size * 2.39,
+            lightRange: cfg.size * 3.11,
             glowOpacity: 0.23,
             glowSizeMult: 2.52,
             flashPeak: 0.35,
