@@ -307,20 +307,25 @@
         const { modelScene, timeUniform, THREE } = ctx;
         if (!modelScene) return;
 
+        // Detect if model is a vehicle (has movement pieces) or building
+        const vehicleRe = /^(wheel|track|leg|foot|thigh|ltrack|rtrack)/i;
+        let isVehicle = false;
+        modelScene.traverse(node => { if (vehicleRe.test(node.name)) isVehicle = true; });
+        const blinkRange = isVehicle ? 17 : 30;
+
         const lights = [];
         modelScene.traverse(node => {
             for (const pat of BLINK_PATTERNS) {
                 if (pat.match.test(node.name)) {
                     const wPos = new THREE.Vector3();
                     node.getWorldPosition(wPos);
-                    // Convert to modelScene local space
                     modelScene.worldToLocal(wPos);
 
                     const light = new THREE.PointLight(
                         new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
-                        15000,  // intensity
-                        35,     // range
-                        2       // decay
+                        15000,     // intensity
+                        blinkRange, // range: 17 for vehicles, 30 for buildings
+                        2          // decay
                     );
                     light.position.copy(wPos);
                     light.layers.enable(1);
@@ -336,7 +341,7 @@
         // Tweakable params — exposed for lil-gui via window._blinkParams
         const blinkParams = {
             intensity: 15000,
-            range: 35,
+            range: blinkRange,
         };
         window._blinkParams = blinkParams;
 
