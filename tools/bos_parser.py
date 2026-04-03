@@ -224,12 +224,16 @@ def parse_bos(filepath: str) -> BOSParseResult:
                 # Find all "var == <num>" comparisons and take the max as the wrap limit.
                 # Also check "var > N" patterns (e.g. "barrel > 11" with base 3 → count = 11-3+1 = 9).
                 cycle_count = 2  # default: toggle between 2
+                # Check toggle first: "var = !var" always means 2
+                has_toggle = bool(re.search(
+                    rf'{re.escape(var_name)}\s*=\s*!\s*{re.escape(var_name)}', clean, re.IGNORECASE
+                ))
                 all_limits = [int(m2.group(1)) for m2 in re.finditer(
                     rf'{re.escape(var_name)}\s*==\s*(\d+)', clean, re.IGNORECASE
                 )]
-                if all_limits:
-                    cycle_count = max(all_limits)
-                else:
+                if has_toggle:
+                    cycle_count = 2
+                elif all_limits:
                     # Check "var > N" pattern: variable resets when > N, so it ranges
                     # from some start value up to N, giving (N - base_idx + 1) pieces
                     # when the base is a numeric offset.
