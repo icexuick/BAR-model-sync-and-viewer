@@ -114,5 +114,20 @@
         const fExtra = gui.addFolder('Extras');
         fExtra.add(VIEWER_CONFIG, 'roughnessOffset', -1, 1).onChange(v => { if(material.userData.shader) material.userData.shader.uniforms.roughnessOffset.value = v; });
         fExtra.add({ toggleShadow: () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; }}, 'toggleShadow');
+
+        // Orb tweaker — polls for _orbParams (orb script may init after editor)
+        let orbTries = 0;
+        function tryOrbGui() {
+            if (window._orbParams) {
+                const fOrb = gui.addFolder('Orb');
+                const op = window._orbParams;
+                fOrb.add(op, 'lightIntensity', 0, 20000).name('Light intensity');
+                fOrb.add(op, 'lightRange', 0, 1000).name('Light range');
+                fOrb.add(op, 'glowOpacity', 0, 1).name('Glow opacity');
+                fOrb.add(op, 'glowSizeMult', 1, 6).name('Glow size');
+                fOrb.add(op, 'flashPeak', 0, 1).name('Flash peak');
+            } else if (++orbTries < 10) { setTimeout(tryOrbGui, 300); }
+        }
+        tryOrbGui();
     }
 </script>
