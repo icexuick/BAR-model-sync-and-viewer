@@ -472,8 +472,9 @@
                     scene: scene, mainScene: scene, camera, modelScene, unitName, weaponSummary, renderer,
                     isToggleOpen: function() {
                         if (!toggleOpenClip || toggleState) return true;
-                        // Any toggleable unit with weapons must open before firing.
-                        // toggle_fire_bypass flag allows specific units to fire while closed.
+                        // All toggleable units must open before firing by default.
+                        // toggle_fire_bypass flag on individual units allows firing while closed
+                        // (for units where the toggle is purely decorative).
                         if (toggleOpenClip && !toggleOpenClip._barIsWeaponDeploy) {
                             var hasBypass = false;
                             modelScene.traverse(function(n) { if (n.userData && n.userData.toggle_fire_bypass) hasBypass = true; });
