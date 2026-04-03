@@ -87,8 +87,20 @@ window._barProjectilesSetup = function(THREE, opts) {
     for (var d in defToWnums) {
         defFirePoints[d] = [];
         for (var i = 0; i < defToWnums[d].length; i++) {
-            var ns = firePointNodes[defToWnums[d][i]];
-            if (ns) for (var j = 0; j < ns.length; j++) defFirePoints[d].push(ns[j]);
+            var wn = defToWnums[d][i];
+            // Use fire_points order from weapon_summary (matches BOS barrel order)
+            var fpOrder = weaponSummary[String(wn)] && weaponSummary[String(wn)].fire_points;
+            var ns = firePointNodes[wn];
+            if (ns && fpOrder && fpOrder.length > 1) {
+                var nameMap = {};
+                for (var j = 0; j < ns.length; j++) nameMap[ns[j].name.toLowerCase()] = ns[j];
+                for (var j = 0; j < fpOrder.length; j++) {
+                    var fn = nameMap[fpOrder[j].toLowerCase()];
+                    if (fn) defFirePoints[d].push(fn);
+                }
+            } else if (ns) {
+                for (var j = 0; j < ns.length; j++) defFirePoints[d].push(ns[j]);
+            }
         }
     }
     var defFireIndex = {};
