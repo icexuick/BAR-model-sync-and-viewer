@@ -318,20 +318,27 @@
 
                     const light = new THREE.PointLight(
                         new THREE.Color(pat.color[0], pat.color[1], pat.color[2]),
-                        800,    // intensity
-                        40,     // range
+                        4000,   // intensity
+                        60,     // range
                         2       // decay
                     );
                     light.position.copy(wPos);
                     light.layers.enable(1);
                     modelScene.add(light);
-                    lights.push({ light, type: pat.type, baseIntensity: 800 });
+                    lights.push({ light, type: pat.type, baseIntensity: 4000 });
                     break;
                 }
             }
         });
 
         if (lights.length === 0) return;
+
+        // Tweakable params — exposed for lil-gui via window._blinkParams
+        const blinkParams = {
+            intensity: 4000,
+            range: 60,
+        };
+        window._blinkParams = blinkParams;
 
         // Animate: gentle pulse with occasional blink
         const firstMesh = modelScene.children.find(c => c.isMesh);
@@ -341,10 +348,10 @@
                 if (origRender) origRender.call(this);
                 const t = timeUniform.value;
                 for (const l of lights) {
-                    // Slow pulse + fast blink spike
                     const pulse = 0.6 + 0.4 * Math.sin(t * 1.5);
                     const blink = Math.pow(Math.max(0, Math.sin(t * 4.0)), 16) * 0.5;
-                    l.light.intensity = l.baseIntensity * (pulse + blink);
+                    l.light.intensity = blinkParams.intensity * (pulse + blink);
+                    l.light.distance = blinkParams.range;
                 }
             };
         }

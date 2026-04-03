@@ -129,5 +129,17 @@
             } else if (++orbTries < 10) { setTimeout(tryOrbGui, 300); }
         }
         tryOrbGui();
+
+        // Radar/jammer blink light tweaker
+        let blinkTries = 0;
+        function tryBlinkGui() {
+            if (window._blinkParams) {
+                const fBlink = gui.addFolder('Radar / Jammer Light');
+                const bp = window._blinkParams;
+                fBlink.add(bp, 'intensity', 0, 20000).name('Intensity');
+                fBlink.add(bp, 'range', 0, 200).name('Range');
+            } else if (++blinkTries < 10) { setTimeout(tryBlinkGui, 300); }
+        }
+        tryBlinkGui();
     }
 </script>
