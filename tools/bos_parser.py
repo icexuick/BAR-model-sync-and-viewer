@@ -253,11 +253,21 @@ def parse_bos(filepath: str) -> BOSParseResult:
                     elif gt_limits:
                         cycle_count = max(gt_limits)
                     else:
-                        has_toggle = bool(re.search(
-                            rf'{re.escape(var_name)}\s*=\s*!\s*{re.escape(var_name)}', clean, re.IGNORECASE
-                        ))
-                        if has_toggle:
-                            cycle_count = 2
+                        # Look for wrap/modulo patterns to determine cycle count:
+                        # Pattern: "var = (var + 1) % N" → count = N
+                        mod_m = re.search(
+                            rf'{re.escape(var_name)}\s*=\s*\(\s*{re.escape(var_name)}\s*\+\s*1\s*\)\s*%\s*(\d+)',
+                            clean, re.IGNORECASE
+                        )
+                        # Pattern: "if (var == N) var = 0" or "if (var >= N) var = 0" → count = N
+                        wrap_m = re.search(
+                            rf'if\s*\(\s*{re.escape(var_name)}\s*(?:==|>=)\s*(\d+)\s*\)\s*(?:\{{)?\s*{re.escape(var_name)}\s*=\s*0\s*;',
+                            clean, re.IGNORECASE
+                        )
+                        if mod_m:
+                            cycle_count = int(mod_m.group(1))
+                        elif wrap_m:
+                            cycle_count = int(wrap_m.group(1))
                 # For numeric base with variable offset, the actual piece indices are
                 # base_idx + var_start .. base_idx + var_start + cycle_count - 1
                 if base_token.isdigit():
