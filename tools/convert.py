@@ -246,6 +246,7 @@ _SKIP_ACTIVATE_FLYPOSE: set = {'legsolar'}
 _EXTRA_TOGGLE_TRACKS: Dict[str, list] = {
     'legbar': [('aimx1', 0, True, -15.0, 0.0, 50.0)],  # tilt turret upward when deployed
     'armrock': [('aimx1', 0, True, -90.0, 0.0, 90.0)],  # tilt missile pod to horizontal
+    'legaabot': [('turretpitchpivot', 0, True, 40.0, 0.0, 80.0)],  # pitch turret forward (AimWeapon offset)
 }
 
 # Extra fire animation tracks for weapons that need aim-related piece movement.
@@ -1301,6 +1302,7 @@ def convert_with_weapons(
                         'armrl',
                         'armfrt',
                         'armrock',
+                        'legaabot',
                     }
                     if unit_name.lower() in _TOGGLE_FIRE_BYPASS:
                         extras["toggle_fire_bypass"] = True
@@ -1308,7 +1310,7 @@ def convert_with_weapons(
                     # Units whose projectiles should fire forward (model +Z)
                     # regardless of fire point orientation (e.g. armrock's
                     # missile pod points down at rest, fires horizontally).
-                    _FIRE_HORIZONTAL = {'armrock'}
+                    _FIRE_HORIZONTAL = {'armrock', 'legaabot'}
                     if unit_name.lower() in _FIRE_HORIZONTAL:
                         extras["fire_horizontal"] = True
 
