@@ -1,0 +1,442 @@
+<script>
+window._barPoserSetup = function(THREE, opts) {
+    var modelScene = opts.modelScene;
+    var camera = opts.camera;
+    var renderer = opts.renderer;
+    var controls = opts.controls;
+
+    // --- Read poseable_pieces from GLB extras ---
+    var poseablePieces = null;
+    var spinPieceNames = null;
+    modelScene.traverse(function(node) {
+        if (node.userData && node.userData.poseable_pieces) {
+            poseablePieces = node.userData.poseable_pieces;
+        }
+        if (node.userData && node.userData.spin_pieces) {
+            if (!spinPieceNames) spinPieceNames = [];
+            var sp = node.userData.spin_pieces;
+            for (var i = 0; i < sp.length; i++) {
+                if (sp[i].indexOf('Spin_') !== 0) spinPieceNames.push(sp[i].toLowerCase());
+            }
+        }
+    });
+
+    // Merge spin pieces as poseable on Y-axis (if not already in poseable)
+    if (!poseablePieces) poseablePieces = {};
+    if (spinPieceNames) {
+        for (var i = 0; i < spinPieceNames.length; i++) {
+            var sn = spinPieceNames[i];
+            if (!poseablePieces[sn]) poseablePieces[sn] = ['y'];
+        }
+    }
+
+    // Nothing poseable? Bail out early
+    var poseableCount = Object.keys(poseablePieces).length;
+    if (poseableCount === 0) return null;
+
+    // --- Build piece node map: name -> THREE.Object3D ---
+    var pieceNodes = {};
+    var poseableMeshes = new Set();
+    var meshToPiece = new Map();
+
+    modelScene.traverse(function(node) {
+        var nlc = node.name.toLowerCase();
+        if (poseablePieces[nlc]) pieceNodes[nlc] = node;
+    });
+
+    // Register meshes: a mesh belongs to the nearest poseable ancestor
+    modelScene.traverse(function(node) {
+        if (!node.isMesh) return;
+        if (!node.visible) return;
+        var p = node;
+        while (p) {
+            var plc = p.name.toLowerCase();
+            if (poseablePieces[plc] && pieceNodes[plc]) {
+                poseableMeshes.add(node.uuid);
+                meshToPiece.set(node.uuid, plc);
+                break;
+            }
+            p = p.parent;
+        }
+    });
+
+    if (poseableMeshes.size === 0) return null;
+
+    // --- Axis constraints ---
+    var DEFAULT_LIMITS = {
+        x: [-90, 60],
+        y: [-180, 180],
+        z: [-45, 45]
+    };
+    var PIECE_LIMITS = {
+        head: { x: [-25, 25], y: [-40, 40] },
+        ruparm: { x: [-120, 90] },
+        luparm: { x: [-120, 90] },
+        rloarm: { x: [-120, 30] },
+        lloarm: { x: [-120, 30] },
+        rshoulder: { x: [-90, 90] },
+        lshoulder: { x: [-90, 90] }
+    };
+
+    // Store original quaternions for reset
+    var origQuats = {};
+    for (var pname in pieceNodes) {
+        origQuats[pname] = pieceNodes[pname].quaternion.clone();
+    }
+    var currentAngles = {};
+    for (var pname in pieceNodes) {
+        currentAngles[pname] = { x: 0, y: 0, z: 0 };
+    }
+
+    // --- State ---
+    var active = false;
+    var selectedPiece = null;
+    var dragging = false;
+    var dragStart = { x: 0, y: 0 };
+
+    var raycaster = new THREE.Raycaster();
+    var pointer = new THREE.Vector2();
+
+    // Track modifier keys for axis selection
+    var modShift = false;
+    window.addEventListener('keydown', function(e) { if (e.key === 'Shift') modShift = true; });
+    window.addEventListener('keyup', function(e) { if (e.key === 'Shift') modShift = false; });
+
+    // Default drag: X + Y axes. Shift+drag: Z-axis only (roll)
+    function getActiveAxes(allAxes) {
+        if (modShift && allAxes.indexOf('z') !== -1) return ['z'];
+        var result = [];
+        for (var i = 0; i < allAxes.length; i++) {
+            if (allAxes[i] !== 'z') result.push(allAxes[i]);
+        }
+        return result.length > 0 ? result : allAxes;
+    }
+
+    // --- Tooltip ---
+    var tooltip = document.createElement('div');
+    tooltip.style.cssText = 'position:fixed;pointer-events:none;display:none;' +
+        'background:rgba(0,0,0,0.82);color:#fff;font-size:13px;' +
+        'font-family:Poppins,sans-serif;font-weight:300;' +
+        'padding:6px 12px;border-radius:5px;' +
+        'border:1px solid rgba(255,255,255,0.18);' +
+        'white-space:nowrap;z-index:9999;letter-spacing:-0.3px';
+    var tooltipTitle = document.createElement('div');
+    tooltipTitle.style.cssText = 'text-transform:uppercase;font-size:14px;font-weight:300;letter-spacing:-0.5px';
+    var tooltipSub = document.createElement('div');
+    tooltipSub.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.5);margin-top:1px';
+    tooltip.appendChild(tooltipTitle);
+    tooltip.appendChild(tooltipSub);
+    document.body.appendChild(tooltip);
+
+    function showPoserTooltip(x, y, pieceName, allAxes) {
+        var activeAxes = getActiveAxes(allAxes);
+        var axisStr = activeAxes.join(' + ').toUpperCase() + '-axis';
+        tooltipTitle.textContent = pieceName;
+        var hint = 'Drag to rotate (' + axisStr + ')';
+        if (allAxes.indexOf('z') !== -1) {
+            hint += modShift ? '  [Shift: Z-roll]' : '  [hold Shift for Z-roll]';
+        }
+        tooltipSub.textContent = hint;
+        tooltip.style.display = 'block';
+        tooltip.style.left = Math.round(x + 14) + 'px';
+        tooltip.style.top = Math.round(y - 8) + 'px';
+    }
+    function hidePoserTooltip() {
+        tooltip.style.display = 'none';
+    }
+
+    // --- Highlight system ---
+    function highlightPiece(pieceName) {
+        var meshUuids = new Set();
+        meshToPiece.forEach(function(pn, uuid) {
+            if (pn === pieceName) meshUuids.add(uuid);
+        });
+        modelScene.traverse(function(child) {
+            if (!child.isMesh) return;
+            if (meshUuids.has(child.uuid)) {
+                child.userData._targetHighlight = 1.0;
+                child.userData._targetDim = 0.0;
+            } else {
+                child.userData._targetHighlight = 0.0;
+                child.userData._targetDim = pieceName ? 0.6 : 0.0;
+            }
+        });
+    }
+    function clearHighlight() {
+        modelScene.traverse(function(child) {
+            if (!child.isMesh) return;
+            child.userData._targetHighlight = 0.0;
+            child.userData._targetDim = 0.0;
+        });
+    }
+
+    // --- Apply rotation with constraints ---
+    function applyRotation(pieceName, deltaX, deltaY) {
+        var node = pieceNodes[pieceName];
+        if (!node) return;
+        var allAxes = poseablePieces[pieceName];
+        if (!allAxes || allAxes.length === 0) return;
+        var axes = getActiveAxes(allAxes);
+
+        var angles = currentAngles[pieceName];
+        var sensitivity = 0.4;
+
+        for (var i = 0; i < axes.length; i++) {
+            var ax = axes[i];
+            var delta = 0;
+            if (ax === 'y') delta = deltaX * sensitivity;
+            else if (ax === 'x') delta = -deltaY * sensitivity;
+            else if (ax === 'z') delta = deltaX * sensitivity;
+
+            var pieceLimits = PIECE_LIMITS[pieceName];
+            var limits = (pieceLimits && pieceLimits[ax]) || DEFAULT_LIMITS[ax];
+            var newAngle = angles[ax] + delta;
+            newAngle = Math.max(limits[0], Math.min(limits[1], newAngle));
+            angles[ax] = newAngle;
+        }
+
+        var euler = new THREE.Euler(
+            angles.x * Math.PI / 180,
+            angles.y * Math.PI / 180,
+            angles.z * Math.PI / 180,
+            'YXZ'
+        );
+        var poseQuat = new THREE.Quaternion().setFromEuler(euler);
+        node.quaternion.copy(origQuats[pieceName]).multiply(poseQuat);
+    }
+
+    // --- Reset all poses ---
+    function resetAllPoses() {
+        for (var pname in pieceNodes) {
+            pieceNodes[pname].quaternion.copy(origQuats[pname]);
+            currentAngles[pname] = { x: 0, y: 0, z: 0 };
+        }
+        selectedPiece = null;
+        clearHighlight();
+    }
+
+    // --- Mode indicator ---
+    var modeIndicator = document.createElement('div');
+    modeIndicator.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);' +
+        'display:none;background:rgba(255,160,0,0.9);color:#000;' +
+        'font-size:12px;font-family:Poppins,sans-serif;font-weight:500;' +
+        'padding:5px 16px;border-radius:20px;z-index:9998;' +
+        'letter-spacing:0.5px;pointer-events:none';
+    modeIndicator.textContent = 'POSER MODE — drag parts to rotate, Shift+drag for roll, R to reset, P to exit';
+    document.body.appendChild(modeIndicator);
+
+    // --- Event handlers ---
+    function onPointerDown(e) {
+        if (!active) return;
+        if (e.button !== 0) return;
+
+        var rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+
+        var hits = raycaster.intersectObject(modelScene, true);
+        var hit = null;
+        for (var i = 0; i < hits.length; i++) {
+            if (poseableMeshes.has(hits[i].object.uuid)) { hit = hits[i]; break; }
+        }
+
+        if (hit) {
+            var pname = meshToPiece.get(hit.object.uuid);
+            if (pname) {
+                selectedPiece = pname;
+                dragging = true;
+                dragStart.x = e.clientX;
+                dragStart.y = e.clientY;
+                controls.enabled = false;
+                highlightPiece(pname);
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        } else {
+            selectedPiece = null;
+            clearHighlight();
+        }
+    }
+
+    function onPointerMove(e) {
+        if (!active) return;
+
+        if (dragging && selectedPiece) {
+            var dx = e.clientX - dragStart.x;
+            var dy = e.clientY - dragStart.y;
+            dragStart.x = e.clientX;
+            dragStart.y = e.clientY;
+            applyRotation(selectedPiece, dx, dy);
+            hidePoserTooltip();
+            return;
+        }
+
+        var rect = renderer.domElement.getBoundingClientRect();
+        if (e.clientX < rect.left || e.clientX > rect.right ||
+            e.clientY < rect.top || e.clientY > rect.bottom) {
+            hidePoserTooltip();
+            if (!dragging) clearHighlight();
+            return;
+        }
+
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+
+        var hits = raycaster.intersectObject(modelScene, true);
+        var hit = null;
+        for (var i = 0; i < hits.length; i++) {
+            if (poseableMeshes.has(hits[i].object.uuid)) { hit = hits[i]; break; }
+        }
+
+        if (hit) {
+            var pname = meshToPiece.get(hit.object.uuid);
+            if (pname) {
+                showPoserTooltip(e.clientX, e.clientY, pname, poseablePieces[pname]);
+                if (!dragging) highlightPiece(pname);
+                renderer.domElement.style.cursor = 'grab';
+            }
+        } else {
+            hidePoserTooltip();
+            if (!dragging && !selectedPiece) clearHighlight();
+            renderer.domElement.style.cursor = active ? 'crosshair' : '';
+        }
+    }
+
+    function onPointerUp() {
+        if (!active) return;
+        if (dragging) {
+            dragging = false;
+            controls.enabled = true;
+            renderer.domElement.style.cursor = 'crosshair';
+        }
+    }
+
+    function onKeyDown(e) {
+        if (e.key === 'p' || e.key === 'P') {
+            if (e.ctrlKey || e.altKey || e.metaKey) return;
+            var tag = (e.target.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+            togglePoser();
+            e.preventDefault();
+        }
+        if (active && (e.key === 'r' || e.key === 'R')) {
+            if (e.ctrlKey || e.altKey || e.metaKey) return;
+            var tag2 = (e.target.tagName || '').toLowerCase();
+            if (tag2 === 'input' || tag2 === 'textarea' || tag2 === 'select') return;
+            resetAllPoses();
+            e.preventDefault();
+        }
+        if (active && e.key === 'Escape') {
+            selectedPiece = null;
+            clearHighlight();
+            hidePoserTooltip();
+        }
+    }
+
+    // Touch support
+    var touchStartId = null;
+    var touchStartPos = { x: 0, y: 0 };
+    function onTouchStart(e) {
+        if (!active || e.touches.length !== 1) return;
+        var touch = e.touches[0];
+        var rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        var hits = raycaster.intersectObject(modelScene, true);
+        var hit = null;
+        for (var i = 0; i < hits.length; i++) {
+            if (poseableMeshes.has(hits[i].object.uuid)) { hit = hits[i]; break; }
+        }
+        if (hit) {
+            var pname = meshToPiece.get(hit.object.uuid);
+            if (pname) {
+                selectedPiece = pname;
+                dragging = true;
+                touchStartId = touch.identifier;
+                touchStartPos.x = touch.clientX;
+                touchStartPos.y = touch.clientY;
+                controls.enabled = false;
+                highlightPiece(pname);
+                e.preventDefault();
+            }
+        }
+    }
+    function onTouchMove(e) {
+        if (!active || !dragging || touchStartId === null) return;
+        for (var i = 0; i < e.changedTouches.length; i++) {
+            var touch = e.changedTouches[i];
+            if (touch.identifier === touchStartId) {
+                var dx = touch.clientX - touchStartPos.x;
+                var dy = touch.clientY - touchStartPos.y;
+                touchStartPos.x = touch.clientX;
+                touchStartPos.y = touch.clientY;
+                applyRotation(selectedPiece, dx, dy);
+                e.preventDefault();
+                break;
+            }
+        }
+    }
+    function onTouchEnd(e) {
+        if (!active || touchStartId === null) return;
+        for (var i = 0; i < e.changedTouches.length; i++) {
+            if (e.changedTouches[i].identifier === touchStartId) {
+                dragging = false;
+                touchStartId = null;
+                controls.enabled = true;
+                break;
+            }
+        }
+    }
+
+    // --- Attach / detach event listeners ---
+    function attachEvents() {
+        renderer.domElement.addEventListener('pointerdown', onPointerDown, true);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
+        renderer.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
+        renderer.domElement.addEventListener('touchmove', onTouchMove, { passive: false });
+        renderer.domElement.addEventListener('touchend', onTouchEnd);
+    }
+    function detachEvents() {
+        renderer.domElement.removeEventListener('pointerdown', onPointerDown, true);
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        renderer.domElement.removeEventListener('touchstart', onTouchStart);
+        renderer.domElement.removeEventListener('touchmove', onTouchMove);
+        renderer.domElement.removeEventListener('touchend', onTouchEnd);
+    }
+
+    document.addEventListener('keydown', onKeyDown);
+
+    function togglePoser() {
+        active = !active;
+        window._barPoserActive = active;
+        if (active) {
+            attachEvents();
+            modeIndicator.style.display = 'block';
+            renderer.domElement.style.cursor = 'crosshair';
+            if (window._barPoserOnActivate) window._barPoserOnActivate(true);
+        } else {
+            detachEvents();
+            modeIndicator.style.display = 'none';
+            renderer.domElement.style.cursor = '';
+            dragging = false;
+            selectedPiece = null;
+            controls.enabled = true;
+            clearHighlight();
+            hidePoserTooltip();
+            if (window._barPoserOnActivate) window._barPoserOnActivate(false);
+        }
+    }
+
+    return {
+        toggle: togglePoser,
+        reset: resetAllPoses,
+        isActive: function() { return active; },
+        poseableCount: poseableCount
+    };
+};
+</script>
