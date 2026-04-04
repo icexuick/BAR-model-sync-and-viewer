@@ -376,8 +376,6 @@ window._barWeaponsSetup = function(THREE, opts) {
 
     function getFireActions(wnum) {
         if (Object.keys(fireActions).length === 0) return [];
-        // Cycling weapons fire individually — don't group by def
-        if (_cycleActions[wnum] && fireActions[wnum]) return [fireActions[wnum]];
         var def = weaponSummary[String(wnum)] ? weaponSummary[String(wnum)].def : null;
         var actions = [];
         if (def) {
