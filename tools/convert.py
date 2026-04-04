@@ -229,7 +229,7 @@ _ANIM_DURATION_OVERRIDE: Dict[str, float] = {
 
 # Units whose toggle animation is too complex for the current single-pass parser
 # (multi-phase sequential BOS with wait-for-turn sync points, corecont y-offsets, etc.)
-_TOGGLE_SKIP: set = {'legsolar', 'corlab', 'armpw', 'armrock'}
+_TOGGLE_SKIP: set = {'legsolar', 'corlab', 'armpw'}
 
 # Units whose activate-loop animation should be skipped entirely
 # (e.g. FiringMode with 0.02s duration that jitters turret pieces)
@@ -245,6 +245,7 @@ _SKIP_ACTIVATE_FLYPOSE: set = {'legsolar'}
 # These tracks are appended to the extracted toggle clips to add missing visual movements.
 _EXTRA_TOGGLE_TRACKS: Dict[str, list] = {
     'legbar': [('aimx1', 0, True, -15.0, 0.0, 50.0)],  # tilt turret upward when deployed
+    'armrock': [('aimx1', 0, True, -90.0, 0.0, 90.0)],  # tilt missile pod to horizontal
 }
 
 # Extra fire animation tracks for weapons that need aim-related piece movement.
@@ -1214,7 +1215,7 @@ def convert_with_weapons(
                     # Units that are known to start open despite no explicit BOS open call
                     _FORCE_AUTOPLAY_OPEN = {'armpb', 'corasy', 'leganavymissileship', 'corhrk'}
                     # Units that are known to start closed despite no explicit BOS closed call
-                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'legeconv', 'armrock'}
+                    _FORCE_STARTS_CLOSED = {'armsilo', 'corsilo', 'legsilo', 'legeconv'}
                     _CLOSED_IN_CREATE = [
                         r'start-script\s+OpenCloseAnim\s*\(\s*0\s*\)',
                         r'start-script\s+Stop\b',
@@ -1299,9 +1300,17 @@ def convert_with_weapons(
                     _TOGGLE_FIRE_BYPASS = {
                         'armrl',
                         'armfrt',
+                        'armrock',
                     }
                     if unit_name.lower() in _TOGGLE_FIRE_BYPASS:
                         extras["toggle_fire_bypass"] = True
+
+                    # Units whose projectiles should fire forward (model +Z)
+                    # regardless of fire point orientation (e.g. armrock's
+                    # missile pod points down at rest, fires horizontally).
+                    _FIRE_HORIZONTAL = {'armrock'}
+                    if unit_name.lower() in _FIRE_HORIZONTAL:
+                        extras["fire_horizontal"] = True
 
             # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
             fire_clips = extract_lua_fire_animations(bos_content) if _is_lua else extract_fire_animations(bos_content)

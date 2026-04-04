@@ -178,7 +178,14 @@ window._barProjectilesSetup = function(THREE, opts) {
 
     var _wp = new THREE.Vector3(), _wd = new THREE.Vector3(), _pp = new THREE.Vector3();
     var _aimFixUnits = {'armcom':1,'corcom':1,'corkorg':1};
+    var _fireHorizontal = false;
+    modelScene.traverse(function(n) { if (n.userData && n.userData.fire_horizontal) _fireHorizontal = true; });
     function nodeFireDir(node) {
+        // fire_horizontal: always fire in model's forward direction (+Z in world)
+        if (_fireHorizontal) {
+            _wd.set(0,0,1).applyQuaternion(modelScene.getWorldQuaternion(new THREE.Quaternion()));
+            return _wd.normalize();
+        }
         node.getWorldPosition(_wp);
         // BOS Create() rotations on flare/emit pieces set emit-direction for the
         // engine but make local +Z point backward in the viewer. When the fire_point
