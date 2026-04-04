@@ -904,19 +904,17 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
     else:
         all_clips = []
 
-    # Extra scan: propeller/screw spins from StartMoving (ships & subs).
-    # These pieces are excluded from the main scan above but are the primary
-    # visual element for naval units.
-    _PROP_NAMES = ('prop', 'screw', 'fan')
+    # Extra scan: spins from StartMoving (ships, subs, rolling units).
+    # Picks up propellers, screws, and any other interesting spinning pieces
+    # that are only activated when moving (e.g. armvader base roll).
     moving_spins = _collect_spin_commands(bos_content, 'StartMoving')
-    prop_spins = {k: v for k, v in moving_spins.items()
-                  if any(frag in k[0] for frag in _PROP_NAMES)}
-    if prop_spins:
+    moving_spins = {k: v for k, v in moving_spins.items() if _is_interesting(k[0])}
+    if moving_spins:
         import math as _math2
         from collections import defaultdict as _dd2
         existing = {c[1][0].piece.lower() for c in all_clips} if all_clips else set()
         piece_axes2: Dict[str, Dict[int, float]] = _dd2(dict)
-        for (piece, axis), speed in prop_spins.items():
+        for (piece, axis), speed in moving_spins.items():
             if piece not in existing:
                 piece_axes2[piece][axis] = speed
         STEP_DEG2 = 120.0
@@ -942,8 +940,8 @@ def extract_spin_animation(bos_content: str) -> Optional[List[Tuple[str, List[Bo
                 piece_tracks.append(BosTrack(piece=piece, axis=axis, is_rotation=True, keyframes=kfs))
             all_clips.append((f"StartMoving_{piece}", piece_tracks))
         if piece_axes2:
-            prop_names = ', '.join(sorted(piece_axes2.keys()))
-            print(f"  Propeller spin from StartMoving: {prop_names}")
+            spin_names = ', '.join(sorted(piece_axes2.keys()))
+            print(f"  Movement spin from StartMoving: {spin_names}")
 
     return all_clips if all_clips else None
 
@@ -2164,7 +2162,6 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
         # × 7 barrels = 63 shots merged into one clip).  Extract just the
         # first if-block that contains move/turn and re-parse.
         _MAX_FIRE_DUR = 30.0
-        _reduced_body = None  # set when we drill into a nested branch
         if tracks and dur > _MAX_FIRE_DUR:
             _fire_body = _extract_function_body(bos_content, func_name)
             if _fire_body:
@@ -2183,16 +2180,16 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
                         _t2, _d2, _r2 = _parse_fire_body_to_tracks(_bb)
                         if _t2 and _d2 <= _MAX_FIRE_DUR:
                             tracks, dur, rotary = _t2, _d2, _r2
-                            _reduced_body = _bb
                             break
 
         if tracks:
             # Multi-barrel: create per-barrel clips instead of merged
-            raw_body = _reduced_body  # use reduced body if we drilled into a nested branch
-            if not raw_body:
-                raw_body = _extract_function_body(bos_content, func_name)
-                if raw_body:
-                    raw_body = _inline_call_scripts(raw_body, bos_content)
+            # Always try the FULL function body first for per-barrel detection,
+            # even if the duration guard reduced it.  The full body has all
+            # branches; _reduced_body is a single branch and won't split.
+            raw_body = _extract_function_body(bos_content, func_name)
+            if raw_body:
+                raw_body = _inline_call_scripts(raw_body, bos_content)
             if raw_body:
                 _, nb, rot_info, indiv = _sequence_if_branches(raw_body)
                 if indiv and nb >= 2 and not rot_info:
