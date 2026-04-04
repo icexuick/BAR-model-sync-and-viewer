@@ -952,6 +952,54 @@ def convert_with_weapons(
                 if str(dst_wnum) in ws and str(src_wnum) not in ws:
                     ws[str(src_wnum)] = dict(ws[str(dst_wnum)])
             root_extras["weapon_summary"] = ws
+
+            # Build poseable_pieces: piece → axes for poser mode
+            # Merges aim_piece_axes from all weapons (same piece may appear in multiple)
+            poseable: Dict[str, list] = {}
+            for wnum, wmap in weapon_info.weapons.items():
+                if wmap.aim_disabled:
+                    continue
+                for piece, axes in wmap.aim_piece_axes.items():
+                    if piece not in poseable:
+                        poseable[piece] = set()
+                    poseable[piece].update(axes)
+                # Fallback: infer axis from piece name for aim_pieces and aim_from
+                # (covers call-script indirection like CATT1_Aim where no direct
+                # turn commands are in AimWeaponN)
+                # aimy*/turret* → Y, aimx*/sleeve*/barrel* → X
+                _infer_pieces = list(wmap.aim_pieces)
+                if wmap.aim_from_piece and wmap.aim_from_piece not in _infer_pieces:
+                    _infer_pieces.append(wmap.aim_from_piece)
+                for piece in _infer_pieces:
+                    if piece in poseable:
+                        continue  # already has explicit axis data
+                    plc = piece.lower()
+                    if plc.startswith('aimy') or plc.startswith('turret'):
+                        poseable[piece] = poseable.get(piece, set()) | {'y'}
+                    elif plc.startswith('aimx') or plc.startswith('sleeve') or plc.startswith('barrel'):
+                        poseable[piece] = poseable.get(piece, set()) | {'x'}
+            # Auto-detect poseable pieces by name convention:
+            #   aimx*/aimy*  — aim nodes from CATT #defines
+            #   head         — head piece (nod + look)
+            #   ruparm/luparm/rshoulder/lshoulder — individual arm roots
+            if model.root_piece:
+                for piece in model.all_pieces():
+                    plc = piece.name.lower()
+                    if plc in poseable:
+                        continue
+                    if re.match(r'aimy\d*$', plc):
+                        poseable[plc] = {'y'}
+                    elif re.match(r'aimx\d*$', plc):
+                        poseable[plc] = {'x'}
+                    elif plc == 'head':
+                        poseable[plc] = {'x', 'y'}
+                    elif plc in ('ruparm', 'luparm', 'rshoulder', 'lshoulder',
+                                 'rloarm', 'lloarm'):
+                        poseable[plc] = {'x'}
+            if poseable:
+                root_extras["poseable_pieces"] = {
+                    p: sorted(axes) for p, axes in poseable.items()
+                }
         if unit_role:
             root_extras["unit_role"] = unit_role
             if 'RADAR' in unit_role or 'SONAR' in unit_role:
@@ -1094,6 +1142,7 @@ def convert_with_weapons(
                 if filtered_clips:
                     spin_pieces = []
                     spin_clip_names = []
+                    movement_spin_names = []  # spins from StartMoving (pausable with walk)
                     # Each clip groups all axes for one piece so multi-axis spins
                     # compose correctly via quaternion keyframes.
                     for clip_name, clip_tracks in filtered_clips:
@@ -1103,10 +1152,15 @@ def convert_with_weapons(
                                                    now_rots or None)
                         spin_pieces.append(piece_name)
                         spin_clip_names.append(clip_n)
+                        if clip_name.startswith('StartMoving_'):
+                            movement_spin_names.append(clip_n)
                     # Store spin_pieces + clip names so viewer can identify spin clips by name
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
-                        builder.nodes[root_idx].setdefault("extras", {})["spin_pieces"] = spin_pieces + spin_clip_names
+                        extras = builder.nodes[root_idx].setdefault("extras", {})
+                        extras["spin_pieces"] = spin_pieces + spin_clip_names
+                        if movement_spin_names:
+                            extras["movement_spins"] = movement_spin_names
             # Activate-loop animations (e.g. armaser spinarms — while(TRUE) + turn-to + sleep)
             # These can coexist with spin clips (e.g. legmos has blades spin + wing flapping loop)
             # Skip BOS-specific extractors for Lua scripts (they use BOS regex patterns)

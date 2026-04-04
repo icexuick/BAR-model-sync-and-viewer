@@ -404,22 +404,20 @@
                         }
                     }
                 }
+                const _mvSpins = new Set();
+                modelScene.traverse(n => { if (n.userData && n.userData.movement_spins) n.userData.movement_spins.forEach(s => _mvSpins.add(s)); });
                 const spinClips = gltf.animations.filter(clip => {
                     if (clip.name.startsWith('Spin_')) {
-                        // Skip spins on pieces animated by fire clips — they'd conflict
-                        const pieceName = clip.name.substring(5).toLowerCase();
-                        if (firePieceNames.has(pieceName)) return false;
+                        const pn = clip.name.substring(5).toLowerCase();
+                        if (firePieceNames.has(pn) || _mvSpins.has(clip.name)) return false;
                         return true;
                     }
-                    const afterUnderscore = clip.name.includes('_') ? clip.name.split('_').slice(1).join('_').toLowerCase() : '';
-                    return spinPieceNamesForAnim.has(clip.name.toLowerCase()) ||
-                           spinPieceNamesForAnim.has(afterUnderscore);
+                    const au = clip.name.includes('_') ? clip.name.split('_').slice(1).join('_').toLowerCase() : '';
+                    return spinPieceNamesForAnim.has(clip.name.toLowerCase()) || spinPieceNamesForAnim.has(au);
                 });
-                for (const clip of spinClips) {
-                    const action = mixer.clipAction(clip);
-                    action.setLoop(THREE.LoopRepeat, Infinity);
-                    action.play();
-                }
+                const _mvActs = [];
+                for (const clip of spinClips) { const a = mixer.clipAction(clip); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); }
+                for (const clip of gltf.animations) { if (_mvSpins.has(clip.name)) { const a = mixer.clipAction(clip); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); _mvActs.push(a); } }
 
                 toggleOpenClip = null; toggleCloseClip = null; toggleOpenAction = null; toggleCloseAction = null; toggleState = false; toggleAnimating = false;
                 const openClip  = gltf.animations.find(c => c.name === 'ActivateOpen');
@@ -471,14 +469,13 @@
                 }
 
                 const toggleClipNames = new Set(['ActivateOpen', 'ActivateClose']);
-                const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c) && !toggleClipNames.has(c.name) && !c.name.startsWith('Fire_') && c.name !== 'StopWalking');
-                const walkClip = nonSpinClips.find(c => c.name.toLowerCase() === 'walk') || nonSpinClips[0];
-                if (walkClip) {
+                const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c) && !toggleClipNames.has(c.name) && !c.name.startsWith('Fire_') && c.name !== 'StopWalking' && !_mvSpins.has(c.name));
+                let walkClip = nonSpinClips.find(c => c.name.toLowerCase() === 'walk');
+                if (!walkClip && !_mvActs.length) walkClip = nonSpinClips[0];
+                if (walkClip || _mvActs.length) {
                     const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
-                    currentAction = mixer.clipAction(walkClip);
-                    currentAction.setLoop(THREE.LoopRepeat, Infinity);
-                    currentAction.play();
-                    currentAction.weight = walkEnabled ? 1 : 0;
+                    if (walkClip) { currentAction = mixer.clipAction(walkClip); currentAction.setLoop(THREE.LoopRepeat, Infinity); currentAction.play(); currentAction.weight = walkEnabled ? 1 : 0; }
+                    for (const a of _mvActs) a.weight = walkEnabled ? 1 : 0;
                     if (movementToggle) {
                         movementToggle.checked = walkEnabled;
                         if (movementToggleWrap) movementToggleWrap.style.display = '';
@@ -612,7 +609,7 @@
             });
             window.addEventListener('keydown', (e) => {
                 if (e.key === 'Alt') { e.preventDefault(); isAltDown = true; window._barViewerAltDown = true; container.style.cursor = 'move'; controls.enabled = false; }
-                if (e.code === 'Space' && mixer && currentAction && !e.repeat) currentAction.paused = !currentAction.paused;
+                if (e.code === 'Space' && mixer && (currentAction || _mvActs.length) && !e.repeat) { if (currentAction) currentAction.paused = !currentAction.paused; const p = currentAction ? currentAction.paused : !_mvActs[0].paused; for (const a of _mvActs) a.paused = p; }
             });
             window.addEventListener('keyup', (e) => { if (e.key === 'Alt') { isAltDown = false; window._barViewerAltDown = false; container.style.cursor = 'grab'; controls.enabled = true; } });
 
@@ -676,15 +673,16 @@
             controls.addEventListener('start', () => { isInteracting = true; didDrag = false; });
             controls.addEventListener('end', () => { isInteracting = false; dragOrigin = null; if (didDrag && isTurntableEnabledByUser) idleTimer = setTimeout(() => { if (!isInteracting) { didDrag = false; turntableActive = true; } }, 3000); });
             if (isTurntableEnabledByUser) turntableActive = true;
-            if (animToggleButton) animToggleButton.addEventListener('click', () => { if(mixer && currentAction) currentAction.paused = !currentAction.paused; });
+            if (animToggleButton) animToggleButton.addEventListener('click', () => { if (!mixer) return; if (currentAction) currentAction.paused = !currentAction.paused; const p = currentAction ? currentAction.paused : !_mvActs[0].paused; for (const a of _mvActs) a.paused = p; });
             if (movementToggle) movementToggle.addEventListener('change', () => {
                 const enabled = movementToggle.checked;
                 localStorage.setItem('movementToggle', String(enabled));
-                if (!currentAction) return;
+                if (!currentAction && !_mvActs.length) return;
                 container.style.transition = 'opacity 0.15s ease-out';
                 container.style.opacity = '0.35';
                 setTimeout(() => {
-                    currentAction.weight = enabled ? 1 : 0;
+                    if (currentAction) currentAction.weight = enabled ? 1 : 0;
+                    for (const a of _mvActs) a.weight = enabled ? 1 : 0;
                     container.style.transition = 'opacity 0.25s ease-in';
                     container.style.opacity = '1';
                 }, 150);
