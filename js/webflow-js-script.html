@@ -376,7 +376,7 @@
             let canFly = false, isShip = false;
             modelScene.traverse(n => { if (n.userData && n.userData.can_fly) canFly = true; if (n.userData && n.userData.is_ship) isShip = true; });
             const groundBox = groundBoxEarly;
-            let groundY = groundBox.min.y - center.y - 0.01;
+            let groundY = groundBox.min.y - center.y - 1.5;
             if (canFly) groundY -= objectRadius * 0.66;
             else if (isShip) groundY -= objectRadius * 0.30;
             groundMesh.position.y = groundY;
@@ -393,17 +393,22 @@
 
 
                 const spinPieceNamesForAnim = spinPieceNames || new Set();
-                // Collect weapon aim piece names — spin clips on these conflict with fire/aiming
-                const weaponAimPieces = new Set();
-                for (const wk in weaponSummary) {
-                    const ws = weaponSummary[wk];
-                    if (ws.aim_pieces) ws.aim_pieces.forEach(p => weaponAimPieces.add(p.toLowerCase()));
+                // Collect piece names that fire animations actually animate —
+                // spin clips on these would conflict with fire playback.
+                const firePieceNames = new Set();
+                for (const anim of gltf.animations) {
+                    if (/^Fire_\d+/.test(anim.name)) {
+                        for (const tr of anim.tracks) {
+                            const dotIdx = tr.name.indexOf('.');
+                            if (dotIdx > 0) firePieceNames.add(tr.name.substring(0, dotIdx).toLowerCase());
+                        }
+                    }
                 }
                 const spinClips = gltf.animations.filter(clip => {
                     if (clip.name.startsWith('Spin_')) {
-                        // Skip spins on weapon aim pieces — they conflict with fire animations
+                        // Skip spins on pieces animated by fire clips — they'd conflict
                         const pieceName = clip.name.substring(5).toLowerCase();
-                        if (weaponAimPieces.has(pieceName)) return false;
+                        if (firePieceNames.has(pieceName)) return false;
                         return true;
                     }
                     const afterUnderscore = clip.name.includes('_') ? clip.name.split('_').slice(1).join('_').toLowerCase() : '';
