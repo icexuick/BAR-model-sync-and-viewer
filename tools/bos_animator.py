@@ -1822,8 +1822,8 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
     return merged, num_branches, rotary_info, indiv
 
 
-_BARREL_SPIN_DUR = 4.0  # total barrel spin animation duration (seconds)
-_BARREL_SPIN_REVS = 5   # number of full revolutions during constant-speed phase
+_BARREL_SPIN_DUR = 0.6   # total barrel spin animation duration (seconds)
+_BARREL_SPIN_REVS = 1    # number of full revolutions during constant-speed phase
 
 
 def _make_barrel_spin_track(piece: str, axis: int, speed_deg: float) -> BosTrack:
@@ -1834,7 +1834,7 @@ def _make_barrel_spin_track(piece: str, axis: int, speed_deg: float) -> BosTrack
     interpolates the correct direction (slerp takes shortest path, so
     >180° jumps would reverse).
     """
-    RAMP = 0.4  # ramp-up / ramp-down time
+    RAMP = 0.1  # ramp-up / ramp-down time
     REVS = _BARREL_SPIN_REVS
     DUR = _BARREL_SPIN_DUR
     # Use a constant visual speed based on revolutions, ignoring BOS speed
