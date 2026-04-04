@@ -2144,11 +2144,41 @@ def extract_fire_animations(bos_content: str) -> Optional[List[FireClipInfo]]:
                         dur = deploy_dur
                         rotary = None
                         func_name = f'AimWeapon{n}'
+        # Guard: if the parsed animation is absurdly long (>30s), the fire
+        # function has deeply nested branches (e.g. legstarfall: 9 revolutions
+        # × 7 barrels = 63 shots merged into one clip).  Extract just the
+        # first if-block that contains move/turn and re-parse.
+        _MAX_FIRE_DUR = 30.0
+        _reduced_body = None  # set when we drill into a nested branch
+        if tracks and dur > _MAX_FIRE_DUR:
+            _fire_body = _extract_function_body(bos_content, func_name)
+            if _fire_body:
+                _fire_body = _inline_call_scripts(_fire_body, bos_content)
+                _fire_clean = _strip_comments(_fire_body)
+                _mt = re.compile(r'\b(?:move|turn)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
+                # Try each if-block; pick the first one that produces a
+                # reasonably short animation with 2+ tracks (skip trivial blocks
+                # like single powerCell moves).
+                for _bm in re.finditer(r'\bif\s*\([^)]*\)\s*\{', _fire_clean, re.IGNORECASE):
+                    try:
+                        _bb, _be = _extract_branch_block(_fire_clean, _bm.end() - 1)
+                    except (ValueError, IndexError):
+                        continue
+                    if len(_mt.findall(_bb)) >= 2:
+                        _t2, _d2, _r2 = _parse_fire_body_to_tracks(_bb)
+                        if _t2 and _d2 <= _MAX_FIRE_DUR:
+                            tracks, dur, rotary = _t2, _d2, _r2
+                            _reduced_body = _bb
+                            break
+
         if tracks:
             # Multi-barrel: create per-barrel clips instead of merged
-            raw_body = _extract_function_body(bos_content, func_name)
+            raw_body = _reduced_body  # use reduced body if we drilled into a nested branch
+            if not raw_body:
+                raw_body = _extract_function_body(bos_content, func_name)
+                if raw_body:
+                    raw_body = _inline_call_scripts(raw_body, bos_content)
             if raw_body:
-                raw_body = _inline_call_scripts(raw_body, bos_content)
                 _, nb, rot_info, indiv = _sequence_if_branches(raw_body)
                 if indiv and nb >= 2 and not rot_info:
                     # Create per-barrel clips: Fire_1_0, Fire_1_1, ...
