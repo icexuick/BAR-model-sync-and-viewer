@@ -1555,11 +1555,26 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
                          for t in open_tracks}
             close_tracks, close_dur = _parse_turn_move_to_tracks(restore_body, start_pose=open_pose)
             if open_tracks and close_tracks and open_dur >= 0.15:
-                print(f"  Toggle animation 'ActivateOpen' (from AimWeapon): {len(open_tracks)} tracks, {open_dur:.2f}s")
-                print(f"  Toggle animation 'ActivateClose' (from Restore): {len(close_tracks)} tracks, {close_dur:.2f}s")
-                clips.append(('ActivateOpen', open_tracks))
-                clips.append(('ActivateClose', close_tracks))
-                return clips
+                # Check if FireWeapon already animates the same pieces.
+                # If so, the AimWeapon moves are part of the per-shot cycle,
+                # not a one-time deploy (e.g. leglraa rail opening).
+                _open_pieces = {t.piece for t in open_tracks}
+                _fire_body = _extract_function_body(bos_content, 'FireWeapon1') or \
+                             _extract_function_body(bos_content, 'FirePrimary') or ''
+                _fire_body = _inline_call_scripts(_fire_body, bos_content)
+                _fire_pieces = set(re.findall(
+                    r'\b(?:turn|move)\s+(\w+)\s+to\s+[xyz]-axis', _fire_body, re.IGNORECASE))
+                _fire_pieces = {p.lower() for p in _fire_pieces}
+                _overlap = _open_pieces & _fire_pieces
+                if len(_overlap) >= len(_open_pieces) * 0.5 and len(_overlap) >= 2:
+                    print(f"  Skipping AimWeapon toggle — Fire animation shares {len(_overlap)} "
+                          f"pieces: {', '.join(sorted(_overlap))}")
+                else:
+                    print(f"  Toggle animation 'ActivateOpen' (from AimWeapon): {len(open_tracks)} tracks, {open_dur:.2f}s")
+                    print(f"  Toggle animation 'ActivateClose' (from Restore): {len(close_tracks)} tracks, {close_dur:.2f}s")
+                    clips.append(('ActivateOpen', open_tracks))
+                    clips.append(('ActivateClose', close_tracks))
+                    return clips
 
     # --- Pattern 3: MMStatus(State) with if(State) / else branches ---
     mm_body = _extract_function_body(bos_content, 'MMStatus')

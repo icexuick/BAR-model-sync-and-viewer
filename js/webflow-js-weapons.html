@@ -634,7 +634,10 @@ window._barWeaponsSetup = function(THREE, opts) {
             // Rotary clips (gatling/revolving) intentionally don't return to rest —
             // they must replay every shot, not be treated as one-time deploy anims.
             // Barrel spin clips (minigun spin-up overlay) also don't return to rest.
-            if (isDeploy && ((fireRotary && fireRotary[clip.name]) || barrelSpins[clip.name])) {
+            // No-toggle units: deploy detection only makes sense when a toggle
+            // animation gates firing. Without ActivateOpen, Fire clips that don't
+            // return to rest are per-shot animations (e.g. leglraa rail cycle).
+            if (isDeploy && ((fireRotary && fireRotary[clip.name]) || barrelSpins[clip.name] || toggleTrackNames.size === 0)) {
                 isDeploy = false;
             }
             if (isDeploy) {
