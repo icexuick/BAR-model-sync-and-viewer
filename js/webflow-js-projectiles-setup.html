@@ -465,8 +465,9 @@ window._barProjectilesSetup = function(THREE, opts) {
     }
 
     function spawnRocket(o, d) {
-        var col=new THREE.Color(d.color), sc=dScale(d.damage), rocketCol=new THREE.Color(0x444444);
-        var noseCol=d._isAA?new THREE.Color('#ff54b2'):new THREE.Color('#cc2200');
+        var col=new THREE.Color(d.color), sc=dScale(d.damage), aN=!!d._isAntiNuke;
+        var rocketCol=aN?new THREE.Color('#1a6eaa'):new THREE.Color(0x444444);
+        var noseCol=aN?new THREE.Color('#44ccee'):d._isAA?new THREE.Color('#ff54b2'):new THREE.Color('#cc2200');
         var maxSpd=Math.max(d.velocity*0.9,135), dir=spread(o.dir,d.accuracy), rl=1.5*sc*1.5;
         var initSpd=(d.accel>0)?Math.min(d.startVelo,maxSpd):maxSpd;
         var g=new THREE.Group();
@@ -474,20 +475,22 @@ window._barProjectilesSetup = function(THREE, opts) {
         var bm=new THREE.MeshBasicMaterial({color:rocketCol,depthWrite:false}); g.add(new THREE.Mesh(bg,bm));
         var ng=new THREE.ConeGeometry(rl*0.18,rl*0.5,6); ng.rotateX(Math.PI/2); ng.translate(0,0,rl*0.75);
         var nm=new THREE.MeshBasicMaterial({color:noseCol,depthWrite:false}); g.add(new THREE.Mesh(ng,nm));
-        var exhCol=d._isAA?new THREE.Color('#ff54b2'):new THREE.Color(d.color).lerp(new THREE.Color(0xff8800),0.5);
+        var exhCol=aN?new THREE.Color('#44ccee'):d._isAA?new THREE.Color('#ff54b2'):new THREE.Color(d.color).lerp(new THREE.Color(0xff8800),0.5);
         var exh=new THREE.Sprite(spr(exhCol,0.8)); exh.scale.set(rl*2,rl*2,1); exh.position.set(0,0,-rl*0.6); g.add(exh);
+        if (aN) { var anGlow=new THREE.Sprite(spr(new THREE.Color('#2299dd'),0.35)); anGlow.scale.set(rl*5,rl*5,1); g.add(anGlow); }
         g.position.copy(o.pos); g.lookAt(o.pos.clone().add(dir)); addS(g,998);
-        muzzleLight(o.pos,d._isAA?new THREE.Color('#ff54b2'):exhCol,8*sc,0.12,o.dir);
+        muzzleLight(o.pos,aN?new THREE.Color('#44ccee'):d._isAA?new THREE.Color('#ff54b2'):exhCol,8*sc,0.12,o.dir);
         var dirUnit=dir.clone().normalize();
         var trail=null, trailMat=null;
-        if (d._isAA) {
-            var tl=sc*44, tr=0.85;
+        if (d._isAA || aN) {
+            var tl=sc*(aN?55:44), tr=aN?1.2:0.85;
             var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
-            trailMat=new THREE.MeshBasicMaterial({color:0xff54b2,transparent:true,opacity:0.5,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
+            var tCol=aN?0x44ccee:0xff54b2;
+            trailMat=new THREE.MeshBasicMaterial({color:tCol,transparent:true,opacity:0.5,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
             trail=new THREE.Mesh(tg,trailMat); trail.position.copy(o.pos); trail.lookAt(o.pos.clone().add(dir)); trail.scale.set(1,1,0.01); addS(trail,997);
         }
         active.push({type:'rocket',age:0,maxAge:10,dist:0,range:d.range||400,velocity:dirUnit.clone().multiplyScalar(initSpd),
-            extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:dirUnit,isAA:!!d.isAA,trail:trail,trailMat:trailMat}});
+            extras:{group:g,exhMat:exh.material,bodyMat:bm,noseMat:nm,rl,accel:d.accel||0,maxSpd,dir:dirUnit,isAA:!!d.isAA,isAntiNuke:aN,trail:trail,trailMat:trailMat}});
     }
 
     function spawnFlame(o, d) {

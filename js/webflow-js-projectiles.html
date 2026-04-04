@@ -115,7 +115,7 @@ window._barProjectilesUpdate = function(ctx) {
                         p.dist+=p.velocity.length()*dt;
                         if (p.dist>=p.range) { p.age=p.maxAge; }
                     }
-                    if (!ex.isAA && Math.random()<dt*32) spawnSmoke(ex.group.position.clone());
+                    if (!ex.isAA && !ex.isAntiNuke && Math.random()<dt*32) spawnSmoke(ex.group.position.clone());
                     if (ex.trail) { ex.trail.position.copy(ex.group.position); ex.trail.lookAt(ex.group.position.clone().add(ex.dir)); var tg=Math.min(1,p.age*4); ex.trail.scale.set(1,1,0.25+tg*(1+t*2)); ex.trailMat.opacity=0.55*(1-t); }
                     ex.exhMat.opacity=0.5+Math.random()*0.4; break;
                 case 'flame':
@@ -244,7 +244,7 @@ window._barProjectilesUpdate = function(ctx) {
         var _hrFix={'legphoenix':1,'legbastion':1,'legaheattank':1,'legehovertank':1};
         if (_hrFix[unitName] && cat==='beam') data.beamtime=3;
         if (data.sound) { var _pitch = cat==='beam' ? (data.largeBeam ? 0.96+Math.random()*0.08 : 1) : 0.93+Math.random()*0.14; playSound(data.sound,o.pos,true,_pitch); }
-        var _fn=((data.name||'')+'|'+(data.type||'')).toLowerCase(); data._isFlak=_fn.indexOf('flak')!==-1; data._isAA=!!data.isAA; var _t2=(data.type||'').toLowerCase().replace(/[\s-]+/g,''); var _n2=(data.name||'').toLowerCase().replace(/[\s-]+/g,''); data._isShotgun=_t2.indexOf('shotgun')!==-1||_t2.indexOf('gatling')!==-1||_n2.indexOf('shotgun')!==-1||_n2.indexOf('gatling')!==-1; data._isCluster=_n2.indexOf('clusterplasma')!==-1||_t2.indexOf('clusterplasma')!==-1; data._isNapalm=_t2==='napalmlauncher'||_n2.indexOf('napalm')!==-1;
+        var _fn=((data.name||'')+'|'+(data.type||'')).toLowerCase(); data._isFlak=_fn.indexOf('flak')!==-1; data._isAA=!!data.isAA; var _t2=(data.type||'').toLowerCase().replace(/[\s-]+/g,''); var _n2=(data.name||'').toLowerCase().replace(/[\s-]+/g,''); data._isShotgun=_t2.indexOf('shotgun')!==-1||_t2.indexOf('gatling')!==-1||_n2.indexOf('shotgun')!==-1||_n2.indexOf('gatling')!==-1; data._isCluster=_n2.indexOf('clusterplasma')!==-1||_t2.indexOf('clusterplasma')!==-1; data._isNapalm=_t2==='napalmlauncher'||_n2.indexOf('napalm')!==-1; data._isAntiNuke=_t2==='antinuke'||_n2.indexOf('antinuke')!==-1;
         var hold = cat === 'beam' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : cat === 'flame' ? 0.2 : cat === 'lightning' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : 0.05;
         flashModel(Math.min(dScale(data.damage) * rScale(data.range) * 0.15, 0.25), hold);
         var spawnFn = _spawnFns[cat]||spawnPlasma;
