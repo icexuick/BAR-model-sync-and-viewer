@@ -269,6 +269,7 @@ window._barWeaponsSetup = function(THREE, opts) {
     }
 
     document.addEventListener('mouseover', function(e) {
+        if (window._barPoserActive) return;
         // Weapon DOM hover
         var wpnEl = e.target.closest('.uw-item-flex[data-wpn-slug]');
         if (wpnEl) {
@@ -301,6 +302,7 @@ window._barWeaponsSetup = function(THREE, opts) {
     });
 
     window.addEventListener('mousemove', function(e) {
+        if (window._barPoserActive) { hideTooltip(); setWeaponHighlight(null); setRoleHighlight(null); return; }
         if (window._barViewerAltDown) { lightGroup.rotation.y += e.movementX * 0.01; hideTooltip(); setWeaponHighlight(null); setRoleHighlight(null); return; }
         if (meshWeaponMap.size === 0 && unitRoleMeshMap.size === 0) return;
         var rect = renderer.domElement.getBoundingClientRect();
@@ -334,6 +336,7 @@ window._barWeaponsSetup = function(THREE, opts) {
     });
 
     renderer.domElement.addEventListener('touchstart', function(e) {
+        if (window._barPoserActive) return;
         if ((meshWeaponMap.size === 0 && unitRoleMeshMap.size === 0) || e.touches.length !== 1) return;
         var touch = e.touches[0];
         var rect = renderer.domElement.getBoundingClientRect();
@@ -513,6 +516,7 @@ window._barWeaponsSetup = function(THREE, opts) {
 
     // Click on 3D weapon mesh → fire
     renderer.domElement.addEventListener('click', function(e) {
+        if (window._barPoserActive) return;
         if (meshWeaponMap.size === 0) return;
         var rect = renderer.domElement.getBoundingClientRect();
         pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;

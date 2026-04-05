@@ -483,7 +483,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         var dirUnit=dir.clone().normalize();
         var trail=null, trailMat=null;
         if (d._isAA || aN) {
-            var tl=sc*(aN?55:44), tr=aN?1.2:0.85;
+            var tl=sc*(aN?44:44), tr=aN?1.2:0.85;
             var tg=new THREE.CylinderGeometry(tr,0,tl,8,1,true); tg.rotateX(Math.PI/2); tg.translate(0,0,-tl*0.5);
             var tCol=aN?0x44ccee:0xff54b2;
             trailMat=new THREE.MeshBasicMaterial({color:tCol,transparent:true,opacity:0.5,blending:ADD,depthWrite:false,side:THREE.DoubleSide});

@@ -37,6 +37,7 @@ class WeaponPieceMapping:
     query_pieces: List[str] = field(default_factory=list)  # ALL fire point pieces (multi-barrel)
     aim_from_piece: Optional[str] = None  # piece returned by AimFromWeapon (aim origin)
     aim_pieces: List[str] = field(default_factory=list)  # pieces turned in AimWeapon
+    aim_piece_axes: Dict[str, Set[str]] = field(default_factory=dict)  # piece -> set of axes ('x','y','z')
     aim_disabled: bool = False  # True when AimWeapon returns 0 (e.g. drone controller)
     all_pieces: Set[str] = field(default_factory=set)  # union of all weapon pieces
 
@@ -413,15 +414,21 @@ def parse_bos(filepath: str) -> BOSParseResult:
         wnum = int(num_m.group(1)) if num_m else _LEGACY_WEAPON_MAP.get((leg_m.group(1) if leg_m else '').lower(), 1)
 
         aim_pieces = set()
-        for turn_match in re.finditer(r'turn\s+(\w+)\s+to\s+[xyz]-axis', body, re.IGNORECASE):
+        aim_piece_axes: Dict[str, Set[str]] = {}
+        for turn_match in re.finditer(r'turn\s+(\w+)\s+to\s+([xyz])-axis', body, re.IGNORECASE):
             piece_name = turn_match.group(1).lower()
+            axis = turn_match.group(2).lower()
             if piece_name in [p.lower() for p in result.pieces]:
                 aim_pieces.add(piece_name)
+                if piece_name not in aim_piece_axes:
+                    aim_piece_axes[piece_name] = set()
+                aim_piece_axes[piece_name].add(axis)
 
         if aim_pieces:
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
             result.weapons[wnum].aim_pieces = sorted(aim_pieces)
+            result.weapons[wnum].aim_piece_axes = aim_piece_axes
             result.weapons[wnum]._update_all()
 
         # Detect disabled weapons: AimWeapon returns 0 with no turn/move commands
@@ -620,12 +627,21 @@ def parse_lua_script(filepath: str) -> BOSParseResult:
         wnum = int(match.group(1))
         body = match.group(2)
         aim_pieces = set()
-        for turn_match in re.finditer(r'\b[Tt]urn\s*\(\s*(\w+)', body):
-            aim_pieces.add(_resolve_piece(turn_match.group(1)))
+        aim_piece_axes: Dict[str, Set[str]] = {}
+        _LUA_AXIS_MAP = {'1': 'x', '2': 'y', '3': 'z'}
+        for turn_match in re.finditer(r'\b[Tt]urn\s*\(\s*(\w+)\s*,\s*(\d)', body):
+            piece = _resolve_piece(turn_match.group(1))
+            axis = _LUA_AXIS_MAP.get(turn_match.group(2))
+            aim_pieces.add(piece)
+            if axis:
+                if piece not in aim_piece_axes:
+                    aim_piece_axes[piece] = set()
+                aim_piece_axes[piece].add(axis)
         if aim_pieces:
             if wnum not in result.weapons:
                 result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
             result.weapons[wnum].aim_pieces = sorted(aim_pieces)
+            result.weapons[wnum].aim_piece_axes = aim_piece_axes
             result.weapons[wnum]._update_all()
 
     # --- Combined variant: script.QueryWeapon(weapon) ---
@@ -698,20 +714,29 @@ def parse_lua_script(filepath: str) -> BOSParseResult:
             # Strip Lua line comments to avoid matching Turn() in comments
             branch_clean = re.sub(r'--[^\n]*', '', branch_body)
             aim_pieces = set()
-            # Match both Turn() and turn() for aim pieces
-            for turn_match in re.finditer(r'\b[Tt]urn\s*\(\s*(\w+)', branch_clean):
+            aim_piece_axes: Dict[str, Set[str]] = {}
+            _LUA_AXIS_MAP = {'1': 'x', '2': 'y', '3': 'z'}
+            # Match both Turn() and turn() for aim pieces — capture axis number
+            for turn_match in re.finditer(r'\b[Tt]urn\s*\(\s*(\w+)\s*,\s*(\d)', branch_clean):
                 piece_var = turn_match.group(1)
+                axis = _LUA_AXIS_MAP.get(turn_match.group(2))
                 # Skip non-piece identifiers
                 if piece_var.lower() in ('heading', 'pitch', 'math', 'rad',
                                           'true', 'false', 'nil', 'self'):
                     continue
-                aim_pieces.add(_resolve_piece(piece_var))
+                piece = _resolve_piece(piece_var)
+                aim_pieces.add(piece)
+                if axis:
+                    if piece not in aim_piece_axes:
+                        aim_piece_axes[piece] = set()
+                    aim_piece_axes[piece].add(axis)
             if aim_pieces:
                 for wnum, wt in weapon_types.items():
                     if wt == wtype:
                         if wnum not in result.weapons:
                             result.weapons[wnum] = WeaponPieceMapping(weapon_num=wnum)
                         result.weapons[wnum].aim_pieces = sorted(aim_pieces)
+                        result.weapons[wnum].aim_piece_axes = aim_piece_axes
                         result.weapons[wnum]._update_all()
 
     return result

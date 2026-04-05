@@ -197,7 +197,7 @@
         lightGroup.add(directionalLight2);
         const ambientLight = new THREE.AmbientLight(VIEWER_CONFIG.ambientLightColor, VIEWER_CONFIG.ambientLightIntensity);
         scene.add(ambientLight);
-        let material, modelScene, groundMesh, mixer = null, currentAction = null;
+        let material, modelScene, groundMesh, mixer = null, currentAction = null, _mvActs = [];
         let toggleOpenClip = null, toggleCloseClip = null, toggleOpenAction = null, toggleCloseAction = null, toggleState = false, toggleAnimating = false;
         const timeUniform = { value: 0.0 };
         const clock = new THREE.Clock();
@@ -417,7 +417,7 @@
                     const au = clip.name.includes('_') ? clip.name.split('_').slice(1).join('_').toLowerCase() : '';
                     return spinPieceNamesForAnim.has(clip.name.toLowerCase()) || spinPieceNamesForAnim.has(au);
                 });
-                const _mvActs = [];
+                _mvActs = [];
                 for (const clip of spinClips) { const a = mixer.clipAction(clip); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); }
                 for (const clip of gltf.animations) { if (_mvSpins.has(clip.name)) { const a = mixer.clipAction(clip); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); _mvActs.push(a); } }
 
@@ -490,6 +490,7 @@
                     if (animToggleButton) animToggleButton.style.display = 'none';
                     if (animToggleWrapper) animToggleWrapper.style.display = 'none';
                 }
+                if (poserResult) { window._barPoserOnActivate = function(entering) { if (currentAction) currentAction.paused = entering; for (const a of _mvActs) a.paused = entering; }; }
             } else {
                 if (movementToggleWrap) movementToggleWrap.style.display = 'none';
                 if (animToggleButton) animToggleButton.style.display = 'none';
@@ -497,7 +498,6 @@
                 renderer.domElement.style.cursor = '';
             }
             if (mixer && initFireAnims) initFireAnims(THREE, mixer, gltf.animations);
-            if (poserResult) { window._barPoserOnActivate = function(entering) { if (currentAction) currentAction.paused = entering; for (const a of _mvActs) a.paused = entering; }; }
 
             // Initialize projectile VFX system — all in main scene.
             // VFX materials use depthWrite:false so SSAOPass depth ignores them,
