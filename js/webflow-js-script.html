@@ -422,11 +422,10 @@
                 for (const clip of gltf.animations) { if (_mvSpins.has(clip.name)) { const a = mixer.clipAction(clip); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); _mvActs.push(a); } }
 
                 toggleOpenClip = null; toggleCloseClip = null; toggleOpenAction = null; toggleCloseAction = null; toggleState = false; toggleAnimating = false;
-                let tgShow=[], tgHide=[], tgVis=new Map(), tgTimer=null;
+                let tgShow=[], tgHide=[], tgVis=new Map();
                 modelScene.traverse(n => { if(n.userData){if(n.userData.toggle_show_on_open)tgShow=n.userData.toggle_show_on_open;if(n.userData.toggle_hide_on_open)tgHide=n.userData.toggle_hide_on_open;}});
-                if(tgShow.length||tgHide.length) modelScene.traverse(n=>{const l=n.name.toLowerCase();if(tgShow.includes(l)||tgHide.includes(l))tgVis.set(l,n);});
+                if(tgShow.length||tgHide.length){modelScene.traverse(n=>{const l=n.name.toLowerCase();if(tgShow.includes(l)||tgHide.includes(l))tgVis.set(l,n);});applyToggleVisibility(false);}
                 function applyToggleVisibility(o){for(const p of tgShow){const n=tgVis.get(p);if(n)n.visible=o;}for(const p of tgHide){const n=tgVis.get(p);if(n)n.visible=!o;}}
-                function scheduleToggleVis(o,dur){if(tgTimer)clearTimeout(tgTimer);tgTimer=setTimeout(()=>applyToggleVisibility(o),dur*450);}
 
                 const openClip  = gltf.animations.find(c => c.name === 'ActivateOpen');
                 const closeClip = gltf.animations.find(c => c.name === 'ActivateClose');
@@ -446,21 +445,20 @@
                             toggleOpenAction.clampWhenFinished = true;
                             toggleAnimating = true;
                             toggleOpenAction.reset().play();
-                            scheduleToggleVis(true, openClip.duration);
                             if (togglePingPong) {
                                 toggleOpenAction.clampWhenFinished = false;
                                 if (!toggleCloseAction) { toggleCloseAction = mixer.clipAction(closeClip); toggleCloseAction.setLoop(THREE.LoopOnce, 1); toggleCloseAction.clampWhenFinished = false; }
                                 mixer.addEventListener('finished', function onPingPong(e) {
                                     if (e.action === toggleOpenAction) {
                                         toggleState = true;
+                                        applyToggleVisibility(true);
                                         toggleOpenAction.stop();
                                         toggleCloseAction.stop().reset().play();
-                                        scheduleToggleVis(false, closeClip.duration);
                                     } else if (e.action === toggleCloseAction) {
                                         toggleState = false;
+                                        applyToggleVisibility(false);
                                         toggleCloseAction.stop();
                                         toggleOpenAction.stop().reset().play();
-                                        scheduleToggleVis(true, openClip.duration);
                                     }
                                 });
                             } else {
@@ -468,6 +466,7 @@
                                     if (e.action === toggleOpenAction) {
                                         toggleState = true;
                                         toggleAnimating = false;
+                                        applyToggleVisibility(true);
                                         mixer.removeEventListener('finished', onAutoOpen);
                                     }
                                 });
@@ -638,11 +637,11 @@
                 if (toggleStopsWalk && isClosing && currentAction) currentAction.weight = 0;
                 resetAction.stop();
                 playAction.reset().play();
-                scheduleToggleVis(!isClosing, playClip.duration);
                 toggleState = !toggleState;
                 mixer.addEventListener('finished', function onFinished(e) {
                     if (e.action === playAction) {
                         toggleAnimating = false;
+                        applyToggleVisibility(!isClosing);
                         if (toggleStopsWalk && !isClosing && currentAction) {
                             const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
                             if (walkEnabled) currentAction.weight = 1;
