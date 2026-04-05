@@ -402,10 +402,15 @@ def parse_bos(filepath: str) -> BOSParseResult:
                             # Also try 0-based as fallback
                             refs_0based = [result.pieces[v] for v in sorted(numeric_vals)
                                            if 0 <= v < len(result.pieces)]
-                            # Prefer whichever resolves to flare/fire pieces
+                            # Prefer whichever resolves to flare/fire pieces.
+                            # If 0 is in the values, it's 0-based (BOS 1-based never
+                            # uses 0 as a piece index for fire points).
                             def _has_fire_pieces(refs):
                                 return any(p.startswith('flare') or p.startswith('fire') for p in refs)
-                            if refs_1based and _has_fire_pieces(refs_1based):
+                            _is_zero_based = 0 in numeric_vals
+                            if _is_zero_based and refs_0based and _has_fire_pieces(refs_0based):
+                                all_refs = refs_0based
+                            elif refs_1based and _has_fire_pieces(refs_1based):
                                 all_refs = refs_1based
                             elif refs_0based and _has_fire_pieces(refs_0based):
                                 all_refs = refs_0based
