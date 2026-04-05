@@ -1383,7 +1383,7 @@ def convert_with_weapons(
                     if _open_body:
                         _show_on_open = []
                         _hide_on_open = []
-                        _known = {p.lower() for p in model.piece_names}
+                        _known = {p.lower() for p in model.piece_names()}
                         for _vm in re.finditer(r'\b(hide|show)\s+(\w+)\s*;', _open_body, re.IGNORECASE):
                             _cmd = _vm.group(1).lower()
                             _piece = _vm.group(2).lower()
