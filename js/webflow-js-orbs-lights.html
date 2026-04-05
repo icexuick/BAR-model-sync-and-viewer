@@ -461,7 +461,7 @@ window._barCloakSetup = function(opts) {
     return {
         update: function(clockDelta) {
             var prev = cloakUniform.value;
-            var speed = 3.0 * clockDelta;
+            var speed = (cloakTarget > prev ? 1.2 : 5.0) * clockDelta;
             cloakUniform.value += (cloakTarget - cloakUniform.value) * Math.min(speed, 1.0);
             if (Math.abs(cloakUniform.value - cloakTarget) < 0.001) cloakUniform.value = cloakTarget;
             var shadowOff = cloakUniform.value >= 0.5, prevOff = prev >= 0.5;
