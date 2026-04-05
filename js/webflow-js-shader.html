@@ -31,6 +31,9 @@ window._barShaderSetup = function(THREE, material, opts) {
             'uniform mat3 envMapRotation;',
             'varying vec3 vViewNormal;',
             'varying vec3 vViewPos;',
+            'float _chash(vec2 p){p=fract(p*vec2(443.8975,397.2973));p+=dot(p,p.yx+19.19);return fract(p.x*p.y);}',
+            'float _cnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(_chash(i),_chash(i+vec2(1,0)),f.x),mix(_chash(i+vec2(0,1)),_chash(i+vec2(1,1)),f.x),f.y);}',
+            'float _cfbm(vec2 p){return 0.64*_cnoise(p)+0.512*_cnoise(p*1.8);}',
             '#define USE_TEAMMAP'
         ].join('\n');
         shader.fragmentShader = header + '\n' + shader.fragmentShader;
@@ -100,7 +103,17 @@ vec3 getIBLRadiance( const in vec3 viewDir, const in vec3 normal, const in float
             '  float shimmer = sin(time * 2.5 + vUv.x * 40.0 + vUv.y * 30.0) * 0.5 + 0.5;',
             '  shimmer = shimmer * 0.3 + 0.7;',
             '  vec3 edgeGlow = (teamColor * 0.6 + 0.4) * fresnel * shimmer * cloakAmount * 1.5;',
-            '  gl_FragColor.rgb = tint + edgeGlow;',
+            '  float _arc = 0.0;',
+            '  for (int _k = 0; _k < 3; _k++) {',
+            '    vec2 _auv = vUv * vec2(6.0, 8.0 + float(_k) * 3.0);',
+            '    _auv.x += time * (0.8 + float(_k) * 0.4);',
+            '    _auv.y += float(_k) * 2.7;',
+            '    float _line = _auv.y + _cfbm(_auv) * 2.0 - 1.0;',
+            '    _arc += 0.012 / (abs(fract(_line) - 0.5) + 0.01);',
+            '  }',
+            '  _arc = min(_arc, 3.0) * cloakAmount * 0.15;',
+            '  vec3 arcCol = (teamColor * 0.5 + 0.5) * _arc;',
+            '  gl_FragColor.rgb = tint + edgeGlow + arcCol;',
             '  gl_FragColor.a = mix(1.0, 0.08 + fresnel * 0.35 * shimmer, cloakAmount);',
             '}',
             'else { gl_FragColor.a = diffuseColor.a; }'
