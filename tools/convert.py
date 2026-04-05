@@ -1584,6 +1584,28 @@ def find_unitdef(bar_dir: str, unit_name: str) -> Optional[str]:
     return index.get(unit_name.lower())
 
 
+_widget_auto_cloak_cache: Dict[str, set] = {}
+
+def _get_widget_auto_cloak(bar_dir: str) -> set:
+    """Parse BAR widget unit_auto_cloak.lua to get units that auto-cloak at build.
+    Returns a set of lowercase unit names with value=true in the widget config."""
+    if bar_dir in _widget_auto_cloak_cache:
+        return _widget_auto_cloak_cache[bar_dir]
+    result = set()
+    widget_path = os.path.join(bar_dir, 'luaui', 'Widgets', 'unit_auto_cloak.lua')
+    if os.path.isfile(widget_path):
+        try:
+            with open(widget_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            # Match lines like: ['armspy'] = true,
+            for m in re.finditer(r"\['(\w+)'\]\s*=\s*true", content):
+                result.add(m.group(1).lower())
+        except Exception:
+            pass
+    _widget_auto_cloak_cache[bar_dir] = result
+    return result
+
+
 def parse_unitdef(bar_dir: str, unit_name: str) -> UnitDefInfo:
     """
     Parse a unit's .lua definition file to extract objectname, script, canfly, etc.
@@ -1634,8 +1656,12 @@ def parse_unitdef(bar_dir: str, unit_name: str) -> UnitDefInfo:
     elif re.search(r'\bcloakcost\s*=\s*[1-9]\d*', content, re.IGNORECASE):
         info.can_cloak = True
 
-    # initcloaked = true
+    # initcloaked = true (from unitdef)
     if re.search(r'\binitcloaked\s*=\s*true\b', content, re.IGNORECASE):
+        info.init_cloaked = True
+    # BAR widget "Auto Cloak Units" auto-enables cloak on these units at build.
+    # Parse the widget file dynamically so new entries are picked up on sync.
+    if unit_name and unit_name.lower() in _get_widget_auto_cloak(bar_dir):
         info.init_cloaked = True
 
     _unitdef_cache[cache_key] = info
@@ -1959,6 +1985,8 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                             if re.search(r'\bcancloak\s*=\s*true\b', lua_content, re.IGNORECASE) or re.search(r'\bcloakcost\s*=\s*[1-9]\d*', lua_content, re.IGNORECASE):
                                 can_cloak = True
                             if re.search(r'\binitcloaked\s*=\s*true\b', lua_content, re.IGNORECASE):
+                                init_cloaked = True
+                            if unit_name and unit_name.lower() in _get_widget_auto_cloak(bar_dir):
                                 init_cloaked = True
                             break
                         except Exception:
@@ -2338,6 +2366,16 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
     is_ship = bool(re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE))
     can_cloak = bool(re.search(r'\bcancloak\s*=\s*true\b', lua_content, re.IGNORECASE)) or bool(re.search(r'\bcloakcost\s*=\s*[1-9]\d*', lua_content, re.IGNORECASE))
     init_cloaked = bool(re.search(r'\binitcloaked\s*=\s*true\b', lua_content, re.IGNORECASE))
+    # Try to read auto-cloak widget from local BAR install
+    _bar_candidates = [
+        os.path.join(os.environ.get('BAR_DIR', ''), ''),
+        'C:/Games/Beyond-All-Reason/data/games/BAR.sdd',
+    ]
+    for _bd in _bar_candidates:
+        if _bd and os.path.isdir(_bd):
+            if unit_name and unit_name.lower() in _get_widget_auto_cloak(_bd):
+                init_cloaked = True
+            break
     glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs, can_fly=can_fly, is_ship=is_ship, can_cloak=can_cloak, init_cloaked=init_cloaked, lua_content=lua_content)
     if glb_path and push and not info_only:
         push_glb_to_repo(glb_path, force=force)
