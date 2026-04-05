@@ -274,6 +274,8 @@ def convert_with_weapons(
     unit_name: str = '',
     can_fly: bool = False,
     is_ship: bool = False,
+    can_cloak: bool = False,
+    init_cloaked: bool = False,
     merge_map: Optional[Dict[int, int]] = None,
     is_builder: bool = False,
 ) -> bytes:
@@ -1043,6 +1045,10 @@ def convert_with_weapons(
             root_extras["can_fly"] = True
         if is_ship:
             root_extras["is_ship"] = True
+        if can_cloak:
+            root_extras["can_cloak"] = True
+        if init_cloaked:
+            root_extras["init_cloaked"] = True
         if is_builder:
             # Pre-detect factory status for emitter detection (flare* = nano on factories)
             _is_factory_early = False
@@ -1542,6 +1548,8 @@ class UnitDefInfo:
     script: Optional[str] = None       # e.g. "Units/ARMCOM_lus.lua" or "Units/CORCOM.cob"
     can_fly: bool = False
     is_ship: bool = False
+    can_cloak: bool = False
+    init_cloaked: bool = False
     lua_path: Optional[str] = None     # path to the unitdef file itself
 
 
@@ -1619,6 +1627,16 @@ def parse_unitdef(bar_dir: str, unit_name: str) -> UnitDefInfo:
     # movementclass = "BOAT4" / "UBOAT" / "HOVER"
     if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT|HOVER)\d*["\']', content, re.IGNORECASE):
         info.is_ship = True
+
+    # cancloak = true, or has cloakcost > 0 (implicit cloakability)
+    if re.search(r'\bcancloak\s*=\s*true\b', content, re.IGNORECASE):
+        info.can_cloak = True
+    elif re.search(r'\bcloakcost\s*=\s*[1-9]\d*', content, re.IGNORECASE):
+        info.can_cloak = True
+
+    # initcloaked = true
+    if re.search(r'\binitcloaked\s*=\s*true\b', content, re.IGNORECASE):
+        info.init_cloaked = True
 
     _unitdef_cache[cache_key] = info
     return info
@@ -1746,6 +1764,8 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                    weapon_defs: Optional[Dict[int, str]] = None,
                    can_fly: bool = False,
                    is_ship: bool = False,
+                   can_cloak: bool = False,
+                   init_cloaked: bool = False,
                    unit_name: Optional[str] = None,
                    lua_content: Optional[str] = None) -> Optional[str]:
     """Convert a single S3O file to GLB."""
@@ -1936,6 +1956,10 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
                                 can_fly = True
                             if re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE):
                                 is_ship = True
+                            if re.search(r'\bcancloak\s*=\s*true\b', lua_content, re.IGNORECASE) or re.search(r'\bcloakcost\s*=\s*[1-9]\d*', lua_content, re.IGNORECASE):
+                                can_cloak = True
+                            if re.search(r'\binitcloaked\s*=\s*true\b', lua_content, re.IGNORECASE):
+                                init_cloaked = True
                             break
                         except Exception:
                             pass
@@ -1975,7 +1999,7 @@ def convert_single(s3o_path: str, script_path: Optional[str] = None,
         except Exception:
             pass
 
-    glb_data = convert_with_weapons(model, weapon_info, anim_script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly, is_ship, merge_map, is_builder)
+    glb_data = convert_with_weapons(model, weapon_info, anim_script_path, weapon_defs, hide_pieces, unit_role, unit_name, can_fly, is_ship, can_cloak, init_cloaked, merge_map, is_builder)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     with open(output_path, 'wb') as f:
         f.write(glb_data)
@@ -2053,6 +2077,7 @@ def batch_convert(bar_dir: str, output_dir: str, unit_filter: str = None,
         try:
             convert_single(s3o_path, script_path, glb_path,
                            can_fly=udef.can_fly, is_ship=udef.is_ship,
+                           can_cloak=udef.can_cloak, init_cloaked=udef.init_cloaked,
                            unit_name=unit_name)
             success += 1
         except Exception as e:
@@ -2311,7 +2336,9 @@ def fetch_unit_from_github(unit_name: str, output_path: Optional[str] = None,
     weapon_defs = parse_lua_weapon_defs(lua_content)
     can_fly = bool(re.search(r'\bcanfly\s*=\s*true\b', lua_content, re.IGNORECASE))
     is_ship = bool(re.search(r'\bmovementclass\s*=\s*["\'](?:U?BOAT)\d*["\']', lua_content, re.IGNORECASE))
-    glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs, can_fly=can_fly, is_ship=is_ship, lua_content=lua_content)
+    can_cloak = bool(re.search(r'\bcancloak\s*=\s*true\b', lua_content, re.IGNORECASE)) or bool(re.search(r'\bcloakcost\s*=\s*[1-9]\d*', lua_content, re.IGNORECASE))
+    init_cloaked = bool(re.search(r'\binitcloaked\s*=\s*true\b', lua_content, re.IGNORECASE))
+    glb_path = convert_single(s3o_local, script_local, output_path, info_only, weapon_defs, can_fly=can_fly, is_ship=is_ship, can_cloak=can_cloak, init_cloaked=init_cloaked, lua_content=lua_content)
     if glb_path and push and not info_only:
         push_glb_to_repo(glb_path, force=force)
     return glb_path

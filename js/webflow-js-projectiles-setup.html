@@ -680,6 +680,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         var fin1=new THREE.Mesh(finG,finM); fin1.position.set(0,0,-bl*0.4); g.add(fin1);
         var finG2=new THREE.PlaneGeometry(bl*0.5,bl*0.35);
         var fin2=new THREE.Mesh(finG2,finM.clone()); fin2.position.set(0,0,-bl*0.4); fin2.rotation.z=Math.PI/2; g.add(fin2);
+        if (d.isEMP) { var empGlow=new THREE.Sprite(spr(new THREE.Color('#4488ff'),0.25)); empGlow.scale.set(bl*4,bl*4,1); g.add(empGlow); }
         g.position.copy(o.pos);
         // Bombs drop downward — initial velocity is slight forward + down
         var vel=new THREE.Vector3(o.dir.x*30,0,o.dir.z*30);
