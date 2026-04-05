@@ -1364,9 +1364,40 @@ def convert_with_weapons(
                     # Units whose projectiles should fire forward (model +Z)
                     # regardless of fire point orientation (e.g. armrock's
                     # missile pod points down at rest, fires horizontally).
-                    _FIRE_HORIZONTAL = {'armrock', 'legaabot'}
+                    _FIRE_HORIZONTAL = {'armrock', 'legaabot', 'armzeus'}
                     if unit_name.lower() in _FIRE_HORIZONTAL:
                         extras["fire_horizontal"] = True
+
+                    # Toggle piece visibility: parse hide/show commands
+                    # from Open()/Close() to know which pieces swap on toggle.
+                    # Open() hides backpack gun, shows held gun; Close() reverses.
+                    _open_body = ''
+                    _om = re.search(r'\bOpen\s*\(\s*\)\s*\{', bos_content, re.IGNORECASE)
+                    if _om:
+                        _d, _i = 1, _om.end()
+                        while _i < len(bos_content) and _d:
+                            if bos_content[_i] == '{': _d += 1
+                            elif bos_content[_i] == '}': _d -= 1
+                            _i += 1
+                        _open_body = bos_content[_om.end():_i - 1]
+                    if _open_body:
+                        _show_on_open = []
+                        _hide_on_open = []
+                        _known = {p.lower() for p in model.piece_names}
+                        for _vm in re.finditer(r'\b(hide|show)\s+(\w+)\s*;', _open_body, re.IGNORECASE):
+                            _cmd = _vm.group(1).lower()
+                            _piece = _vm.group(2).lower()
+                            if _piece in _known:
+                                if _cmd == 'show' and _piece not in _show_on_open:
+                                    _show_on_open.append(_piece)
+                                elif _cmd == 'hide' and _piece not in _hide_on_open:
+                                    _hide_on_open.append(_piece)
+                        if _show_on_open or _hide_on_open:
+                            if _show_on_open:
+                                extras["toggle_show_on_open"] = _show_on_open
+                            if _hide_on_open:
+                                extras["toggle_hide_on_open"] = _hide_on_open
+                            print(f"  Toggle visibility: show={_show_on_open}, hide={_hide_on_open}")
 
             # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
             fire_clips = extract_lua_fire_animations(bos_content) if _is_lua else extract_fire_animations(bos_content)
