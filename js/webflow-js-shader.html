@@ -106,7 +106,7 @@ vec3 getIBLRadiance( const in vec3 viewDir, const in vec3 normal, const in float
             '  float _arc = 0.0;',
             '  for (int _k = 0; _k < 3; _k++) {',
             '    vec2 _auv = vUv * vec2(6.0, 8.0 + float(_k) * 3.0);',
-            '    _auv.x += time * (0.8 + float(_k) * 0.4);',
+            '    _auv.x += time * (0.25 + float(_k) * 0.13);',
             '    _auv.y += float(_k) * 2.7;',
             '    float _line = _auv.y + _cfbm(_auv) * 2.0 - 1.0;',
             '    _arc += 0.012 / (abs(fract(_line) - 0.5) + 0.01);',
