@@ -698,29 +698,10 @@
             if (rotateToggleButton) rotateToggleButton.addEventListener('click', () => { isTurntableEnabledByUser = !isTurntableEnabledByUser; turntableActive = isTurntableEnabledByUser; if(!turntableActive) clearTimeout(idleTimer); });
             if (shadowToggleButton) shadowToggleButton.addEventListener('click', () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; });
 
-            // --- Cloak system ---
-            let cloakTarget = 0.0, cloakActive = false, cloakDecloakTimer = null;
-            const cloakToggleButton = document.getElementById('cloak-toggle-button');
-            const cloakToggleWrapper = document.getElementById('cloak-toggle-wrapper');
-            function setCloakState(on) {
-                cloakActive = on;
-                cloakTarget = on ? 1.0 : 0.0;
-                if (cloakToggleButton) cloakToggleButton.classList.toggle('is-active', on);
-            }
-            window._barDecloak = function() {
-                if (!canCloak || !cloakActive) return;
-                cloakTarget = 0.0;
-                if (cloakDecloakTimer) clearTimeout(cloakDecloakTimer);
-                cloakDecloakTimer = setTimeout(function() { if (cloakActive) cloakTarget = 1.0; cloakDecloakTimer = null; }, 3000);
-            };
-            if (canCloak || initCloaked) {
-                if (cloakToggleButton) cloakToggleButton.style.display = 'flex';
-                if (cloakToggleWrapper) cloakToggleWrapper.style.display = 'flex';
-                if (cloakToggleButton) cloakToggleButton.addEventListener('click', () => { setCloakState(!cloakActive); if (cloakDecloakTimer) { clearTimeout(cloakDecloakTimer); cloakDecloakTimer = null; } });
-                if (initCloaked) setTimeout(() => setCloakState(true), 1500);
-            } else {
-                if (cloakToggleButton) cloakToggleButton.style.display = 'none';
-                if (cloakToggleWrapper) cloakToggleWrapper.style.display = 'none';
+            let cloakUpdate = null;
+            if (window._barCloakSetup) {
+                const cloakResult = window._barCloakSetup({ canCloak, initCloaked, cloakUniform, modelScene });
+                cloakUpdate = cloakResult.update;
             }
             const envRotMat4 = new THREE.Matrix4();
             const envRotMat3 = new THREE.Matrix3();
@@ -770,13 +751,7 @@
                         child.userData._highlightVal += (child.userData._targetHighlight - child.userData._highlightVal) * Math.min(lerpSpeed, 1.0);
                         child.userData._dimVal      += (child.userData._targetDim      - child.userData._dimVal     ) * Math.min(lerpSpeed, 1.0);
                     });
-                    // Smooth cloak transition
-                    var _prevCloak = cloakUniform.value;
-                    var cloakSpeed = 3.0 * clockDelta;
-                    cloakUniform.value += (cloakTarget - cloakUniform.value) * Math.min(cloakSpeed, 1.0);
-                    if (Math.abs(cloakUniform.value - cloakTarget) < 0.001) cloakUniform.value = cloakTarget;
-                    var _cloakShadowOff = cloakUniform.value >= 0.5, _prevShadowOff = _prevCloak >= 0.5;
-                    if (_cloakShadowOff !== _prevShadowOff) modelScene.traverse(c => { if (c.isMesh && c.visible) c.castShadow = !_cloakShadowOff; });
+                    if (cloakUpdate) cloakUpdate(clockDelta);
                     controls.update();
                     composer.render();
                 }
