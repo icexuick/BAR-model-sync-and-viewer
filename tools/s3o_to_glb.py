@@ -108,11 +108,34 @@ class GLBBuilder:
         normals = np.array(
             [[v.nx, v.ny, v.nz] for v in piece.vertices], dtype=np.float32
         )
+        indices_arr = np.array(tri_indices, dtype=np.uint32)
+
+        # Fix NaN or zero-length normals using face normals
+        bad_mask = np.isnan(normals).any(axis=1) | (np.linalg.norm(normals, axis=1) < 1e-8)
+        if bad_mask.any():
+            face_accum = np.zeros_like(normals)
+            for t in range(0, len(indices_arr), 3):
+                i0, i1, i2 = indices_arr[t], indices_arr[t+1], indices_arr[t+2]
+                e1 = positions[i1] - positions[i0]
+                e2 = positions[i2] - positions[i0]
+                fn = np.cross(e1, e2)
+                fl = np.linalg.norm(fn)
+                if fl > 1e-12:
+                    fn /= fl
+                for vi in (i0, i1, i2):
+                    if bad_mask[vi]:
+                        face_accum[vi] += fn
+            for vi in np.where(bad_mask)[0]:
+                nl = np.linalg.norm(face_accum[vi])
+                if nl > 1e-12:
+                    normals[vi] = face_accum[vi] / nl
+                else:
+                    normals[vi] = [0.0, 1.0, 0.0]  # fallback up
+
         # Flip UV t-coordinate for glTF convention
         texcoords = np.array(
             [[v.s, 1.0 - v.t] for v in piece.vertices], dtype=np.float32
         )
-        indices_arr = np.array(tri_indices, dtype=np.uint32)
 
         # Compute bounds
         pos_min = positions.min(axis=0).tolist()
