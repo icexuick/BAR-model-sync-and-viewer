@@ -358,6 +358,39 @@ def convert_with_weapons(
                     weapon_info.weapons[slot] = donor_wm
                     del _dropped[donor_wn]
                     print(f"  Remapped BOS weapon {donor_wn} -> slot {slot} (fire_point: {donor_wm.query_piece})")
+            # Merge remaining dropped BOS fire points into existing weapons with the
+            # same def.  Handles units like armsfig where BOS has QueryWeapon1→flarel
+            # and QueryWeapon2→flarer, but the unitdef only has weapon slot 1 — both
+            # barrels should be fire points for that single weapon.
+            _dropped_after_remap = {wn: wm for wn, wm in _bos_weapons_all.items()
+                                    if wn not in weapon_info.weapons and wm.query_piece}
+            if _dropped_after_remap:
+                for _dwn, _dwm in _dropped_after_remap.items():
+                    fp = _dwm.query_piece
+                    if not fp:
+                        continue
+                    # Find existing weapon whose fire_points could accept this piece.
+                    # Heuristic: merge into the weapon whose existing fire point shares
+                    # a name prefix (e.g. flarel/flarer, barrel1/barrel2) or, if only
+                    # one weapon slot exists, merge unconditionally.
+                    merged = False
+                    for ewn, ewm in weapon_info.weapons.items():
+                        existing_fps = ewm.query_pieces if ewm.query_pieces else ([ewm.query_piece] if ewm.query_piece else [])
+                        if fp in existing_fps:
+                            merged = True
+                            break
+                        # Merge if: single weapon slot, or fire points share a common
+                        # prefix (strip trailing l/r/digits).
+                        import re as _re
+                        _strip = lambda s: _re.sub(r'[lr]?\d*$', '', s.lower())
+                        if len(weapon_info.weapons) == 1 or any(_strip(fp) == _strip(efp) and _strip(fp) for efp in existing_fps):
+                            if not ewm.query_pieces:
+                                ewm.query_pieces = [ewm.query_piece] if ewm.query_piece else []
+                            if fp not in ewm.query_pieces:
+                                ewm.query_pieces.append(fp)
+                                print(f"  Merged dropped BOS weapon {_dwn} fire_point '{fp}' into weapon {ewn}")
+                            merged = True
+                            break
             # Add empty entries for real weapons present in unitdef but absent in BOS
             # (e.g. anti-nuke launchers that have no QueryWeapon function).
             from bos_parser import WeaponPieceMapping
@@ -1367,37 +1400,6 @@ def convert_with_weapons(
                     _FIRE_HORIZONTAL = {'armrock', 'legaabot', 'armzeus'}
                     if unit_name.lower() in _FIRE_HORIZONTAL:
                         extras["fire_horizontal"] = True
-
-                    # Toggle piece visibility: parse hide/show commands
-                    # from Open()/Close() to know which pieces swap on toggle.
-                    # Open() hides backpack gun, shows held gun; Close() reverses.
-                    _open_body = ''
-                    _om = re.search(r'\bOpen\s*\(\s*\)\s*\{', bos_content, re.IGNORECASE)
-                    if _om:
-                        _d, _i = 1, _om.end()
-                        while _i < len(bos_content) and _d:
-                            if bos_content[_i] == '{': _d += 1
-                            elif bos_content[_i] == '}': _d -= 1
-                            _i += 1
-                        _open_body = bos_content[_om.end():_i - 1]
-                    if _open_body:
-                        _show_on_open = []
-                        _hide_on_open = []
-                        _known = {p.lower() for p in model.piece_names()}
-                        for _vm in re.finditer(r'\b(hide|show)\s+(\w+)\s*;', _open_body, re.IGNORECASE):
-                            _cmd = _vm.group(1).lower()
-                            _piece = _vm.group(2).lower()
-                            if _piece in _known:
-                                if _cmd == 'show' and _piece not in _show_on_open:
-                                    _show_on_open.append(_piece)
-                                elif _cmd == 'hide' and _piece not in _hide_on_open:
-                                    _hide_on_open.append(_piece)
-                        if _show_on_open or _hide_on_open:
-                            if _show_on_open:
-                                extras["toggle_show_on_open"] = _show_on_open
-                            if _hide_on_open:
-                                extras["toggle_hide_on_open"] = _hide_on_open
-                            print(f"  Toggle visibility: show={_show_on_open}, hide={_hide_on_open}")
 
             # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
             fire_clips = extract_lua_fire_animations(bos_content) if _is_lua else extract_fire_animations(bos_content)
