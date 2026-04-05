@@ -297,6 +297,38 @@ def parse_bos(filepath: str) -> BOSParseResult:
                     emit_refs = _shot_emit_pieces[wnum]
                     if len(emit_refs) >= len(all_refs):
                         all_refs = emit_refs
+                # Second chance: if suspect pieces remain (no emit-sfx available)
+                # and the base piece has a left/right mirror in the piece list,
+                # replace the suspect entries with mirror pieces.
+                # e.g. "flarel + gun_1" yields ['flarel','fan'] but 'flarer' exists
+                # → replace 'fan' with 'flarer'.
+                _still_suspect = any(
+                    not any(p.startswith(pfx) for pfx in _FIRE_PREFIXES)
+                    for p in all_refs
+                )
+                if _still_suspect:
+                    _LR_SWAPS = [('l', 'r'), ('r', 'l'), ('1', '2'), ('2', '1')]
+                    good_refs = [p for p in all_refs
+                                 if any(p.startswith(pfx) for pfx in _FIRE_PREFIXES)]
+                    if good_refs:
+                        mirrored = list(all_refs)
+                        for idx, p in enumerate(mirrored):
+                            if any(p.startswith(pfx) for pfx in _FIRE_PREFIXES):
+                                continue
+                            # Try to derive a mirror from the first good piece
+                            for g in good_refs:
+                                for sfx_a, sfx_b in _LR_SWAPS:
+                                    if g.endswith(sfx_a):
+                                        candidate = g[:-len(sfx_a)] + sfx_b
+                                        if candidate.lower() in [pp.lower() for pp in result.pieces]:
+                                            mirrored[idx] = candidate
+                                            break
+                                else:
+                                    continue
+                                break
+                        if all(any(p.startswith(pfx) for pfx in _FIRE_PREFIXES)
+                               for p in mirrored):
+                            all_refs = mirrored
         # Fallback: "piecenum = <variable>;" or "pieceIndex = <variable>;" where
         # variable is NOT a piece name. The variable acts as a piece index, cycled
         # in FireWeaponN. Resolve by finding all assignments to that variable.
