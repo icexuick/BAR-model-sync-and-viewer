@@ -1478,15 +1478,35 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         # If AimWeapon has no heading/pitch variable turns, it's a pure deploy
         # (e.g. cormh tilts turret 90° to fire), not turret aiming. In that case
         # aim-named pieces with large rotations count as deploy pieces.
-        _aim1_body = _extract_function_body(bos_content, 'AimWeapon1') or ''
-        _aim1_clean = _strip_comments(_aim1_body)
-        _has_aim_vars = bool(re.search(r'turn\s+\w+\s+to\s+[xyz]-axis\s+(?:heading|.*pitch)', _aim1_clean, re.IGNORECASE))
+        # Scan ALL AimWeapon functions (not just AimWeapon1) to catch multi-weapon
+        # units like corjugg where toplaser is aimed in AimWeapon4.
+        _all_aim_clean = ''
+        for _awi in range(1, 10):
+            _aw_fn = f'AimWeapon{_awi}' if _awi > 1 else 'AimWeapon1'
+            _aw_b = _extract_function_body(bos_content, _aw_fn)
+            if not _aw_b and _awi == 1:
+                _aw_b = _extract_function_body(bos_content, 'AimPrimary')
+            if _aw_b:
+                _all_aim_clean += '\n' + _strip_comments(_aw_b)
+        _has_aim_vars = bool(re.search(r'turn\s+\w+\s+to\s+[xyz]-axis\s+(?:heading|.*pitch)', _all_aim_clean, re.IGNORECASE))
         _large_rot_pieces = set()
         if not _has_aim_vars:
             for _lr_m in re.finditer(r'\bturn\s+(\w+)\s+to\s+[xyz]-axis\s+<([-\d.]+)>', aim_clean, re.IGNORECASE):
                 if abs(float(_lr_m.group(2))) >= 45:
                     _large_rot_pieces.add(_lr_m.group(1).lower())
-        _non_aim_pieces = {p for p in _aim_piece_names if not re.match(r'^\w*(?:aim|turret|sleeve|gun|barrel|aimx|aimy|flare|pivot)', p, re.IGNORECASE) or p.lower() in _large_rot_pieces}
+        # Pieces that are ONLY turned with heading/pitch variables (never
+        # fixed <angle>) are pure aim pieces regardless of their name
+        # (e.g. cortermite 'head' turned to heading/pitch, corjugg 'toplaser').
+        # A "fixed turn" is `turn X to axis <angle> speed` with no variable
+        # expression after it. `<0> - pitch` is NOT fixed — it's aim-variable.
+        _var_aim_pieces = set()
+        if _has_aim_vars:
+            _fixed_turn_pieces = {m.group(1).lower() for m in re.finditer(
+                r'\bturn\s+(\w+)\s+to\s+[xyz]-axis\s+<[^>]*>\s+speed\b', _all_aim_clean, re.IGNORECASE)}
+            _all_turn_pieces = {m.group(1).lower() for m in re.finditer(
+                r'\bturn\s+(\w+)\s+to\s+[xyz]-axis', _all_aim_clean, re.IGNORECASE)}
+            _var_aim_pieces = _all_turn_pieces - _fixed_turn_pieces
+        _non_aim_pieces = {p for p in _aim_piece_names if (not re.match(r'^\w*(?:aim|turret|sleeve|gun|barrel|aimx|aimy|flare|pivot)', p, re.IGNORECASE) and p.lower() not in _var_aim_pieces) or p.lower() in _large_rot_pieces}
         has_many_deploy_pieces = len(_non_aim_pieces) >= 3
         has_open_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', aim_clean, re.IGNORECASE))
         has_close_moves = bool(re.search(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', restore_clean, re.IGNORECASE))
