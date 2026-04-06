@@ -1014,8 +1014,11 @@ def convert_with_weapons(
                     elif plc.startswith('aimx') or plc.startswith('sleeve') or plc.startswith('barrel'):
                         poseable[piece] = poseable.get(piece, set()) | {'x'}
             # Auto-detect poseable pieces by name convention:
-            #   aimx*/aimy*  — aim nodes from CATT #defines
-            #   head         — head piece (nod + look)
+            #   aimx*/aimy*       — aim nodes from CATT #defines
+            #   turret*/tur*      — turret bases (Y rotation)
+            #   sleeve*/barrel*   — gun sleeves/barrels (X pitch)
+            #   misbox*           — missile box launchers (X pitch)
+            #   head              — head piece (nod + look)
             #   ruparm/luparm/rshoulder/lshoulder — individual arm roots
             if model.root_piece:
                 for piece in model.all_pieces():
@@ -1025,6 +1028,10 @@ def convert_with_weapons(
                     if re.match(r'aimy\d*$', plc):
                         poseable[plc] = {'y'}
                     elif re.match(r'aimx\d*$', plc):
+                        poseable[plc] = {'x'}
+                    elif re.match(r'(turret|tur)\d*$', plc):
+                        poseable[plc] = {'y'}
+                    elif re.match(r'sleeve\d*$', plc):
                         poseable[plc] = {'x'}
                     elif plc == 'head':
                         poseable[plc] = {'x', 'y'}

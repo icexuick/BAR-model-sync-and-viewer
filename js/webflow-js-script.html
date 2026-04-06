@@ -197,7 +197,7 @@
         lightGroup.add(directionalLight2);
         const ambientLight = new THREE.AmbientLight(VIEWER_CONFIG.ambientLightColor, VIEWER_CONFIG.ambientLightIntensity);
         scene.add(ambientLight);
-        let material, modelScene, groundMesh, mixer = null, currentAction = null, _mvActs = [];
+        let material, modelScene, groundMesh, mixer = null, currentAction = null, _mvActs = [], _spinActs = [];
         let toggleOpenClip = null, toggleCloseClip = null, toggleOpenAction = null, toggleCloseAction = null, toggleState = false, toggleAnimating = false;
         const timeUniform = { value: 0.0 };
         const clock = new THREE.Clock();
@@ -418,8 +418,8 @@
                     const au = clip.name.includes('_') ? clip.name.split('_').slice(1).join('_').toLowerCase() : '';
                     return spinPieceNamesForAnim.has(clip.name.toLowerCase()) || spinPieceNamesForAnim.has(au);
                 });
-                _mvActs = [];
-                for (const clip of spinClips) { const a = mixer.clipAction(clip); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); }
+                _mvActs = []; _spinActs = [];
+                for (const clip of spinClips) { const a = mixer.clipAction(clip); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); _spinActs.push(a); }
                 for (const clip of gltf.animations) { if (_mvSpins.has(clip.name)) { const a = mixer.clipAction(clip); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); _mvActs.push(a); } }
 
                 toggleOpenClip = null; toggleCloseClip = null; toggleOpenAction = null; toggleCloseAction = null; toggleState = false; toggleAnimating = false;
@@ -490,7 +490,7 @@
                     if (animToggleButton) animToggleButton.style.display = 'none';
                     if (animToggleWrapper) animToggleWrapper.style.display = 'none';
                 }
-                if (poserResult) { window._barPoserOnActivate = function(entering) { if (currentAction) currentAction.paused = entering; for (const a of _mvActs) a.paused = entering; }; }
+                if (poserResult) { window._barPoserOnActivate = function(entering) { if (currentAction) currentAction.paused = entering; for (const a of _mvActs) a.paused = entering; for (const a of _spinActs) a.paused = entering; }; }
             } else {
                 if (movementToggleWrap) movementToggleWrap.style.display = 'none';
                 if (animToggleButton) animToggleButton.style.display = 'none';
