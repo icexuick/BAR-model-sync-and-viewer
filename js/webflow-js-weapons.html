@@ -555,25 +555,50 @@ window._barWeaponsSetup = function(THREE, opts) {
     document.addEventListener('mouseup', _stopHold);
     document.addEventListener('mouseleave', _stopHold);
 
-    // Keyboard shortcuts: press 1-9 to fire weapon group (DOM order)
-    // Per-key throttle so multiple weapons can fire simultaneously
+    // Keyboard shortcuts: tap 1-9 to fire once, hold to repeat
+    // First shot fires immediately on keydown; repeat starts after 100ms hold
     var _wpnGroupEls = Array.from(document.querySelectorAll('.uw-item-flex[data-wpn-slug]'));
-    var _lastKeyFireMap = {};
+    var _heldKeys = {};
+    var _keyFireInterval = null;
+    var _keyHoldTimer = null;
+    function _fireAllHeld() {
+        for (var k in _heldKeys) {
+            var idx = parseInt(k) - 1;
+            if (idx >= 0 && idx < _wpnGroupEls.length) _fireFromEl(_wpnGroupEls[idx]);
+        }
+    }
+    function _startRepeat() {
+        if (_keyFireInterval) return;
+        _keyFireInterval = setInterval(_fireAllHeld, 50);
+    }
+    function _stopKeyFiring() {
+        if (_keyHoldTimer) { clearTimeout(_keyHoldTimer); _keyHoldTimer = null; }
+        if (_keyFireInterval) { clearInterval(_keyFireInterval); _keyFireInterval = null; }
+    }
     document.addEventListener('keydown', function(e) {
         var k = e.key;
         if (k >= '1' && k <= '9' && !e.ctrlKey && !e.altKey && !e.metaKey) {
             var tag = (e.target.tagName || '').toLowerCase();
             if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-            var now = performance.now();
-            if (now - (_lastKeyFireMap[k] || 0) < 50) return;
-            _lastKeyFireMap[k] = now;
-            var idx = parseInt(k) - 1;
-            if (idx < _wpnGroupEls.length) {
-                e.preventDefault();
-                _fireFromEl(_wpnGroupEls[idx]);
+            e.preventDefault();
+            if (!_heldKeys[k]) {
+                _heldKeys[k] = true;
+                var idx = parseInt(k) - 1;
+                if (idx >= 0 && idx < _wpnGroupEls.length) _fireFromEl(_wpnGroupEls[idx]);
+                if (!_keyHoldTimer && !_keyFireInterval) {
+                    _keyHoldTimer = setTimeout(function() { _keyHoldTimer = null; _startRepeat(); }, 100);
+                }
             }
         }
     });
+    document.addEventListener('keyup', function(e) {
+        var k = e.key;
+        if (_heldKeys[k]) {
+            delete _heldKeys[k];
+            if (Object.keys(_heldKeys).length === 0) _stopKeyFiring();
+        }
+    });
+    window.addEventListener('blur', function() { _heldKeys = {}; _stopKeyFiring(); });
 
     // Mark weapon meshes with pointer cursor
     if (meshWeaponMap.size > 0) {
