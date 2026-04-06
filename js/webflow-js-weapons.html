@@ -555,17 +555,18 @@ window._barWeaponsSetup = function(THREE, opts) {
     document.addEventListener('mouseup', _stopHold);
     document.addEventListener('mouseleave', _stopHold);
 
-    // Keyboard shortcuts: press 1-9 to fire weapon group (DOM order), max 10/sec
+    // Keyboard shortcuts: press 1-9 to fire weapon group (DOM order)
+    // Per-key throttle so multiple weapons can fire simultaneously
     var _wpnGroupEls = Array.from(document.querySelectorAll('.uw-item-flex[data-wpn-slug]'));
-    var _lastKeyFire = 0;
+    var _lastKeyFireMap = {};
     document.addEventListener('keydown', function(e) {
         var k = e.key;
         if (k >= '1' && k <= '9' && !e.ctrlKey && !e.altKey && !e.metaKey) {
             var tag = (e.target.tagName || '').toLowerCase();
             if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
             var now = performance.now();
-            if (now - _lastKeyFire < 50) return;
-            _lastKeyFire = now;
+            if (now - (_lastKeyFireMap[k] || 0) < 50) return;
+            _lastKeyFireMap[k] = now;
             var idx = parseInt(k) - 1;
             if (idx < _wpnGroupEls.length) {
                 e.preventDefault();
