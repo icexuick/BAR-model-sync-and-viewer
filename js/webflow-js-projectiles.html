@@ -243,7 +243,7 @@ window._barProjectilesUpdate = function(ctx) {
         // These heatray units have incorrect (too short) beamtime in DOM data — force 3s
         var _hrFix={'legphoenix':1,'legbastion':1,'legaheattank':1,'legehovertank':1};
         if (_hrFix[unitName] && cat==='beam') data.beamtime=3;
-        if (data.sound) { var _pitch = cat==='beam' ? (data.largeBeam ? 0.96+Math.random()*0.08 : 1) : 0.93+Math.random()*0.14; playSound(data.sound,o.pos,true,_pitch); }
+        if (data.sound) { var _pitch = cat==='beam' ? (data.largeBeam ? 0.96+Math.random()*0.08 : 1) : 0.93+Math.random()*0.14; var _bst=data.burst||1; var _vol=0.25/Math.sqrt(_bst); playSound(data.sound,o.pos,true,_pitch,_vol); }
         var _fn=((data.name||'')+'|'+(data.type||'')).toLowerCase(); data._isFlak=_fn.indexOf('flak')!==-1; data._isAA=!!data.isAA; var _t2=(data.type||'').toLowerCase().replace(/[\s-]+/g,''); var _n2=(data.name||'').toLowerCase().replace(/[\s-]+/g,''); data._isShotgun=_t2.indexOf('shotgun')!==-1||_t2.indexOf('gatling')!==-1||_n2.indexOf('shotgun')!==-1||_n2.indexOf('gatling')!==-1; data._isCluster=_n2.indexOf('clusterplasma')!==-1||_t2.indexOf('clusterplasma')!==-1; data._isNapalm=_t2==='napalmlauncher'||_n2.indexOf('napalm')!==-1; var _wdef=(weaponSummary[String(wnum)]&&weaponSummary[String(wnum)].def||'').toLowerCase(); data._isAntiNuke=_t2==='antinuke'||_n2.indexOf('antinuke')!==-1||_wdef.indexOf('antinuke')!==-1||_wdef==='fmd_rocket'||_wdef==='amd_rocket';
         var hold = cat === 'beam' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : cat === 'flame' ? 0.2 : cat === 'lightning' ? Math.min(Math.max(data.beamtime, 0.15), 0.3) : 0.05;
         flashModel(Math.min(dScale(data.damage) * rScale(data.range) * 0.15, 0.25), hold);

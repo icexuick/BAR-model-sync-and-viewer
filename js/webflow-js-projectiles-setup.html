@@ -160,13 +160,13 @@ window._barProjectilesSetup = function(THREE, opts) {
     })();
 
     var _playingSounds = {};
-    function playSound(url, pos, allowOverlap, pitch) {
+    function playSound(url, pos, allowOverlap, pitch, vol) {
         if (!url) return;
         if (!allowOverlap && _playingSounds[url]) return;
         ensureListener();
         function _play(buf) {
             var s = new THREE.PositionalAudio(audioListener);
-            s.setBuffer(buf); s.setRefDistance(800); s.setVolume(0.25);
+            s.setBuffer(buf); s.setRefDistance(800); s.setVolume(vol || 0.25);
             if (pitch) s.setPlaybackRate(pitch);
             s.position.copy(pos); mainScene.add(s); s.play();
             _playingSounds[url] = s;
