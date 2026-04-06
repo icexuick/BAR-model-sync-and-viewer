@@ -559,7 +559,10 @@ window._barWeaponsSetup = function(THREE, opts) {
     var _wpnGroupEls = Array.from(document.querySelectorAll('.uw-item-flex[data-wpn-slug]'));
     var _heldKeys = {}; // key → { holdTimer, interval }
     function _getElReload(el) {
-        var r = parseFloat(el.getAttribute('data-wpn-reload') || (el.querySelector('[data-wpn-reload]') && el.querySelector('[data-wpn-reload]').getAttribute('data-wpn-reload'))) || 2;
+        var v = el.getAttribute('data-wpn-reload');
+        if (!v) { var p = el.closest('.uw-item'); if (p) v = p.getAttribute('data-wpn-reload'); }
+        if (!v) { var c = el.querySelector('[data-wpn-reload]'); if (c) v = c.getAttribute('data-wpn-reload'); }
+        var r = parseFloat(v) || 2;
         return Math.max(0.05, Math.min(r, 1)) * 1000; // 50ms .. 1000ms
     }
     function _stopKey(k) {
