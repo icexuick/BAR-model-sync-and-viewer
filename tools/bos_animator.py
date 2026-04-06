@@ -1468,7 +1468,15 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         _mr_close = _extract_function_body(bos_content, 'MoveRate0')
         if _mr_open and _mr_close:
             _mt_re2 = re.compile(r'\b(?:turn|move)\s+\w+\s+to\s+[xyz]-axis', re.IGNORECASE)
-            if _mt_re2.search(_mr_open) and _mt_re2.search(_mr_close):
+            # Only merge MoveRate if its pieces overlap with AimWeapon pieces
+            # (e.g. legfort thrusters are part of deploy). Skip if MoveRate
+            # touches unrelated pieces (e.g. legmos thruster vs launcher).
+            _aim_pieces_set = set(re.findall(r'\b(?:turn|move)\s+(\w+)\s+to', aim_body, re.IGNORECASE))
+            _aim_pieces_set = {p.lower() for p in _aim_pieces_set}
+            _mr_pieces = set(re.findall(r'\b(?:turn|move)\s+(\w+)\s+to', _mr_open, re.IGNORECASE))
+            _mr_pieces = {p.lower() for p in _mr_pieces}
+            _mr_overlaps = bool(_aim_pieces_set & _mr_pieces)
+            if _mt_re2.search(_mr_open) and _mt_re2.search(_mr_close) and _mr_overlaps:
                 aim_body = aim_body + '\n' + _mr_open
                 restore_body = restore_body + '\n' + _mr_close
         aim_clean = _strip_comments(aim_body)
@@ -1523,7 +1531,7 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         # Skip if only aim-related pieces are animated — that's just turret
         # aiming, not a deploy (e.g. corwolv, armart artillery units).
         has_non_aim_pieces = len(_non_aim_pieces) >= 1 or has_deploy_move
-        if (has_open_wait or has_many_deploy_pieces) and has_open_moves and has_close_moves and not has_open_close_fn and has_non_aim_pieces:
+        if (has_open_wait or has_many_deploy_pieces or has_deploy_move) and has_open_moves and has_close_moves and not has_open_close_fn and has_non_aim_pieces:
             # Closed pose = model rest pose from Create() 'now' commands (or 0).
             # Don't use restore body targets directly — some units (e.g. armmh)
             # restore to a non-zero angle that differs from the S3O rest pose,
