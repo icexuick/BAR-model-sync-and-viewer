@@ -563,7 +563,7 @@ window._barWeaponsSetup = function(THREE, opts) {
         if (!v) { var p = el.closest('.uw-item'); if (p) v = p.getAttribute('data-wpn-reload'); }
         if (!v) { var c = el.querySelector('[data-wpn-reload]'); if (c) v = c.getAttribute('data-wpn-reload'); }
         var r = parseFloat(v) || 2;
-        return Math.max(0.05, Math.min(r, 1)) * 1000; // 50ms .. 1000ms
+        return Math.max(0.05, Math.min(r, 1.5)) * 1000; // 50ms .. 1500ms
     }
     function _stopKey(k) {
         var h = _heldKeys[k]; if (!h) return;
