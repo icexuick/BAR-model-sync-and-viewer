@@ -555,70 +555,42 @@ window._barWeaponsSetup = function(THREE, opts) {
     document.addEventListener('mouseup', _stopHold);
     document.addEventListener('mouseleave', _stopHold);
 
-    // Keyboard shortcuts: tap 1-9 to fire once, hold to repeat at weapon reload rate
+    // Keyboard shortcuts: tap 1-9 to fire once, hold to repeat per weapon reload rate
     var _wpnGroupEls = Array.from(document.querySelectorAll('.uw-item-flex[data-wpn-slug]'));
-    var _heldKeys = {};
-    var _keyFireInterval = null;
-    var _keyHoldTimer = null;
+    var _heldKeys = {}; // key → { holdTimer, interval }
     function _getElReload(el) {
         var r = parseFloat(el.getAttribute('data-wpn-reload') || (el.querySelector('[data-wpn-reload]') && el.querySelector('[data-wpn-reload]').getAttribute('data-wpn-reload'))) || 2;
         return Math.max(0.05, Math.min(r, 1)) * 1000; // 50ms .. 1000ms
     }
-    function _getRepeatMs() {
-        var fastest = 1000;
-        for (var k in _heldKeys) {
-            var idx = parseInt(k) - 1;
-            if (idx >= 0 && idx < _wpnGroupEls.length) {
-                fastest = Math.min(fastest, _getElReload(_wpnGroupEls[idx]));
-            }
-        }
-        return fastest;
+    function _stopKey(k) {
+        var h = _heldKeys[k]; if (!h) return;
+        if (h.holdTimer) clearTimeout(h.holdTimer);
+        if (h.interval) clearInterval(h.interval);
+        delete _heldKeys[k];
     }
-    function _fireAllHeld() {
-        for (var k in _heldKeys) {
-            var idx = parseInt(k) - 1;
-            if (idx >= 0 && idx < _wpnGroupEls.length) _fireFromEl(_wpnGroupEls[idx]);
-        }
-    }
-    function _startRepeat() {
-        if (_keyFireInterval) return;
-        var ms = _getRepeatMs();
-        _keyFireInterval = setInterval(_fireAllHeld, ms);
-    }
-    function _stopKeyFiring() {
-        if (_keyHoldTimer) { clearTimeout(_keyHoldTimer); _keyHoldTimer = null; }
-        if (_keyFireInterval) { clearInterval(_keyFireInterval); _keyFireInterval = null; }
-    }
+    function _stopAllKeys() { for (var k in _heldKeys) _stopKey(k); }
     document.addEventListener('keydown', function(e) {
         var k = e.key;
         if (k >= '1' && k <= '9' && !e.ctrlKey && !e.altKey && !e.metaKey) {
             var tag = (e.target.tagName || '').toLowerCase();
             if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
             e.preventDefault();
-            if (!_heldKeys[k]) {
-                _heldKeys[k] = true;
-                var idx = parseInt(k) - 1;
-                if (idx >= 0 && idx < _wpnGroupEls.length) _fireFromEl(_wpnGroupEls[idx]);
-                // Restart interval when a new key is added (rate may change)
-                if (_keyFireInterval) { clearInterval(_keyFireInterval); _keyFireInterval = null; _startRepeat(); }
-                else if (!_keyHoldTimer) {
-                    _keyHoldTimer = setTimeout(function() { _keyHoldTimer = null; _startRepeat(); }, 100);
-                }
-            }
+            if (_heldKeys[k]) return;
+            var idx = parseInt(k) - 1;
+            if (idx < 0 || idx >= _wpnGroupEls.length) return;
+            var el = _wpnGroupEls[idx];
+            _fireFromEl(el);
+            var ms = _getElReload(el);
+            var entry = { holdTimer: null, interval: null };
+            entry.holdTimer = setTimeout(function() {
+                entry.holdTimer = null;
+                entry.interval = setInterval(function() { _fireFromEl(el); }, ms);
+            }, 100);
+            _heldKeys[k] = entry;
         }
     });
-    document.addEventListener('keyup', function(e) {
-        var k = e.key;
-        if (_heldKeys[k]) {
-            delete _heldKeys[k];
-            if (Object.keys(_heldKeys).length === 0) _stopKeyFiring();
-            else if (_keyFireInterval) {
-                // Recalculate interval — remaining weapons may have different reload
-                clearInterval(_keyFireInterval); _keyFireInterval = null; _startRepeat();
-            }
-        }
-    });
-    window.addEventListener('blur', function() { _heldKeys = {}; _stopKeyFiring(); });
+    document.addEventListener('keyup', function(e) { _stopKey(e.key); });
+    window.addEventListener('blur', _stopAllKeys);
 
     // Mark weapon meshes with pointer cursor
     if (meshWeaponMap.size > 0) {
