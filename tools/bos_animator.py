@@ -1766,11 +1766,14 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
     # Matches: if(!var){...}else{...}, if(var){...}else{...},
     #          if(var==0){...}else if(var==1){...}else if(var==2){...}
     bool_pattern = re.compile(
-        r'\bif\s*\(\s*!?\s*(\w+)\s*(?:==\s*\d+|!=\s*\d+)?\s*\)\s*\{', re.IGNORECASE
+        r'\bif\s*\(\s*(!?)\s*(\w+)\s*(?:(==|!=)\s*(\d+))?\s*\)\s*\{', re.IGNORECASE
     )
     bool_m = bool_pattern.search(body)
     if bool_m:
-        counter_var = bool_m.group(1)
+        counter_var = bool_m.group(2)
+        _negate = bool_m.group(1) == '!'
+        _cmp_op = bool_m.group(3)  # '==' or '!=' or None
+        _cmp_val = int(bool_m.group(4)) if bool_m.group(4) is not None else None
         pre_branch = body[:bool_m.start()]
         try:
             branch1_body, branch1_end = _extract_branch_block(body, bool_m.start())
@@ -1796,6 +1799,20 @@ def _sequence_if_branches(body: str) -> Tuple[str, int, Optional[Tuple[str, int,
             post_branch = rest
             branch_bodies = [bb for bb in branch_bodies_a if move_turn_re.search(bb)]
             if len(branch_bodies) >= 2:
+                # For 2-branch if/else: ensure barrel order matches gun variable
+                # values.  if(var==1){A}else{B} → barrel 0=B, barrel 1=A (swap).
+                # if(!var){A}else{B} → barrel 0=A, barrel 1=B (keep).
+                # if(var){A}else{B} → barrel 0=B, barrel 1=A (swap, truthy=1).
+                if len(branch_bodies) == 2:
+                    _if_is_barrel0 = True
+                    if _cmp_op == '==' and _cmp_val is not None and _cmp_val > 0 and not _negate:
+                        _if_is_barrel0 = False  # if(gun==1) → if-block is barrel 1
+                    elif _cmp_op == '!=' and _cmp_val == 0 and not _negate:
+                        _if_is_barrel0 = False  # if(gun!=0) → if-block is truthy/barrel 1
+                    elif _cmp_op is None and not _negate:
+                        _if_is_barrel0 = False  # if(gun) → if-block is truthy/barrel 1
+                    if not _if_is_barrel0:
+                        branch_bodies = [branch_bodies[1], branch_bodies[0]]
                 # Recursively flatten nested if-branches within each branch
                 flat_branches = []
                 for bb in branch_bodies:
