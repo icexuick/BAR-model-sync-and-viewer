@@ -295,6 +295,7 @@ window._barProjectilesSetup = function(THREE, opts) {
     }
     // Standalone muzzle flash sprite with guaranteed minimum duration
     function muzzleFlash(pos, color, size, dur, dir) {
+        size *= 0.93+Math.random()*0.14;
         var d = Math.max(dur||0.15, MIN_FLASH_DUR);
         var fp = pos.clone(); if (dir) fp.addScaledVector(dir, 2);
         var fl = addS(mkSprite(color, size, 1), 999); fl.position.copy(fp);
@@ -392,7 +393,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         // Shotgun/gatling: muzzleside+muzzlefront planes (like plasma), 50% larger
         var sgFlash=null,sgFlash2=null,sgFlash3=null,sgFlashMat=null,sgFlashMat2=null,sgFlashMat3=null;
         if (isSG) {
-            var mfSz=sc*18*rs;
+            var mfSz=sc*18*rs*(0.93+Math.random()*0.14);
             var mcol=col.clone().lerp(new THREE.Color(0xffdd44),0.5);
             var _up=new THREE.Vector3(0,1,0); if(Math.abs(o.dir.y)>0.9) _up.set(1,0,0);
             var _side=new THREE.Vector3().crossVectors(o.dir,_up).normalize();
@@ -401,13 +402,14 @@ window._barProjectilesSetup = function(THREE, opts) {
             var _q1=new THREE.Quaternion().setFromRotationMatrix(_m1);
             var _m2=new THREE.Matrix4().makeBasis(o.dir,_side.clone().negate(),_up2);
             var _q2=new THREE.Quaternion().setFromRotationMatrix(_m2);
-            var _off=o.dir.clone().multiplyScalar(mfSz*0.4);
             sgFlashMat=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:1,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
-            sgFlash=new THREE.Mesh(new THREE.PlaneGeometry(mfSz,mfSz),sgFlashMat); sgFlash.position.copy(o.pos).add(_off); sgFlash.quaternion.copy(_q1); sgFlash.scale.set(1,0.575,1); addS(sgFlash,999);
+            var sgLV=1+Math.random()*0.35, sgFV=0.93+Math.random()*0.14;
+            var _off=o.dir.clone().multiplyScalar(mfSz*(0.4+0.5*(sgLV-1)));
+            sgFlash=new THREE.Mesh(new THREE.PlaneGeometry(mfSz,mfSz),sgFlashMat); sgFlash.position.copy(o.pos).add(_off); sgFlash.quaternion.copy(_q1); sgFlash.scale.set(sgLV,0.575,1); addS(sgFlash,999);
             sgFlashMat2=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:0.7,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
-            sgFlash2=new THREE.Mesh(new THREE.PlaneGeometry(mfSz,mfSz),sgFlashMat2); sgFlash2.position.copy(o.pos).add(_off); sgFlash2.quaternion.copy(_q2); sgFlash2.scale.set(1,0.575,1); addS(sgFlash2,999);
+            sgFlash2=new THREE.Mesh(new THREE.PlaneGeometry(mfSz,mfSz),sgFlashMat2); sgFlash2.position.copy(o.pos).add(_off); sgFlash2.quaternion.copy(_q2); sgFlash2.scale.set(sgLV,0.575,1); addS(sgFlash2,999);
             sgFlashMat3=new THREE.MeshBasicMaterial({map:MF,color:mcol,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
-            sgFlash3=new THREE.Mesh(new THREE.PlaneGeometry(mfSz*1.2,mfSz*1.2),sgFlashMat3); sgFlash3.position.copy(o.pos); sgFlash3.lookAt(o.pos.clone().add(o.dir)); addS(sgFlash3,999);
+            sgFlash3=new THREE.Mesh(new THREE.PlaneGeometry(mfSz*1.2,mfSz*1.2),sgFlashMat3); sgFlash3.position.copy(o.pos); sgFlash3.lookAt(o.pos.clone().add(o.dir)); sgFlash3.scale.set(sgFV,sgFV,1); addS(sgFlash3,999);
         } else {
             muzzleFlash(o.pos,col,sc*12*rs,0.18,o.dir);
         }
@@ -432,7 +434,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         var coreCol=isCl?0xdde4f0:0xffffcc;
         var core=addS(mkSprite(coreCol,bs*2.5,0.8),999); core.position.copy(o.pos);
         var pGlow=addS(mkSprite(col,bs*14,0.07),997); pGlow.position.copy(o.pos);
-        var mfSz=bs*28.8*rs;
+        var mfSz=bs*28.8*rs*(0.93+Math.random()*0.14);
         var mcol=isCl?new THREE.Color(0x7799bb):col.clone().lerp(new THREE.Color(0xffdd44),0.5);
         var _up=new THREE.Vector3(0,1,0); if (Math.abs(o.dir.y)>0.9) _up.set(1,0,0);
         var _side=new THREE.Vector3().crossVectors(o.dir,_up).normalize();
@@ -443,14 +445,15 @@ window._barProjectilesSetup = function(THREE, opts) {
         var _q2=new THREE.Quaternion().setFromRotationMatrix(_m2);
         var mfG=new THREE.PlaneGeometry(mfSz,mfSz);
         var mfM=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:1,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
-        var _offset=o.dir.clone().multiplyScalar(mfSz*0.4);
-        var mf=new THREE.Mesh(mfG,mfM); mf.position.copy(o.pos).add(_offset); mf.quaternion.copy(_q1); mf.scale.set(1,0.575,1); addS(mf,999);
+        var mfLV=1+Math.random()*0.35, mfFV=0.93+Math.random()*0.14;
+        var _offset=o.dir.clone().multiplyScalar(mfSz*(0.4+0.5*(mfLV-1)));
+        var mf=new THREE.Mesh(mfG,mfM); mf.position.copy(o.pos).add(_offset); mf.quaternion.copy(_q1); mf.scale.set(mfLV,0.575,1); addS(mf,999);
         var mfG2=new THREE.PlaneGeometry(mfSz,mfSz);
         var mfM2=new THREE.MeshBasicMaterial({map:MT,color:mcol,transparent:true,opacity:0.7,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
-        var mf2=new THREE.Mesh(mfG2,mfM2); mf2.position.copy(o.pos).add(_offset); mf2.quaternion.copy(_q2); mf2.scale.set(1,0.575,1); addS(mf2,999);
+        var mf2=new THREE.Mesh(mfG2,mfM2); mf2.position.copy(o.pos).add(_offset); mf2.quaternion.copy(_q2); mf2.scale.set(mfLV,0.575,1); addS(mf2,999);
         var mfFG=new THREE.PlaneGeometry(mfSz*1.2,mfSz*1.2);
         var mfFM=new THREE.MeshBasicMaterial({map:MF,color:mcol,transparent:true,opacity:0.9,blending:ADD,depthWrite:false,side:THREE.DoubleSide});
-        var mff=new THREE.Mesh(mfFG,mfFM); mff.position.copy(o.pos); mff.lookAt(o.pos.clone().add(o.dir)); mff.scale.set(1,1,1); addS(mff,999);
+        var mff=new THREE.Mesh(mfFG,mfFM); mff.position.copy(o.pos); mff.lookAt(o.pos.clone().add(o.dir)); mff.scale.set(mfFV,mfFV,1); addS(mff,999);
         muzzleLight(o.pos,mcol,12*sc*rs,0.1,o.dir);
         var trail=null, trailMat=null;
         if (d._isFlak || isCl) {

@@ -700,7 +700,7 @@
 
             let cloakUpdate = null;
             if (window._barCloakSetup) {
-                const cloakResult = window._barCloakSetup({ canCloak, initCloaked, cloakUniform, modelScene });
+                const cloakResult = window._barCloakSetup({ canCloak, initCloaked, cloakUniform, modelScene, teamColor });
                 cloakUpdate = cloakResult.update;
             }
             const envRotMat4 = new THREE.Matrix4();

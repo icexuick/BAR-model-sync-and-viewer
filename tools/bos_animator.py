@@ -1520,10 +1520,20 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
         # aiming, not a deploy (e.g. corwolv, armart artillery units).
         has_non_aim_pieces = len(_non_aim_pieces) >= 1 or has_deploy_move
         if (has_open_wait or has_many_deploy_pieces) and has_open_moves and has_close_moves and not has_open_close_fn and has_non_aim_pieces:
-            # Parse close first to get closed pose (= rest position targets)
-            close_tracks_raw, _ = _parse_turn_move_to_tracks(restore_body)
-            closed_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
-                           for t in close_tracks_raw}
+            # Closed pose = model rest pose from Create() 'now' commands (or 0).
+            # Don't use restore body targets directly — some units (e.g. armmh)
+            # restore to a non-zero angle that differs from the S3O rest pose,
+            # which would make the animation swing too far.
+            _create_body = _extract_function_body(bos_content, 'Create')
+            closed_pose: Dict[Tuple, float] = {}
+            if _create_body:
+                _clean_create = _strip_comments(_create_body)
+                for _cn_m in _TURN_NOW_RE.finditer(_clean_create):
+                    _cn_key = (_cn_m.group(1).lower(), AXIS_INDEX[_cn_m.group(2).lower()], True)
+                    closed_pose[_cn_key] = float(_cn_m.group(3))
+                for _cn_m in _MOVE_NOW_RE.finditer(_clean_create):
+                    _cn_key = (_cn_m.group(1).lower(), AXIS_INDEX[_cn_m.group(2).lower()], False)
+                    closed_pose[_cn_key] = float(_cn_m.group(3))
             open_tracks, open_dur = _parse_turn_move_to_tracks(aim_body, start_pose=closed_pose)
             # If restore resets pieces that aren't in the open tracks (because
             # AimWeapon uses a variable like pitch), infer the deploy angle.
@@ -1572,6 +1582,24 @@ def extract_toggle_animations(bos_content: str) -> Optional[List[Tuple[str, List
             open_pose = {(t.piece, t.axis, t.is_rotation): t.keyframes[-1].value
                          for t in open_tracks}
             close_tracks, close_dur = _parse_turn_move_to_tracks(restore_body, start_pose=open_pose)
+            # Clamp close targets to the rest pose — some units (e.g. armmh)
+            # restore to non-zero angles that overshoot the S3O default.
+            for _ct in close_tracks:
+                _ct_key = (_ct.piece, _ct.axis, _ct.is_rotation)
+                _rest_val = closed_pose.get(_ct_key, 0.0)
+                if _ct.keyframes and abs(_ct.keyframes[-1].value - _rest_val) > 0.01:
+                    _old_target = _ct.keyframes[-1].value
+                    _ct.keyframes[-1].value = _rest_val
+                    # Recalculate duration based on speed (distance / speed)
+                    if len(_ct.keyframes) >= 2:
+                        _start_val = _ct.keyframes[0].value
+                        _old_dist = abs(_old_target - _start_val)
+                        _new_dist = abs(_rest_val - _start_val)
+                        if _old_dist > 0:
+                            _ct.keyframes[-1].time = _ct.keyframes[-1].time * _new_dist / _old_dist
+            # Recalculate close_dur from the actual track durations
+            if close_tracks:
+                close_dur = max(t.keyframes[-1].time for t in close_tracks if t.keyframes)
             if open_tracks and close_tracks and open_dur >= 0.15:
                 # Check if FireWeapon already animates the same pieces.
                 # If so, the AimWeapon moves are part of the per-shot cycle,

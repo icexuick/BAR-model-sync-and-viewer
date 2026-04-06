@@ -435,13 +435,20 @@
 // --- Cloak system ---
 window._barCloakSetup = function(opts) {
     var canCloak = opts.canCloak, initCloaked = opts.initCloaked, cloakUniform = opts.cloakUniform, modelScene = opts.modelScene;
+    var tc = opts.teamColor;
     var cloakTarget = 0.0, cloakActive = false, cloakDecloakTimer = null;
     var cloakToggleButton = document.getElementById('cloak-toggle-button');
     var cloakToggleWrapper = document.getElementById('cloak-toggle-wrapper');
+    var tcHex = tc ? '#' + tc.getHexString() : '#0043ee';
     function setCloakState(on) {
         cloakActive = on;
         cloakTarget = on ? 1.0 : 0.0;
-        if (cloakToggleButton) cloakToggleButton.classList.toggle('is-active', on);
+        if (cloakToggleButton) {
+            cloakToggleButton.classList.toggle('is-active', on);
+            cloakToggleButton.style.backgroundColor = on ? tcHex : '';
+            cloakToggleButton.style.borderColor = on ? tcHex : '';
+            cloakToggleButton.style.color = on ? '#fff' : '';
+        }
     }
     window._barDecloak = function() {
         if (!canCloak || !cloakActive) return;
