@@ -369,8 +369,12 @@ def parse_create_now_rotations(bos_content: str, skip_activate_flypose: bool = F
         candidate = {}
         for m in _TURN_RE.finditer(expanded):
             val = float(m.group(3))
-            if abs(val) > 15.0:
-                key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+            key = (m.group(1).lower(), AXIS_INDEX[m.group(2).lower()], True)
+            # Accept if absolute value is large, OR if it differs significantly
+            # from the Create() now pose (e.g. legmos wings: Create x=90,
+            # activatescr x=0 — abs(0) is small but the delta is 90°).
+            create_val = result.get(key)
+            if abs(val) > 15.0 or (create_val is not None and abs(val - create_val) > 15.0):
                 candidate[key] = val  # last value wins = final target angle
         if candidate:
             # Also include move commands when the same pieces have turn
