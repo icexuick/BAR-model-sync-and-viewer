@@ -166,7 +166,7 @@ window._barProjectilesSetup = function(THREE, opts) {
         ensureListener();
         function _play(buf) {
             var s = new THREE.PositionalAudio(audioListener);
-            s.setBuffer(buf); s.setRefDistance(800); s.setVolume(0.28);
+            s.setBuffer(buf); s.setRefDistance(800); s.setVolume(0.25);
             if (pitch) s.setPlaybackRate(pitch);
             s.position.copy(pos); mainScene.add(s); s.play();
             _playingSounds[url] = s;
