@@ -84,7 +84,6 @@
         if (!container) return;
         container.style.display = 'block';
 
-        // WebGL2 check — Three.js 0.160+ requires it
         const testCanvas = document.createElement('canvas');
         const hasWebGL2 = !!(testCanvas.getContext('webgl2'));
         if (!hasWebGL2) {
@@ -277,15 +276,12 @@
             scene.add(modelScene);
             modelScene.updateWorldMatrix(true, true);
 
-            // Detect factory early — needed for buildpic folded check and zoom exponent.
             let isFactory = false;
             modelScene.traverse(n => { if (n.userData && n.userData.is_factory) isFactory = true; });
             const isConstructor = /com\d*$/.test(unitName) || /^(arm|cor|leg)(a?c[kvas])\d*$/.test(unitName);
             const buildpicFolded = buildpicMode && (isConstructor || unitName.includes('antinuke') || isFactory);
 
-            // For autoplay_open units (defenses): compute bounding box at the
-            // OPEN (end) pose so the camera frames the deployed state, not the
-            // closed state with parts buried underground.
+            // Compute bounding box at OPEN pose for autoplay_open units
             let autoplayOpenForBox = false;
             modelScene.traverse(n => { if (n.userData && n.userData.autoplay_open) autoplayOpenForBox = true; });
             if (buildpicFolded) autoplayOpenForBox = false;
@@ -293,7 +289,6 @@
                 ? gltf.animations.find(c => c.name === 'ActivateOpen') : null;
             let savedTransforms = null;
             if (openClipForBox) {
-                // Save current node transforms, seek to end of open clip, update
                 savedTransforms = new Map();
                 modelScene.traverse(n => {
                     savedTransforms.set(n, {
@@ -320,8 +315,6 @@
                 }
             });
 
-            // Restore original transforms so the intro animation plays from closed
-            // Also compute a default-pose bounding box for ground/clipping plane
             let defaultBox = box;
             if (savedTransforms) {
                 modelScene.traverse(n => {
@@ -340,9 +333,6 @@
 
             const _orbH={corafus:92,armafus:88,legafus:96,corfus:74,legfus:33,armjuno:85,corjuno:85,legjuno:78,corgate:53,armgate:38,leggatet3:63,legdeflector:33,corgatet3:93,armgatet3:62,corafust3:184,armafust3:176,legafust3:192};
             if(_orbH[unitName])box.expandByPoint(new THREE.Vector3(0,_orbH[unitName],0));
-            // Use the higher min.y (closed pose) for vertical centering, so units
-            // whose open-animation swings parts below ground (e.g. corsolar panels)
-            // don't shift the model down and misplace the clipping plane.
             const groundBoxEarly = (box.min.y > defaultBox.min.y) ? box : defaultBox;
             const centerBox = box.clone();
             centerBox.min.y = groundBoxEarly.min.y;
@@ -359,7 +349,6 @@
             if (aspect < 1) { distance = distance / aspect; }
             const finalDistance = distance * VIEWER_CONFIG.initialZoomMultiplier;
             camera.position.set(finalDistance, finalDistance * VIEWER_CONFIG.cameraHeightFactor, finalDistance);
-            // --- Buildpic mode: apply tuned settings ---
             if (buildpicMode) {
                 modelScene.rotation.y = THREE.MathUtils.degToRad(parseFloat(urlParams.get('modelRotY')) || 90);
                 lightGroup.rotation.y = THREE.MathUtils.degToRad(parseFloat(urlParams.get('lightRotY')) || 83);
@@ -393,22 +382,8 @@
             }
             if (gltf.animations && gltf.animations.length) {
                 mixer = new THREE.AnimationMixer(modelScene);
-
-
                 let spinPieceNamesForAnim = spinPieceNames || new Set();
-                // Fallback: read spin_pieces directly from GLB extras (for units
-                // where the weapons script is not loaded, e.g. legafus)
-                if (spinPieceNamesForAnim.size === 0) {
-                    modelScene.traverse(n => {
-                        if (n.userData && n.userData.spin_pieces) {
-                            n.userData.spin_pieces.forEach(s => {
-                                if (!s.startsWith('Spin_')) spinPieceNamesForAnim.add(s.toLowerCase());
-                            });
-                        }
-                    });
-                }
-                // Collect piece names that fire animations actually animate —
-                // spin clips on these would conflict with fire playback.
+                if (spinPieceNamesForAnim.size === 0) modelScene.traverse(n => { if (n.userData && n.userData.spin_pieces) n.userData.spin_pieces.forEach(s => { if (!s.startsWith('Spin_')) spinPieceNamesForAnim.add(s.toLowerCase()); }); });
                 const firePieceNames = new Set();
                 for (const anim of gltf.animations) {
                     if (/^Fire_\d+/.test(anim.name)) {
@@ -510,18 +485,12 @@
             }
             if (mixer && initFireAnims) initFireAnims(THREE, mixer, gltf.animations);
 
-            // Initialize projectile VFX system — all in main scene.
-            // VFX materials use depthWrite:false so SSAOPass depth ignores them,
-            // but depthTest:true so model geometry occludes them correctly.
             let projectilesUpdate = null;
             if (window._barProjectilesSetup) {
                 const projCtx = window._barProjectilesSetup(THREE, {
                     scene: scene, mainScene: scene, camera, modelScene, unitName, weaponSummary, renderer,
                     isToggleOpen: function() {
                         if (!toggleOpenClip || toggleState) return true;
-                        // All toggleable units must open before firing by default.
-                        // toggle_fire_bypass flag on individual units allows firing while closed
-                        // (for units where the toggle is purely decorative).
                         if (toggleOpenClip && !toggleOpenClip._barIsWeaponDeploy) {
                             var hasBypass = false;
                             modelScene.traverse(function(n) { if (n.userData && n.userData.toggle_fire_bypass) hasBypass = true; });
@@ -570,7 +539,6 @@
                 ssaoPass = new SSAOPass(scene, camera, container.offsetWidth, container.offsetHeight);
                 ssaoPass.kernelRadius = performanceSettings.ssaoKernelRadius; ssaoPass.kernelSize = performanceSettings.ssaoKernelSize;
                 ssaoPass.minDistance = VIEWER_CONFIG.ssaoMinDist; ssaoPass.maxDistance = VIEWER_CONFIG.ssaoMaxDist;
-                // Patch: hide layer-1 objects (VFX) during SSAO depth/normal pass
                 const _origOverride = ssaoPass.overrideVisibility.bind(ssaoPass);
                 ssaoPass.overrideVisibility = function() {
                     _origOverride();
@@ -670,7 +638,6 @@
                 const dx = e.clientX - pointerDownPos.x;
                 const dy = e.clientY - pointerDownPos.y;
                 if (Math.sqrt(dx*dx + dy*dy) < 5) {
-                    // Don't toggle if click hit a weapon mesh (let fire anim handle it)
                     const rect = renderer.domElement.getBoundingClientRect();
                     _togglePointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
                     _togglePointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -717,10 +684,6 @@
             const envRotMat4 = new THREE.Matrix4();
             const envRotMat3 = new THREE.Matrix3();
 
-            // Warmup: render one frame through the full composer pipeline to pre-compile
-            // all shader programs. The PointLight pool from projectiles-setup is already
-            // in the scene, so the MeshStandardMaterial shader gets compiled for the full
-            // light count upfront — no recompilation during gameplay.
             (function() {
                 var ADD = THREE.AdditiveBlending, DS = THREE.DoubleSide;
                 var wObjs = [];
