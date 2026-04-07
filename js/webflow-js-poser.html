@@ -8,6 +8,7 @@ window._barPoserSetup = function(THREE, opts) {
     // --- Read poseable_pieces from GLB extras ---
     var poseablePieces = null;
     var spinPieceNames = null;
+    var spinAxes = null;
     modelScene.traverse(function(node) {
         if (node.userData && node.userData.poseable_pieces) {
             poseablePieces = node.userData.poseable_pieces;
@@ -19,14 +20,20 @@ window._barPoserSetup = function(THREE, opts) {
                 if (sp[i].indexOf('Spin_') !== 0) spinPieceNames.push(sp[i].toLowerCase());
             }
         }
+        if (node.userData && node.userData.spin_axes) {
+            spinAxes = node.userData.spin_axes;
+        }
     });
 
-    // Merge spin pieces as poseable on Y-axis (if not already in poseable)
+    // Merge spin pieces as poseable using their actual spin axis from BOS script
     if (!poseablePieces) poseablePieces = {};
     if (spinPieceNames) {
         for (var i = 0; i < spinPieceNames.length; i++) {
             var sn = spinPieceNames[i];
-            if (!poseablePieces[sn]) poseablePieces[sn] = ['y'];
+            if (!poseablePieces[sn]) {
+                var axis = (spinAxes && spinAxes[sn]) || 'y';
+                poseablePieces[sn] = [axis];
+            }
         }
     }
 

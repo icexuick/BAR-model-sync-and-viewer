@@ -1192,9 +1192,11 @@ def convert_with_weapons(
                 if filtered_clips:
                     spin_pieces = []
                     spin_clip_names = []
+                    spin_axes = {}  # piece_name → primary spin axis letter (x/y/z)
                     movement_spin_names = []  # spins from StartMoving (pausable with walk)
                     # Each clip groups all axes for one piece so multi-axis spins
                     # compose correctly via quaternion keyframes.
+                    axis_letters = {0: 'x', 1: 'y', 2: 'z'}
                     for clip_name, clip_tracks in filtered_clips:
                         piece_name = clip_tracks[0].piece
                         clip_n = f"Spin_{piece_name}"
@@ -1204,11 +1206,22 @@ def convert_with_weapons(
                         spin_clip_names.append(clip_n)
                         if clip_name.startswith('StartMoving_'):
                             movement_spin_names.append(clip_n)
+                        # Record primary spin axis (fastest rotation track)
+                        best_axis = clip_tracks[0].axis
+                        best_speed = 0
+                        for t in clip_tracks:
+                            if t.is_rotation and len(t.keyframes) >= 2:
+                                span = abs(t.keyframes[-1].value - t.keyframes[0].value)
+                                if span > best_speed:
+                                    best_speed = span
+                                    best_axis = t.axis
+                        spin_axes[piece_name.lower()] = axis_letters.get(best_axis, 'y')
                     # Store spin_pieces + clip names so viewer can identify spin clips by name
                     if model.root_piece:
                         root_idx = builder.scenes[0]["nodes"][0]
                         extras = builder.nodes[root_idx].setdefault("extras", {})
                         extras["spin_pieces"] = spin_pieces + spin_clip_names
+                        extras["spin_axes"] = spin_axes
                         if movement_spin_names:
                             extras["movement_spins"] = movement_spin_names
             # Activate-loop animations (e.g. armaser spinarms — while(TRUE) + turn-to + sleep)
