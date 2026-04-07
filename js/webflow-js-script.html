@@ -395,7 +395,18 @@
                 mixer = new THREE.AnimationMixer(modelScene);
 
 
-                const spinPieceNamesForAnim = spinPieceNames || new Set();
+                let spinPieceNamesForAnim = spinPieceNames || new Set();
+                // Fallback: read spin_pieces directly from GLB extras (for units
+                // where the weapons script is not loaded, e.g. legafus)
+                if (spinPieceNamesForAnim.size === 0) {
+                    modelScene.traverse(n => {
+                        if (n.userData && n.userData.spin_pieces) {
+                            n.userData.spin_pieces.forEach(s => {
+                                if (!s.startsWith('Spin_')) spinPieceNamesForAnim.add(s.toLowerCase());
+                            });
+                        }
+                    });
+                }
                 // Collect piece names that fire animations actually animate —
                 // spin clips on these would conflict with fire playback.
                 const firePieceNames = new Set();
