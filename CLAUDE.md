@@ -11,11 +11,15 @@ De website draait op Webflow (beyondallreason.info). Modellen worden getoond met
 - `tools/` — Python converter: S3O → GLB met weapon metadata
 - `js/` — Webflow embed scripts (.html bestanden)
 
+## Git workflow — BELANGRIJK
+- **Commit elke wijziging direct.** Maak na elke code- of GLB-wijziging meteen een commit, zodat alle changes traceerbaar zijn in git history en fouten makkelijk te vinden zijn.
+- Na elke GLB update: direct committen + pushen (dit mag altijd zonder te vragen).
+- Laat geen uncommitted changes slingeren — dat maakt debugging lastiger.
+
 ## GLB bestandslocatie — BELANGRIJK
 - **Alle GLBs staan in `glb/`** — dit is de enige juiste plek.
 - De viewer laadt van: `https://raw.githubusercontent.com/icexuick/BAR-modelviewer/main/glb/{unitname}.glb`
 - **Zoek NOOIT naar GLBs in de repo root of ergens anders dan `glb/`.**
-- Na elke GLB update: direct committen + pushen (dit mag altijd zonder te vragen).
 
 ## Convert commando's — altijd naar `glb/`
 ```bash
