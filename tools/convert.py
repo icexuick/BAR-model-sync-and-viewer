@@ -1013,6 +1013,10 @@ def convert_with_weapons(
                         poseable[piece] = poseable.get(piece, set()) | {'y'}
                     elif plc.startswith('aimx') or plc.startswith('sleeve') or plc.startswith('barrel'):
                         poseable[piece] = poseable.get(piece, set()) | {'x'}
+            if poseable:
+                root_extras["poseable_pieces"] = {
+                    p: sorted(axes) for p, axes in poseable.items()
+                }
             # Auto-detect poseable pieces by name convention:
             #   aimx*/aimy*       — aim nodes from CATT #defines
             #   turret*/tur*      — turret bases (Y rotation)
