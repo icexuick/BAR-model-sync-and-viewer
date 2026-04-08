@@ -179,8 +179,17 @@ window._barProjectilesSetup = function(THREE, opts) {
     var _wp = new THREE.Vector3(), _wd = new THREE.Vector3(), _pp = new THREE.Vector3();
     var _aimFixUnits = {'armcom':1,'corcom':1,'corkorg':1};
     var _fireHorizontal = false;
-    modelScene.traverse(function(n) { if (n.userData && n.userData.fire_horizontal) _fireHorizontal = true; });
+    var _fireUp = false;
+    modelScene.traverse(function(n) {
+        if (n.userData && n.userData.fire_horizontal) _fireHorizontal = true;
+        if (n.userData && n.userData.fire_up) _fireUp = true;
+    });
     function nodeFireDir(node) {
+        // fire_up: always fire straight up in world space (+Y)
+        if (_fireUp) {
+            _wd.set(0,1,0);
+            return _wd;
+        }
         // fire_horizontal: always fire in model's forward direction (+Z in world)
         if (_fireHorizontal) {
             _wd.set(0,0,1).applyQuaternion(modelScene.getWorldQuaternion(new THREE.Quaternion()));

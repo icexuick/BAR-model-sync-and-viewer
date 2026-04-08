@@ -1110,10 +1110,36 @@ def convert_with_weapons(
         builder.scenes[0]["nodes"] = [root_idx]
 
     # --- Animation ---
+    # Collect fire_point piece names to exclude from rest-pose rotations.
+    # Applying Create() rotations to fire_point nodes causes the viewer's
+    # nodeFireDir() to misidentify barrel direction (hasRot triggers parent→child
+    # offset fallback instead of local Z axis).
+    _fire_point_pieces = set()
+    for _wl_key, _wl_val in weapon_lookup.items():
+        if 'fire_point' in _wl_val.get('roles', []):
+            _fire_point_pieces.add(_wl_key)
+
     if script_path and os.path.isfile(script_path):
         try:
             with open(script_path, 'r', errors='replace') as f:
                 bos_content = f.read()
+            # Per-unit BOS patches — surgical fixes for scripts whose Close()
+            # omits a wait-for, making the parser's default +1s cutoff clip
+            # finite commands mid-motion. Adding a wait-for-move forces the
+            # parser to run until the flap turns finish naturally, without
+            # touching the general-purpose animator (which could regress
+            # dozens of other units).
+            if unit_name.lower() == 'legperdition':
+                # Close(): flap turns (100→0 at 50°/s = 2s) start at the end of
+                # the function with no wait-for-turn after them, so the parser's
+                # +1s cutoff clips them halfway through (end at ~50° instead of
+                # 0°). Append an explicit wait on fflap so the script cursor
+                # advances past the flap motion before the function ends.
+                bos_content = re.sub(
+                    r'(turn\s+fflap\s+to\s+x-axis\s+<0>\s+speed\s+<50>;)',
+                    r'\1\n\twait-for-turn fflap around x-axis;',
+                    bos_content, count=1
+                )
             _is_lua = is_lua_script(bos_content)
             now_rots = {}
             _skip_fly_pose = unit_name.lower() in _SKIP_ACTIVATE_FLYPOSE
@@ -1135,7 +1161,7 @@ def convert_with_weapons(
                         for t in tracks:
                             for kf in t.keyframes:
                                 kf.time *= scale
-                builder.apply_now_rotations(now_rots, node_name_to_idx)
+                builder.apply_now_rotations(now_rots, node_name_to_idx, skip_pieces=_fire_point_pieces)
                 builder.add_animation(anim_name, tracks, node_name_to_idx, piece_offsets, now_rots=now_rots)
                 # StopWalking pose — exported as a second clip so the viewer can
                 # crossfade to the neutral stance when the movement toggle is off.
@@ -1161,7 +1187,7 @@ def convert_with_weapons(
                         include_translations=_needs_trans)
                 if now_rots:
                     print(f"  Applying {len(now_rots)} rest-pose transforms")
-                    builder.apply_now_rotations(now_rots, node_name_to_idx)
+                    builder.apply_now_rotations(now_rots, node_name_to_idx, skip_pieces=_fire_point_pieces)
 
             # Always try spin animation — some units have BOTH walk and spin
             # (e.g. factories with a dish + opening animation).
@@ -1430,6 +1456,13 @@ def convert_with_weapons(
                     _FIRE_HORIZONTAL = {'armrock', 'legaabot', 'armzeus'}
                     if unit_name.lower() in _FIRE_HORIZONTAL:
                         extras["fire_horizontal"] = True
+
+                    # Units whose projectiles should fire straight up (world +Y)
+                    # e.g. legperdition's napalm cannon pitches up in-game via
+                    # aimy1, but the viewer shows the rest pose — so force up.
+                    _FIRE_UP = {'legperdition'}
+                    if unit_name.lower() in _FIRE_UP:
+                        extras["fire_up"] = True
 
             # Fire / recoil animations (FireWeapon1, FirePrimary, etc.)
             fire_clips = extract_lua_fire_animations(bos_content) if _is_lua else extract_fire_animations(bos_content)
