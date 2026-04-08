@@ -221,7 +221,8 @@ class GLBBuilder:
 
         return node_idx
 
-    def apply_now_rotations(self, now_rots: dict, node_name_to_idx: Dict[str, int]):
+    def apply_now_rotations(self, now_rots: dict, node_name_to_idx: Dict[str, int],
+                            skip_pieces: set = None):
         """
         Apply Create() 'turn/move piece to axis <value> now' transforms as static
         node rotations/translations in the GLB. This sets the rest pose to match
@@ -259,6 +260,8 @@ class GLBBuilder:
                 trans_by_piece.setdefault(piece, {})[axis] = val
 
         for piece, axes in rot_by_piece.items():
+            if skip_pieces and piece in skip_pieces:
+                continue
             node_idx = node_name_to_idx.get(piece)
             if node_idx is None:
                 continue
@@ -270,6 +273,8 @@ class GLBBuilder:
             self.nodes[node_idx]["rotation"] = _euler_to_quat(rx, ry, rz)
 
         for piece, axes in trans_by_piece.items():
+            if skip_pieces and piece in skip_pieces:
+                continue
             node_idx = node_name_to_idx.get(piece)
             if node_idx is None:
                 continue
