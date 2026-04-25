@@ -72,7 +72,7 @@ vec3 getIBLRadiance( const in vec3 viewDir, const in vec3 normal, const in float
             'float metalnessFactor = metalness; vec4 texelMetalness = texture2D( pbrMap, vUv ); metalnessFactor *= texelMetalness.g;');
         shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>',
             '#include <color_fragment>\n #ifdef USE_TEAMMAP\n float S_teamMask = texture2D( teamMap, vUv ).r; float S_blendFactor = step(0.35, S_teamMask); vec3 targetColor = mix(diffuseColor.rgb, teamColor, 0.75); diffuseColor.rgb = mix(diffuseColor.rgb, targetColor, S_blendFactor); \n #endif');
-        var pulseStr = pulseMaxValue.toFixed(2);
+        var pulseStr = pulseMaxValue.toFixed(2).replace(',', '.');
         shader.fragmentShader = shader.fragmentShader.replace('#include <tonemapping_fragment>', [
             'vec3 S_pbrBoost = vec3(0.0);',
             '#ifdef USE_MAP',

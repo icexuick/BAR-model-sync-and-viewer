@@ -266,7 +266,7 @@
                     #ifdef USE_MAP
                         float S_emissionAmount = texture2D( pbrMap, vUv ).r;
                         if (S_emissionAmount > 0.01) {
-                            float S_pulse = (sin(time * 3.14159) * 0.5 + 0.5) * (${pulseMaxValue.toFixed(2)} - 0.01) + 0.01;
+                            float S_pulse = (sin(time * 3.14159) * 0.5 + 0.5) * (${pulseMaxValue.toFixed(2).replace(',', '.')} - 0.01) + 0.01;
                             vec4 S_diff = texture2D( map, vUv );
                             S_pbrBoost = pow(S_diff.rgb, vec3(2.2)) * S_emissionAmount * pbrEmissiveIntensity * S_pulse;
                         }
