@@ -185,16 +185,16 @@
         const vmBtn = document.getElementById('view-mode-toggle-button');
         const bpEl = document.querySelector('.flex-unit-detail-img');
         const tbEl = document.querySelector('.threeblock');
-        window._barAnimUI = { wrap: animToggleWrapper, mvWrap: movementToggleWrap, hasWalk: false };
+        let walkUI = false;
         const setVMode = (m, init) => {
-            const is2D = m === '2D'; const v = is2D ? '2D' : '3D';
-            window._barViewMode = v; localStorage.setItem('barViewMode', v);
+            const is2D = m === '2D', d3 = is2D ? 'none' : '', wd = is2D || !walkUI ? 'none' : '';
+            window._barViewMode = is2D ? '2D' : '3D'; localStorage.setItem('barViewMode', window._barViewMode);
             container.style.display = is2D ? 'none' : 'block';
-            if (tbEl) tbEl.style.display = is2D ? 'none' : '';
+            if (tbEl) tbEl.style.display = d3;
             if (bpEl) { bpEl.style.display = is2D ? 'flex' : 'none'; bpEl.style.visibility = is2D ? 'visible' : ''; bpEl.classList.remove('w-condition-invisible'); }
-            const u = window._barAnimUI, show = !is2D && u.hasWalk;
-            if (u.wrap) u.wrap.style.display = show ? 'flex' : 'none';
-            if (u.mvWrap) u.mvWrap.style.display = show ? '' : 'none';
+            for (const el of [rotateToggleButton, shadowToggleButton, exportButton, downloadButton]) if (el) el.style.display = d3;
+            if (animToggleWrapper) animToggleWrapper.style.display = wd || 'flex';
+            if (movementToggleWrap) movementToggleWrap.style.display = wd;
             if (vmBtn) vmBtn.textContent = is2D ? '3D' : '2D';
             if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
         };
@@ -478,21 +478,23 @@
                 const nonSpinClips = gltf.animations.filter(c => !spinClips.includes(c) && !toggleClipNames.has(c.name) && !c.name.startsWith('Fire_') && c.name !== 'StopWalking' && !_mvSpins.has(c.name));
                 let walkClip = nonSpinClips.find(c => c.name.toLowerCase() === 'walk');
                 if (!walkClip && !_mvActs.length) walkClip = nonSpinClips[0];
-                if (walkClip || _mvActs.length) {
+                const hasWalk = !!(walkClip || _mvActs.length);
+                if (hasWalk) {
                     const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
                     if (walkClip) { currentAction = mixer.clipAction(walkClip); currentAction.setLoop(THREE.LoopRepeat, Infinity); currentAction.play(); currentAction.weight = walkEnabled ? 1 : 0; }
                     for (const a of _mvActs) a.weight = walkEnabled ? 1 : 0;
                     if (movementToggle) movementToggle.checked = walkEnabled;
                     if (animToggleButton) animToggleButton.style.display = 'flex';
-                    window._barAnimUI.hasWalk = true;
                 } else {
                     currentAction = null;
                     if (animToggleButton) animToggleButton.style.display = 'none';
                 }
+                walkUI = hasWalk;
                 setVMode(window._barViewMode, true);
                 if (poserResult) { window._barPoserOnActivate = function(entering) { if (currentAction) currentAction.paused = entering; for (const a of _mvActs) a.paused = entering; for (const a of _spinActs) a.paused = entering; }; }
             } else {
                 if (animToggleButton) animToggleButton.style.display = 'none';
+                walkUI = false;
                 setVMode(window._barViewMode, true);
                 renderer.domElement.style.cursor = '';
             }
