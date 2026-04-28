@@ -182,6 +182,33 @@
         const downloadButton = document.getElementById('download-glb-button');
         if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = `${unitName}.glb`; }
 
+        const viewModeButton = document.getElementById('view-mode-toggle-button');
+        const buildpicEl = document.querySelector('.flex-unit-detail-img');
+        const VIEW_MODE_KEY = 'barViewMode';
+        let viewMode = (localStorage.getItem(VIEW_MODE_KEY) === '2D') ? '2D' : '3D';
+        window._barViewMode = viewMode;
+        function applyViewMode(mode) {
+            viewMode = (mode === '2D') ? '2D' : '3D';
+            window._barViewMode = viewMode;
+            localStorage.setItem(VIEW_MODE_KEY, viewMode);
+            const is2D = (viewMode === '2D');
+            if (container) container.style.display = is2D ? 'none' : 'block';
+            if (buildpicEl) buildpicEl.style.display = is2D ? '' : 'none';
+            if (viewModeButton) viewModeButton.textContent = is2D ? '3D' : '2D';
+            if (!is2D && window._barAnimateRestart) window._barAnimateRestart();
+        }
+        if (viewModeButton) {
+            viewModeButton.textContent = (viewMode === '2D') ? '3D' : '2D';
+            viewModeButton.addEventListener('click', (e) => {
+                e.preventDefault();
+                applyViewMode(viewMode === '2D' ? '3D' : '2D');
+            });
+        }
+        if (viewMode === '2D') {
+            if (buildpicEl) buildpicEl.style.display = '';
+            container.style.display = 'none';
+        }
+
         const lightGroup = new THREE.Group(); scene.add(lightGroup);
         const directionalLight = new THREE.DirectionalLight(VIEWER_CONFIG.keyLightColor, VIEWER_CONFIG.keyLightIntensity);
         directionalLight.position.set(VIEWER_CONFIG.keyLightX, VIEWER_CONFIG.keyLightY, VIEWER_CONFIG.keyLightZ);
@@ -216,7 +243,7 @@
         ]).then(([env, diffuseMap, pbrMap, normalMap, teamMap, gltf]) => {
             loadingDone = true; clearTimeout(loadTimeout);
             const fallbackImageBlock = document.querySelector('.flex-unit-detail-img');
-            if (fallbackImageBlock) fallbackImageBlock.style.display = 'none';
+            if (fallbackImageBlock && window._barViewMode !== '2D') fallbackImageBlock.style.display = 'none';
 
             setTimeout(() => {
                 if (loader) { loader.style.transition = 'opacity 0.3s ease-out'; loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
@@ -702,7 +729,9 @@
             const fpsLimit = 120;
             const interval = 1000 / fpsLimit;
             let lastTime = 0;
+            let animateRunning = false;
             const animate = (timestamp) => {
+                if (window._barViewMode === '2D') { animateRunning = false; return; }
                 requestAnimationFrame(animate);
                 const delta = timestamp - lastTime;
                 if (delta > interval) {
@@ -742,7 +771,16 @@
             const resizeObserver = new ResizeObserver(handleResize);
             resizeObserver.observe(container);
             lastTime = performance.now();
-            requestAnimationFrame(animate);
+            window._barAnimateRestart = () => {
+                if (animateRunning) return;
+                animateRunning = true;
+                lastTime = performance.now();
+                requestAnimationFrame(animate);
+            };
+            if (window._barViewMode !== '2D') {
+                animateRunning = true;
+                requestAnimationFrame(animate);
+            }
         }).catch(err => {
             loadingDone = true; clearTimeout(loadTimeout);
             console.error("LOAD ERROR:", err);
