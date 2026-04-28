@@ -184,18 +184,18 @@
 
         const vmBtn = document.getElementById('view-mode-toggle-button');
         const bpEl = document.querySelector('.flex-unit-detail-img');
-        const showBp = (s) => { if (bpEl) { bpEl.style.display = s ? 'flex' : 'none'; bpEl.style.visibility = s ? 'visible' : ''; bpEl.classList.remove('w-condition-invisible'); } };
+        const tbEl = document.querySelector('.threeblock');
         const setVMode = (m, init) => {
-            const is2D = m === '2D';
-            window._barViewMode = is2D ? '2D' : '3D';
-            localStorage.setItem('barViewMode', window._barViewMode);
+            const is2D = m === '2D'; const v = is2D ? '2D' : '3D';
+            window._barViewMode = v; localStorage.setItem('barViewMode', v);
             container.style.display = is2D ? 'none' : 'block';
-            showBp(is2D);
+            if (tbEl) tbEl.style.display = is2D ? 'none' : '';
+            if (bpEl) { bpEl.style.display = is2D ? 'flex' : 'none'; bpEl.style.visibility = is2D ? 'visible' : ''; bpEl.classList.remove('w-condition-invisible'); }
             if (vmBtn) vmBtn.textContent = is2D ? '3D' : '2D';
             if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
         };
-        setVMode(localStorage.getItem('barViewMode') === '2D' ? '2D' : '3D', true);
-        if (vmBtn) vmBtn.addEventListener('click', (e) => { e.preventDefault(); setVMode(window._barViewMode === '2D' ? '3D' : '2D'); });
+        setVMode(localStorage.getItem('barViewMode'), true);
+        if (vmBtn) vmBtn.addEventListener('click', () => setVMode(window._barViewMode === '2D' ? '3D' : '2D'));
 
         const lightGroup = new THREE.Group(); scene.add(lightGroup);
         const directionalLight = new THREE.DirectionalLight(VIEWER_CONFIG.keyLightColor, VIEWER_CONFIG.keyLightIntensity);
@@ -230,7 +230,7 @@
             gltfLoader.loadAsync(modelURL)
         ]).then(([env, diffuseMap, pbrMap, normalMap, teamMap, gltf]) => {
             loadingDone = true; clearTimeout(loadTimeout);
-            showBp(window._barViewMode === '2D');
+            setVMode(window._barViewMode, true);
 
             setTimeout(() => {
                 if (loader) { loader.style.transition = 'opacity 0.3s ease-out'; loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
