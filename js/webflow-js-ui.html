@@ -1,0 +1,118 @@
+<script>
+window._barUISetup = function(ctx) {
+    const { container, modelURL, unitName, exportWidth, getRenderer, getCamera, getComposer, getMixer, getCurrentAction, getMvActs, getSsaoPass, getSmaaPass, onTurntableChange, onShadowChange } = ctx;
+
+    const animToggleButton   = document.getElementById('anim-toggle-button');
+    const animToggleWrapper  = document.getElementById('anim-toggle-wrapper');
+    const rotateToggleButton = document.getElementById('rotate-toggle-button');
+    const shadowToggleButton = document.getElementById('shadow-toggle-button');
+    const exportButton       = document.getElementById('export-button');
+    const movementToggle     = document.getElementById('movementToggle');
+    const movementToggleWrap = movementToggle ? movementToggle.closest('.toggle-switch') : null;
+    const downloadButton     = document.getElementById('download-glb-button');
+    const vmBtn              = document.getElementById('view-mode-toggle-button');
+    const bpEl               = document.querySelector('.flex-unit-detail-img');
+    const tbEl               = document.querySelector('.threeblock');
+
+    if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = unitName + '.glb'; }
+
+    let walkUI = false;
+    const setVMode = (m, init) => {
+        const is2D = m === '2D', d3 = is2D ? 'none' : '', wd = is2D || !walkUI ? 'none' : '';
+        window._barViewMode = is2D ? '2D' : '3D';
+        localStorage.setItem('barViewMode', window._barViewMode);
+        if (container) container.style.display = is2D ? 'none' : 'block';
+        if (tbEl) tbEl.style.display = d3;
+        if (bpEl) {
+            bpEl.style.display = is2D ? 'flex' : 'none';
+            bpEl.style.visibility = is2D ? 'visible' : '';
+            bpEl.classList.remove('w-condition-invisible');
+        }
+        for (const el of [rotateToggleButton, shadowToggleButton, exportButton, downloadButton]) if (el) el.style.display = d3;
+        if (animToggleWrapper) animToggleWrapper.style.display = wd || 'flex';
+        if (movementToggleWrap) movementToggleWrap.style.display = wd;
+        if (vmBtn) vmBtn.textContent = is2D ? '3D' : '2D';
+        if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
+    };
+    setVMode(localStorage.getItem('barViewMode'), true);
+    if (vmBtn) vmBtn.addEventListener('click', () => setVMode(window._barViewMode === '2D' ? '3D' : '2D'));
+
+    function exportHighResPNG(w, h) {
+        const ssaoPass = getSsaoPass(), smaaPass = getSmaaPass();
+        const renderer = getRenderer(), camera = getCamera(), composer = getComposer();
+        const origW = container.offsetWidth, origH = container.offsetHeight;
+        const origPR = renderer.getPixelRatio();
+        const origAsp = camera.aspect;
+        requestAnimationFrame(() => {
+            renderer.setPixelRatio(1); renderer.setSize(w, h, false);
+            composer.setPixelRatio(1); composer.setSize(w, h);
+            camera.aspect = w / h; camera.updateProjectionMatrix();
+            if (ssaoPass) ssaoPass.setSize(w, h);
+            if (smaaPass) smaaPass.setSize(w, h);
+            renderer.setClearColor(0x000000, 0);
+            composer.render();
+            try {
+                renderer.domElement.toBlob(function(blob) {
+                    if (!blob) return;
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = unitName + '_render.png';
+                    link.target = '_blank';
+                    link.rel = 'noopener';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+                }, 'image/png');
+            } catch(e) { console.error("Export failed:", e); }
+            renderer.setPixelRatio(origPR); renderer.setSize(origW, origH, false);
+            composer.setPixelRatio(origPR); composer.setSize(origW, origH);
+            camera.aspect = origAsp; camera.updateProjectionMatrix();
+            if (ssaoPass) ssaoPass.setSize(origW, origH);
+            if (smaaPass) smaaPass.setSize(origW * origPR, origH * origPR);
+            composer.render();
+        });
+    }
+    if (exportButton) exportButton.addEventListener('click', () => {
+        const aspect = container.offsetWidth / container.offsetHeight;
+        exportHighResPNG(exportWidth, Math.round(exportWidth / aspect));
+    });
+
+    if (animToggleButton) animToggleButton.addEventListener('click', () => {
+        const mixer = getMixer(); if (!mixer) return;
+        const currentAction = getCurrentAction(), mvActs = getMvActs();
+        if (currentAction) currentAction.paused = !currentAction.paused;
+        const p = currentAction ? currentAction.paused : !mvActs[0].paused;
+        for (const a of mvActs) a.paused = p;
+    });
+
+    if (movementToggle) movementToggle.addEventListener('change', () => {
+        const enabled = movementToggle.checked;
+        localStorage.setItem('movementToggle', String(enabled));
+        const currentAction = getCurrentAction(), mvActs = getMvActs();
+        if (!currentAction && !mvActs.length) return;
+        container.style.transition = 'opacity 0.15s ease-out';
+        container.style.opacity = '0.35';
+        setTimeout(() => {
+            if (currentAction) currentAction.weight = enabled ? 1 : 0;
+            for (const a of mvActs) a.weight = enabled ? 1 : 0;
+            container.style.transition = 'opacity 0.25s ease-in';
+            container.style.opacity = '1';
+        }, 150);
+    });
+
+    if (rotateToggleButton) rotateToggleButton.addEventListener('click', () => { if (onTurntableChange) onTurntableChange(); });
+    if (shadowToggleButton) shadowToggleButton.addEventListener('click', () => { if (onShadowChange) onShadowChange(); });
+
+    return {
+        setWalkUI: (hasWalk) => {
+            walkUI = hasWalk;
+            if (animToggleButton) animToggleButton.style.display = hasWalk ? 'flex' : 'none';
+            if (movementToggle && hasWalk) movementToggle.checked = localStorage.getItem('movementToggle') !== 'false';
+            setVMode(window._barViewMode, true);
+        },
+        setVMode
+    };
+};
+</script>

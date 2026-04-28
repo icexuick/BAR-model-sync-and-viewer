@@ -73,14 +73,7 @@
     window.addEventListener('load', function() {
     setTimeout(function() {
         const container = document.getElementById('model-container');
-        const animToggleButton = document.getElementById('anim-toggle-button');
-        const animToggleWrapper = document.getElementById('anim-toggle-wrapper');
-        const rotateToggleButton = document.getElementById('rotate-toggle-button');
-        const shadowToggleButton = document.getElementById('shadow-toggle-button');
-        const exportButton = document.getElementById('export-button');
         const noticeElement = document.getElementById('model-viewer-notice');
-        const movementToggle = document.getElementById('movementToggle');
-        const movementToggleWrap = movementToggle ? movementToggle.closest('.toggle-switch') : null;
         if (!container) return;
         container.style.display = 'block';
 
@@ -179,27 +172,17 @@
         controls.enableDamping = true; controls.dampingFactor = 0.05;
         controls.enableZoom = true; controls.rotateSpeed = VIEWER_CONFIG.mouseRotateSpeed;
         controls.zoomSpeed = 1.2; controls.minDistance = 1; controls.maxDistance = 5000;
-        const downloadButton = document.getElementById('download-glb-button');
-        if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = `${unitName}.glb`; }
-
-        const vmBtn = document.getElementById('view-mode-toggle-button');
-        const bpEl = document.querySelector('.flex-unit-detail-img');
-        const tbEl = document.querySelector('.threeblock');
-        let walkUI = false;
-        const setVMode = (m, init) => {
-            const is2D = m === '2D', d3 = is2D ? 'none' : '', wd = is2D || !walkUI ? 'none' : '';
-            window._barViewMode = is2D ? '2D' : '3D'; localStorage.setItem('barViewMode', window._barViewMode);
-            container.style.display = is2D ? 'none' : 'block';
-            if (tbEl) tbEl.style.display = d3;
-            if (bpEl) { bpEl.style.display = is2D ? 'flex' : 'none'; bpEl.style.visibility = is2D ? 'visible' : ''; bpEl.classList.remove('w-condition-invisible'); }
-            for (const el of [rotateToggleButton, shadowToggleButton, exportButton, downloadButton]) if (el) el.style.display = d3;
-            if (animToggleWrapper) animToggleWrapper.style.display = wd || 'flex';
-            if (movementToggleWrap) movementToggleWrap.style.display = wd;
-            if (vmBtn) vmBtn.textContent = is2D ? '3D' : '2D';
-            if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
-        };
-        setVMode(localStorage.getItem('barViewMode'), true);
-        if (vmBtn) vmBtn.addEventListener('click', () => setVMode(window._barViewMode === '2D' ? '3D' : '2D'));
+        let composer, ssaoPass, smaaPass, mixer = null, currentAction = null, _mvActs = [];
+        let isTurntableEnabledByUser = !rotateOff, turntableActive = false, idleTimer = null;
+        let areShadowsVisible = true;
+        const ui = window._barUISetup && window._barUISetup({
+            container, modelURL, unitName, exportWidth: VIEWER_CONFIG.exportWidth,
+            getRenderer: () => renderer, getCamera: () => camera, getComposer: () => composer,
+            getSsaoPass: () => ssaoPass, getSmaaPass: () => smaaPass,
+            getMixer: () => mixer, getCurrentAction: () => currentAction, getMvActs: () => _mvActs,
+            onTurntableChange: () => { isTurntableEnabledByUser = !isTurntableEnabledByUser; turntableActive = isTurntableEnabledByUser; if (!turntableActive) clearTimeout(idleTimer); },
+            onShadowChange: () => { areShadowsVisible = !areShadowsVisible; if (groundMesh) groundMesh.visible = areShadowsVisible; }
+        });
 
         const lightGroup = new THREE.Group(); scene.add(lightGroup);
         const directionalLight = new THREE.DirectionalLight(VIEWER_CONFIG.keyLightColor, VIEWER_CONFIG.keyLightIntensity);
@@ -215,13 +198,12 @@
         lightGroup.add(directionalLight2);
         const ambientLight = new THREE.AmbientLight(VIEWER_CONFIG.ambientLightColor, VIEWER_CONFIG.ambientLightIntensity);
         scene.add(ambientLight);
-        let material, modelScene, groundMesh, mixer = null, currentAction = null, _mvActs = [], _spinActs = [];
+        let material, modelScene, groundMesh, _spinActs = [];
         let toggleOpenClip = null, toggleCloseClip = null, toggleOpenAction = null, toggleCloseAction = null, toggleState = false, toggleAnimating = false;
         const timeUniform = { value: 0.0 };
         const clock = new THREE.Clock();
-        let isAltDown = false, isTurntableEnabledByUser = !rotateOff, turntableActive = false, isInteracting = false, idleTimer = null;
-        let areShadowsVisible = true;
-        let composer, renderPass, ssaoPass, smaaPass, outputPass;
+        let isAltDown = false, isInteracting = false;
+        let renderPass, outputPass;
         const textureLoader = new THREE.TextureLoader();
         const gltfLoader = new GLTFLoader();
         const rgbeLoader = new RGBELoader();
@@ -234,7 +216,6 @@
             gltfLoader.loadAsync(modelURL)
         ]).then(([env, diffuseMap, pbrMap, normalMap, teamMap, gltf]) => {
             loadingDone = true; clearTimeout(loadTimeout);
-            setVMode(window._barViewMode, true);
 
             setTimeout(() => {
                 if (loader) { loader.style.transition = 'opacity 0.3s ease-out'; loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
@@ -483,19 +464,13 @@
                     const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
                     if (walkClip) { currentAction = mixer.clipAction(walkClip); currentAction.setLoop(THREE.LoopRepeat, Infinity); currentAction.play(); currentAction.weight = walkEnabled ? 1 : 0; }
                     for (const a of _mvActs) a.weight = walkEnabled ? 1 : 0;
-                    if (movementToggle) movementToggle.checked = walkEnabled;
-                    if (animToggleButton) animToggleButton.style.display = 'flex';
                 } else {
                     currentAction = null;
-                    if (animToggleButton) animToggleButton.style.display = 'none';
                 }
-                walkUI = hasWalk;
-                setVMode(window._barViewMode, true);
+                if (ui) ui.setWalkUI(hasWalk);
                 if (poserResult) { window._barPoserOnActivate = function(entering) { if (currentAction) currentAction.paused = entering; for (const a of _mvActs) a.paused = entering; for (const a of _spinActs) a.paused = entering; }; }
             } else {
-                if (animToggleButton) animToggleButton.style.display = 'none';
-                walkUI = false;
-                setVMode(window._barViewMode, true);
+                if (ui) ui.setWalkUI(false);
                 renderer.domElement.style.cursor = '';
             }
             if (mixer && initFireAnims) initFireAnims(THREE, mixer, gltf.animations);
@@ -569,45 +544,6 @@
             composer.addPass(outputPass);
             window._editorCtx = { VIEWER_CONFIG, controls, material, renderer, directionalLight, directionalLight2, ambientLight, ssaoPass, groundMesh, areShadowsVisible, scene, camera, composer, smaaPass, modelScene, lightGroup, buildpicMode, unitName, timeUniform, teamColor, cloakUniform, THREE, loadHDR: (url) => { rgbeLoader.load(url, (t) => { t.mapping = THREE.EquirectangularReflectionMapping; scene.environment = t; scene.background = null; }, undefined, (e) => console.error('HDR Error:', e)); } };
 
-            function exportHighResPNG(w, h) {
-                const origW = container.offsetWidth, origH = container.offsetHeight;
-                const origPR = renderer.getPixelRatio();
-                const origAsp = camera.aspect;
-                requestAnimationFrame(() => {
-                    renderer.setPixelRatio(1); renderer.setSize(w, h, false);
-                    composer.setPixelRatio(1); composer.setSize(w, h);
-                    camera.aspect = w / h; camera.updateProjectionMatrix();
-                    if(ssaoPass) ssaoPass.setSize(w, h);
-                    if(smaaPass) smaaPass.setSize(w, h);
-                    renderer.setClearColor(0x000000, 0);
-                    composer.render();
-                    try {
-                        renderer.domElement.toBlob(function(blob) {
-                            if (!blob) return;
-                            const url = URL.createObjectURL(blob);
-                            const link = document.createElement('a');
-                            link.href = url;
-                            link.download = unitName + '_render.png';
-                            link.target = '_blank';
-                            link.rel = 'noopener';
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
-                            setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
-                        }, 'image/png');
-                    } catch(e) { console.error("Export failed:", e); }
-                    renderer.setPixelRatio(origPR); renderer.setSize(origW, origH, false);
-                    composer.setPixelRatio(origPR); composer.setSize(origW, origH);
-                    camera.aspect = origAsp; camera.updateProjectionMatrix();
-                    if(ssaoPass) ssaoPass.setSize(origW, origH);
-                    if(smaaPass) smaaPass.setSize(origW * origPR, origH * origPR);
-                    composer.render();
-                });
-            }
-            if (exportButton) exportButton.addEventListener('click', () => {
-                const aspect = container.offsetWidth / container.offsetHeight;
-                exportHighResPNG(VIEWER_CONFIG.exportWidth, Math.round(VIEWER_CONFIG.exportWidth / aspect));
-            });
             window.addEventListener('keydown', (e) => {
                 if (e.key === 'Alt') { e.preventDefault(); isAltDown = true; window._barViewerAltDown = true; container.style.cursor = 'move'; controls.enabled = false; }
                 if (e.code === 'Space' && mixer && (currentAction || _mvActs.length) && !e.repeat) { if (currentAction) currentAction.paused = !currentAction.paused; const p = currentAction ? currentAction.paused : !_mvActs[0].paused; for (const a of _mvActs) a.paused = p; }
@@ -674,22 +610,6 @@
             controls.addEventListener('start', () => { isInteracting = true; didDrag = false; });
             controls.addEventListener('end', () => { isInteracting = false; dragOrigin = null; if (didDrag && isTurntableEnabledByUser) idleTimer = setTimeout(() => { if (!isInteracting) { didDrag = false; turntableActive = true; } }, 3000); });
             if (isTurntableEnabledByUser) turntableActive = true;
-            if (animToggleButton) animToggleButton.addEventListener('click', () => { if (!mixer) return; if (currentAction) currentAction.paused = !currentAction.paused; const p = currentAction ? currentAction.paused : !_mvActs[0].paused; for (const a of _mvActs) a.paused = p; });
-            if (movementToggle) movementToggle.addEventListener('change', () => {
-                const enabled = movementToggle.checked;
-                localStorage.setItem('movementToggle', String(enabled));
-                if (!currentAction && !_mvActs.length) return;
-                container.style.transition = 'opacity 0.15s ease-out';
-                container.style.opacity = '0.35';
-                setTimeout(() => {
-                    if (currentAction) currentAction.weight = enabled ? 1 : 0;
-                    for (const a of _mvActs) a.weight = enabled ? 1 : 0;
-                    container.style.transition = 'opacity 0.25s ease-in';
-                    container.style.opacity = '1';
-                }, 150);
-            });
-            if (rotateToggleButton) rotateToggleButton.addEventListener('click', () => { isTurntableEnabledByUser = !isTurntableEnabledByUser; turntableActive = isTurntableEnabledByUser; if(!turntableActive) clearTimeout(idleTimer); });
-            if (shadowToggleButton) shadowToggleButton.addEventListener('click', () => { areShadowsVisible = !areShadowsVisible; if(groundMesh) groundMesh.visible = areShadowsVisible; });
 
             let cloakUpdate = null;
             if (window._barCloakSetup) {
