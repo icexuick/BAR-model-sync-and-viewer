@@ -21,6 +21,26 @@ window._barWeaponsSetup = function(THREE, opts) {
             Object.assign(fireDelays, node.userData.fire_delays);
         }
     });
+
+    // Per-unit weapon hiding: alt-fire modes that the engine auto-switches on
+    // (e.g. land vs water firing modes) appear as separate weapons in the Lua
+    // but can't be triggered in the viewer — drop them so they don't show up.
+    var HIDDEN_WEAPONS = { leganavybattleship: [2] };
+    var hidden = HIDDEN_WEAPONS[unitName];
+    if (hidden) {
+        hidden.forEach(function(wnum) {
+            var s = weaponSummary[String(wnum)];
+            if (s && s.def) {
+                var slug = unitName + '-' + s.def.replace(/_/g, '-');
+                document.querySelectorAll('.uw-item[data-wpn-slug="' + slug + '"], .uw-item-flex[data-wpn-slug="' + slug + '"]').forEach(function(el) {
+                    var item = el.closest('.uw-item') || el;
+                    item.style.display = 'none';
+                });
+            }
+            delete weaponSummary[String(wnum)];
+        });
+    }
+
     Object.assign(weaponSummaryOut, weaponSummary);
 
     var meshWeaponMap = new Map();
