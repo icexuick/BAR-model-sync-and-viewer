@@ -75,6 +75,11 @@
         const container = document.getElementById('model-container');
         const noticeElement = document.getElementById('model-viewer-notice');
         if (!container) return;
+        if (localStorage.getItem('barViewMode') === '2D') {
+            const ldr = document.getElementById('model-loader');
+            if (ldr) ldr.remove();
+            return;
+        }
         container.style.display = 'block';
 
         const testCanvas = document.createElement('canvas');

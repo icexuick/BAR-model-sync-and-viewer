@@ -37,7 +37,15 @@ window._barUISetup = function(ctx) {
         if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
     };
     setVMode(localStorage.getItem('barViewMode'), true);
-    const toggleVMode = () => setVMode(window._barViewMode === '2D' ? '3D' : '2D');
+    const toggleVMode = () => {
+        const next = window._barViewMode === '2D' ? '3D' : '2D';
+        if (next === '3D' && !window._barAnimateRestart) {
+            localStorage.setItem('barViewMode', '3D');
+            location.reload();
+            return;
+        }
+        setVMode(next);
+    };
     if (vmBtn) vmBtn.addEventListener('click', toggleVMode);
     if (vmBtn2D) vmBtn2D.addEventListener('click', toggleVMode);
 
