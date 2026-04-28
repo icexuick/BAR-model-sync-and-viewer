@@ -11,7 +11,9 @@ window._barUISetup = function(ctx) {
     const movementToggleWrap = movementToggle ? movementToggle.closest('.toggle-switch') : null;
     const downloadButton     = document.getElementById('download-glb-button');
     const vmBtn              = document.getElementById('view-mode-toggle-button');
+    const vmBtn2D            = document.getElementById('view-mode-toggle-button-2d');
     const bpEl               = document.querySelector('.flex-unit-detail-img');
+    const tbEl               = document.querySelector('.threeblock');
 
     if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = unitName + '.glb'; }
 
@@ -21,6 +23,7 @@ window._barUISetup = function(ctx) {
         window._barViewMode = is2D ? '2D' : '3D';
         localStorage.setItem('barViewMode', window._barViewMode);
         if (container) container.style.display = is2D ? 'none' : 'block';
+        if (tbEl) tbEl.style.display = d3;
         if (bpEl) {
             bpEl.style.display = is2D ? 'flex' : 'none';
             bpEl.style.visibility = is2D ? 'visible' : '';
@@ -29,11 +32,14 @@ window._barUISetup = function(ctx) {
         for (const el of [rotateToggleButton, shadowToggleButton, exportButton, downloadButton]) if (el) el.style.display = d3;
         if (animToggleWrapper) animToggleWrapper.style.display = wd || 'flex';
         if (movementToggleWrap) movementToggleWrap.style.display = wd;
-        if (vmBtn) vmBtn.textContent = is2D ? '3D' : '2D';
+        if (vmBtn) vmBtn.textContent = '2D';
+        if (vmBtn2D) { vmBtn2D.textContent = '3D'; vmBtn2D.style.display = is2D ? '' : 'none'; }
         if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
     };
     setVMode(localStorage.getItem('barViewMode'), true);
-    if (vmBtn) vmBtn.addEventListener('click', () => setVMode(window._barViewMode === '2D' ? '3D' : '2D'));
+    const toggleVMode = () => setVMode(window._barViewMode === '2D' ? '3D' : '2D');
+    if (vmBtn) vmBtn.addEventListener('click', toggleVMode);
+    if (vmBtn2D) vmBtn2D.addEventListener('click', toggleVMode);
 
     function exportHighResPNG(w, h) {
         const ssaoPass = getSsaoPass(), smaaPass = getSmaaPass();
