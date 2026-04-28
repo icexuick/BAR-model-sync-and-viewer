@@ -182,44 +182,20 @@
         const downloadButton = document.getElementById('download-glb-button');
         if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = `${unitName}.glb`; }
 
-        const viewModeButton = document.getElementById('view-mode-toggle-button');
-        const buildpicEl = document.querySelector('.flex-unit-detail-img');
-        const buildpicImg = buildpicEl ? buildpicEl.querySelector('img') : null;
-        const VIEW_MODE_KEY = 'barViewMode';
-        let viewMode = (localStorage.getItem(VIEW_MODE_KEY) === '2D') ? '2D' : '3D';
-        window._barViewMode = viewMode;
-        function showBuildpic(show) {
-            if (buildpicEl) {
-                buildpicEl.style.display = show ? 'flex' : 'none';
-                buildpicEl.style.visibility = show ? 'visible' : '';
-                buildpicEl.classList.remove('w-condition-invisible');
-            }
-            if (buildpicImg) {
-                buildpicImg.style.display = show ? 'block' : '';
-                buildpicImg.style.visibility = show ? 'visible' : '';
-            }
-        }
-        function applyViewMode(mode) {
-            viewMode = (mode === '2D') ? '2D' : '3D';
-            window._barViewMode = viewMode;
-            localStorage.setItem(VIEW_MODE_KEY, viewMode);
-            const is2D = (viewMode === '2D');
-            if (container) container.style.display = is2D ? 'none' : 'block';
-            showBuildpic(is2D);
-            if (viewModeButton) viewModeButton.textContent = is2D ? '3D' : '2D';
-            if (!is2D && window._barAnimateRestart) window._barAnimateRestart();
-        }
-        if (viewModeButton) {
-            viewModeButton.textContent = (viewMode === '2D') ? '3D' : '2D';
-            viewModeButton.addEventListener('click', (e) => {
-                e.preventDefault();
-                applyViewMode(viewMode === '2D' ? '3D' : '2D');
-            });
-        }
-        if (viewMode === '2D') {
-            showBuildpic(true);
-            container.style.display = 'none';
-        }
+        const vmBtn = document.getElementById('view-mode-toggle-button');
+        const bpEl = document.querySelector('.flex-unit-detail-img');
+        const showBp = (s) => { if (bpEl) { bpEl.style.display = s ? 'flex' : 'none'; bpEl.style.visibility = s ? 'visible' : ''; bpEl.classList.remove('w-condition-invisible'); } };
+        const setVMode = (m, init) => {
+            const is2D = m === '2D';
+            window._barViewMode = is2D ? '2D' : '3D';
+            localStorage.setItem('barViewMode', window._barViewMode);
+            container.style.display = is2D ? 'none' : 'block';
+            showBp(is2D);
+            if (vmBtn) vmBtn.textContent = is2D ? '3D' : '2D';
+            if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
+        };
+        setVMode(localStorage.getItem('barViewMode') === '2D' ? '2D' : '3D', true);
+        if (vmBtn) vmBtn.addEventListener('click', (e) => { e.preventDefault(); setVMode(window._barViewMode === '2D' ? '3D' : '2D'); });
 
         const lightGroup = new THREE.Group(); scene.add(lightGroup);
         const directionalLight = new THREE.DirectionalLight(VIEWER_CONFIG.keyLightColor, VIEWER_CONFIG.keyLightIntensity);
@@ -254,8 +230,7 @@
             gltfLoader.loadAsync(modelURL)
         ]).then(([env, diffuseMap, pbrMap, normalMap, teamMap, gltf]) => {
             loadingDone = true; clearTimeout(loadTimeout);
-            if (window._barViewMode === '2D') showBuildpic(true);
-            else showBuildpic(false);
+            showBp(window._barViewMode === '2D');
 
             setTimeout(() => {
                 if (loader) { loader.style.transition = 'opacity 0.3s ease-out'; loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
@@ -738,12 +713,10 @@
                 for (var i = 0; i < wObjs.length; i++) { scene.remove(wObjs[i]); if (wObjs[i].geometry) wObjs[i].geometry.dispose(); if (wObjs[i].material) wObjs[i].material.dispose(); }
             })();
 
-            const fpsLimit = 120;
-            const interval = 1000 / fpsLimit;
-            let lastTime = 0;
-            let animateRunning = false;
+            const interval = 1000 / 120;
+            let lastTime = 0, animRun = false;
             const animate = (timestamp) => {
-                if (window._barViewMode === '2D') { animateRunning = false; return; }
+                if (window._barViewMode === '2D') { animRun = false; return; }
                 requestAnimationFrame(animate);
                 const delta = timestamp - lastTime;
                 if (delta > interval) {
@@ -783,16 +756,8 @@
             const resizeObserver = new ResizeObserver(handleResize);
             resizeObserver.observe(container);
             lastTime = performance.now();
-            window._barAnimateRestart = () => {
-                if (animateRunning) return;
-                animateRunning = true;
-                lastTime = performance.now();
-                requestAnimationFrame(animate);
-            };
-            if (window._barViewMode !== '2D') {
-                animateRunning = true;
-                requestAnimationFrame(animate);
-            }
+            window._barAnimateRestart = () => { if (animRun) return; animRun = true; lastTime = performance.now(); requestAnimationFrame(animate); };
+            if (window._barViewMode !== '2D') { animRun = true; requestAnimationFrame(animate); }
         }).catch(err => {
             loadingDone = true; clearTimeout(loadTimeout);
             console.error("LOAD ERROR:", err);
