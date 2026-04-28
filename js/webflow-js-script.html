@@ -184,16 +184,28 @@
 
         const viewModeButton = document.getElementById('view-mode-toggle-button');
         const buildpicEl = document.querySelector('.flex-unit-detail-img');
+        const buildpicImg = buildpicEl ? buildpicEl.querySelector('img') : null;
         const VIEW_MODE_KEY = 'barViewMode';
         let viewMode = (localStorage.getItem(VIEW_MODE_KEY) === '2D') ? '2D' : '3D';
         window._barViewMode = viewMode;
+        function showBuildpic(show) {
+            if (buildpicEl) {
+                buildpicEl.style.display = show ? 'flex' : 'none';
+                buildpicEl.style.visibility = show ? 'visible' : '';
+                buildpicEl.classList.remove('w-condition-invisible');
+            }
+            if (buildpicImg) {
+                buildpicImg.style.display = show ? 'block' : '';
+                buildpicImg.style.visibility = show ? 'visible' : '';
+            }
+        }
         function applyViewMode(mode) {
             viewMode = (mode === '2D') ? '2D' : '3D';
             window._barViewMode = viewMode;
             localStorage.setItem(VIEW_MODE_KEY, viewMode);
             const is2D = (viewMode === '2D');
             if (container) container.style.display = is2D ? 'none' : 'block';
-            if (buildpicEl) buildpicEl.style.display = is2D ? '' : 'none';
+            showBuildpic(is2D);
             if (viewModeButton) viewModeButton.textContent = is2D ? '3D' : '2D';
             if (!is2D && window._barAnimateRestart) window._barAnimateRestart();
         }
@@ -205,7 +217,7 @@
             });
         }
         if (viewMode === '2D') {
-            if (buildpicEl) buildpicEl.style.display = '';
+            showBuildpic(true);
             container.style.display = 'none';
         }
 
@@ -242,8 +254,8 @@
             gltfLoader.loadAsync(modelURL)
         ]).then(([env, diffuseMap, pbrMap, normalMap, teamMap, gltf]) => {
             loadingDone = true; clearTimeout(loadTimeout);
-            const fallbackImageBlock = document.querySelector('.flex-unit-detail-img');
-            if (fallbackImageBlock && window._barViewMode !== '2D') fallbackImageBlock.style.display = 'none';
+            if (window._barViewMode === '2D') showBuildpic(true);
+            else showBuildpic(false);
 
             setTimeout(() => {
                 if (loader) { loader.style.transition = 'opacity 0.3s ease-out'; loader.style.opacity = '0'; setTimeout(() => loader.remove(), 300); }
