@@ -1,53 +1,69 @@
 <script>
+(function() {
+    const init = () => {
+        const animToggleButton   = document.getElementById('anim-toggle-button');
+        const animToggleWrapper  = document.getElementById('anim-toggle-wrapper');
+        const rotateToggleButton = document.getElementById('rotate-toggle-button');
+        const shadowToggleButton = document.getElementById('shadow-toggle-button');
+        const exportButton       = document.getElementById('export-button');
+        const movementToggle     = document.getElementById('movementToggle');
+        const movementToggleWrap = movementToggle ? movementToggle.closest('.toggle-switch') : null;
+        const downloadButton     = document.getElementById('download-glb-button');
+        const vmBtn              = document.getElementById('view-mode-toggle-button');
+        const vmBtn2D            = document.getElementById('view-mode-toggle-button-2d');
+        const container          = document.getElementById('model-container');
+        const bpEl               = document.querySelector('.flex-unit-detail-img');
+        const tbEl               = document.querySelector('.threeblock');
+
+        let walkUI = false;
+        const setVMode = (m, init) => {
+            const is2D = m === '2D', d3 = is2D ? 'none' : '', wd = is2D || !walkUI ? 'none' : '';
+            window._barViewMode = is2D ? '2D' : '3D';
+            localStorage.setItem('barViewMode', window._barViewMode);
+            if (container) container.style.display = is2D ? 'none' : 'block';
+            if (tbEl) tbEl.style.display = d3;
+            if (bpEl) {
+                bpEl.style.display = is2D ? 'flex' : 'none';
+                bpEl.style.visibility = is2D ? 'visible' : '';
+                bpEl.classList.remove('w-condition-invisible');
+            }
+            for (const el of [rotateToggleButton, shadowToggleButton, exportButton, downloadButton]) if (el) el.style.display = d3;
+            if (animToggleWrapper) animToggleWrapper.style.display = wd || 'flex';
+            if (movementToggleWrap) movementToggleWrap.style.display = wd;
+            if (vmBtn) vmBtn.textContent = '2D';
+            if (vmBtn2D) { vmBtn2D.textContent = '3D'; vmBtn2D.style.display = is2D ? '' : 'none'; }
+            if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
+        };
+        setVMode(localStorage.getItem('barViewMode'), true);
+        const toggleVMode = () => {
+            const next = window._barViewMode === '2D' ? '3D' : '2D';
+            if (next === '3D' && !window._barAnimateRestart) {
+                localStorage.setItem('barViewMode', '3D');
+                location.reload();
+                return;
+            }
+            setVMode(next);
+        };
+        if (vmBtn) vmBtn.addEventListener('click', toggleVMode);
+        if (vmBtn2D) vmBtn2D.addEventListener('click', toggleVMode);
+
+        window._barUI = { setVMode, setWalkUI: (h) => { walkUI = h; if (animToggleButton) animToggleButton.style.display = h ? 'flex' : 'none'; if (movementToggle && h) movementToggle.checked = localStorage.getItem('movementToggle') !== 'false'; setVMode(window._barViewMode, true); } };
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+})();
+
 window._barUISetup = function(ctx) {
     const { container, modelURL, unitName, exportWidth, getRenderer, getCamera, getComposer, getMixer, getCurrentAction, getMvActs, getSsaoPass, getSmaaPass, onTurntableChange, onShadowChange } = ctx;
 
     const animToggleButton   = document.getElementById('anim-toggle-button');
-    const animToggleWrapper  = document.getElementById('anim-toggle-wrapper');
     const rotateToggleButton = document.getElementById('rotate-toggle-button');
     const shadowToggleButton = document.getElementById('shadow-toggle-button');
     const exportButton       = document.getElementById('export-button');
     const movementToggle     = document.getElementById('movementToggle');
-    const movementToggleWrap = movementToggle ? movementToggle.closest('.toggle-switch') : null;
     const downloadButton     = document.getElementById('download-glb-button');
-    const vmBtn              = document.getElementById('view-mode-toggle-button');
-    const vmBtn2D            = document.getElementById('view-mode-toggle-button-2d');
-    const bpEl               = document.querySelector('.flex-unit-detail-img');
-    const tbEl               = document.querySelector('.threeblock');
 
     if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = unitName + '.glb'; }
-
-    let walkUI = false;
-    const setVMode = (m, init) => {
-        const is2D = m === '2D', d3 = is2D ? 'none' : '', wd = is2D || !walkUI ? 'none' : '';
-        window._barViewMode = is2D ? '2D' : '3D';
-        localStorage.setItem('barViewMode', window._barViewMode);
-        if (container) container.style.display = is2D ? 'none' : 'block';
-        if (tbEl) tbEl.style.display = d3;
-        if (bpEl) {
-            bpEl.style.display = is2D ? 'flex' : 'none';
-            bpEl.style.visibility = is2D ? 'visible' : '';
-            bpEl.classList.remove('w-condition-invisible');
-        }
-        for (const el of [rotateToggleButton, shadowToggleButton, exportButton, downloadButton]) if (el) el.style.display = d3;
-        if (animToggleWrapper) animToggleWrapper.style.display = wd || 'flex';
-        if (movementToggleWrap) movementToggleWrap.style.display = wd;
-        if (vmBtn) vmBtn.textContent = '2D';
-        if (vmBtn2D) { vmBtn2D.textContent = '3D'; vmBtn2D.style.display = is2D ? '' : 'none'; }
-        if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
-    };
-    setVMode(localStorage.getItem('barViewMode'), true);
-    const toggleVMode = () => {
-        const next = window._barViewMode === '2D' ? '3D' : '2D';
-        if (next === '3D' && !window._barAnimateRestart) {
-            localStorage.setItem('barViewMode', '3D');
-            location.reload();
-            return;
-        }
-        setVMode(next);
-    };
-    if (vmBtn) vmBtn.addEventListener('click', toggleVMode);
-    if (vmBtn2D) vmBtn2D.addEventListener('click', toggleVMode);
 
     function exportHighResPNG(w, h) {
         const ssaoPass = getSsaoPass(), smaaPass = getSmaaPass();
@@ -117,14 +133,6 @@ window._barUISetup = function(ctx) {
     if (rotateToggleButton) rotateToggleButton.addEventListener('click', () => { if (onTurntableChange) onTurntableChange(); });
     if (shadowToggleButton) shadowToggleButton.addEventListener('click', () => { if (onShadowChange) onShadowChange(); });
 
-    return {
-        setWalkUI: (hasWalk) => {
-            walkUI = hasWalk;
-            if (animToggleButton) animToggleButton.style.display = hasWalk ? 'flex' : 'none';
-            if (movementToggle && hasWalk) movementToggle.checked = localStorage.getItem('movementToggle') !== 'false';
-            setVMode(window._barViewMode, true);
-        },
-        setVMode
-    };
+    return window._barUI;
 };
 </script>
