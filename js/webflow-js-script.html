@@ -185,12 +185,16 @@
         const vmBtn = document.getElementById('view-mode-toggle-button');
         const bpEl = document.querySelector('.flex-unit-detail-img');
         const tbEl = document.querySelector('.threeblock');
+        window._barAnimUI = { wrap: animToggleWrapper, mvWrap: movementToggleWrap, hasWalk: false };
         const setVMode = (m, init) => {
             const is2D = m === '2D'; const v = is2D ? '2D' : '3D';
             window._barViewMode = v; localStorage.setItem('barViewMode', v);
             container.style.display = is2D ? 'none' : 'block';
             if (tbEl) tbEl.style.display = is2D ? 'none' : '';
             if (bpEl) { bpEl.style.display = is2D ? 'flex' : 'none'; bpEl.style.visibility = is2D ? 'visible' : ''; bpEl.classList.remove('w-condition-invisible'); }
+            const u = window._barAnimUI, show = !is2D && u.hasWalk;
+            if (u.wrap) u.wrap.style.display = show ? 'flex' : 'none';
+            if (u.mvWrap) u.mvWrap.style.display = show ? '' : 'none';
             if (vmBtn) vmBtn.textContent = is2D ? '3D' : '2D';
             if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
         };
@@ -478,23 +482,18 @@
                     const walkEnabled = localStorage.getItem('movementToggle') !== 'false';
                     if (walkClip) { currentAction = mixer.clipAction(walkClip); currentAction.setLoop(THREE.LoopRepeat, Infinity); currentAction.play(); currentAction.weight = walkEnabled ? 1 : 0; }
                     for (const a of _mvActs) a.weight = walkEnabled ? 1 : 0;
-                    if (movementToggle) {
-                        movementToggle.checked = walkEnabled;
-                        if (movementToggleWrap) movementToggleWrap.style.display = '';
-                    }
+                    if (movementToggle) movementToggle.checked = walkEnabled;
                     if (animToggleButton) animToggleButton.style.display = 'flex';
-                    if (animToggleWrapper) animToggleWrapper.style.display = 'flex';
+                    window._barAnimUI.hasWalk = true;
                 } else {
                     currentAction = null;
-                    if (movementToggleWrap) movementToggleWrap.style.display = 'none';
                     if (animToggleButton) animToggleButton.style.display = 'none';
-                    if (animToggleWrapper) animToggleWrapper.style.display = 'none';
                 }
+                setVMode(window._barViewMode, true);
                 if (poserResult) { window._barPoserOnActivate = function(entering) { if (currentAction) currentAction.paused = entering; for (const a of _mvActs) a.paused = entering; for (const a of _spinActs) a.paused = entering; }; }
             } else {
-                if (movementToggleWrap) movementToggleWrap.style.display = 'none';
                 if (animToggleButton) animToggleButton.style.display = 'none';
-                if (animToggleWrapper) animToggleWrapper.style.display = 'none';
+                setVMode(window._barViewMode, true);
                 renderer.domElement.style.cursor = '';
             }
             if (mixer && initFireAnims) initFireAnims(THREE, mixer, gltf.animations);
