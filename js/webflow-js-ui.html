@@ -12,21 +12,8 @@ window._barUISetup = function(ctx) {
     const downloadButton     = document.getElementById('download-glb-button');
     const vmBtn              = document.getElementById('view-mode-toggle-button');
     const bpEl               = document.querySelector('.flex-unit-detail-img');
-    const tbEl               = document.querySelector('.threeblock');
 
     if (downloadButton) { downloadButton.href = modelURL; downloadButton.download = unitName + '.glb'; }
-
-    if (!vmBtn) console.warn('[BAR UI] No element with id="view-mode-toggle-button" found — cannot toggle 2D/3D.');
-    else {
-        console.log('[BAR UI] vmBtn found:', vmBtn);
-        console.log('[BAR UI] vmBtn parent chain:');
-        let _p = vmBtn.parentElement, _i = 0;
-        while (_p && _p !== document.body && _i < 8) {
-            const cs = getComputedStyle(_p);
-            console.log(`  [${_i}] <${_p.tagName.toLowerCase()} class="${_p.className}"> display=${cs.display} visibility=${cs.visibility}`);
-            _p = _p.parentElement; _i++;
-        }
-    }
 
     let walkUI = false;
     const setVMode = (m, init) => {
@@ -34,7 +21,6 @@ window._barUISetup = function(ctx) {
         window._barViewMode = is2D ? '2D' : '3D';
         localStorage.setItem('barViewMode', window._barViewMode);
         if (container) container.style.display = is2D ? 'none' : 'block';
-        if (tbEl) tbEl.style.display = d3;
         if (bpEl) {
             bpEl.style.display = is2D ? 'flex' : 'none';
             bpEl.style.visibility = is2D ? 'visible' : '';
@@ -43,11 +29,7 @@ window._barUISetup = function(ctx) {
         for (const el of [rotateToggleButton, shadowToggleButton, exportButton, downloadButton]) if (el) el.style.display = d3;
         if (animToggleWrapper) animToggleWrapper.style.display = wd || 'flex';
         if (movementToggleWrap) movementToggleWrap.style.display = wd;
-        if (vmBtn) {
-            vmBtn.textContent = is2D ? '3D' : '2D';
-            vmBtn.style.display = '';
-            vmBtn.style.visibility = 'visible';
-        }
+        if (vmBtn) vmBtn.textContent = is2D ? '3D' : '2D';
         if (!is2D && !init && window._barAnimateRestart) window._barAnimateRestart();
     };
     setVMode(localStorage.getItem('barViewMode'), true);
